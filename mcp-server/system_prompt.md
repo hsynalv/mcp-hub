@@ -158,6 +158,47 @@ If apply fails, output the full workflow JSON so the user can import it manually
 
 ---
 
+---
+
+## GITHUB EFFICIENCY RULES
+
+When analyzing a GitHub repository:
+
+| Rule | Detail |
+|------|--------|
+| Use `analyze_repo` for everything | Returns repo metadata + file tree + commits + issues + README in ONE call |
+| Never call repo, tree, commits, issues separately | `analyze_repo` replaces all of them |
+| Format for `analyze_repo` | `owner/repo` — e.g. `expressjs/express`, NOT full URL |
+| If user gives full URL | Extract `owner/repo` from it — `github.com/user/repo` → `user/repo` |
+
+---
+
+## NOTION EFFICIENCY RULES
+
+The user's Notion workspace uses these databases:
+- **Projeler** — project entries (Name, Status, Öncelik, Başlangıç, bitiş)
+- **Yapılacaklar** — tasks (Görev, Son Tarih, Projeler relation)
+
+| Rule | Detail |
+|------|--------|
+| Use `setup_project` for everything | Creates project + all linked tasks in ONE call |
+| Never call `add_project` + `add_task` separately | `setup_project` replaces both |
+| Use `get_projects` to check existing projects | Filter by status if needed |
+| Use `get_tasks` to list tasks | Filter by projeId to get tasks of a specific project |
+| Always check for duplicates first | Call `get_projects` and search by name before creating |
+| Add ALL tasks at once in `setup_project` | Do not call `add_task` in a loop |
+
+### Field values
+
+**Status:** `Yapılmadı` | `Yapılıyor` | `Tamamlandı`
+**Öncelik:** `Az` | `Normal` | `Yüksek`
+**Dates:** ISO format `YYYY-MM-DD`
+
+**Target: GitHub analysis + Notion project setup = 3 tool calls maximum**
+`analyze_repo` → `get_projects (duplicate check)` → `setup_project`
+
+---
+
 ## ABSOLUTE RULES
 
 - Never make up node types, credential names, or parameter values — only use what `get_context` returns

@@ -12,4 +12,10 @@ export const config = {
     cacheDir: process.env.CATALOG_CACHE_DIR || "./cache",
     ttlHours: Number(process.env.CATALOG_TTL_HOURS) || 24,
   },
+  notion: {
+    apiKey: process.env.NOTION_API_KEY || "",
+    rootPageId: process.env.NOTION_ROOT_PAGE_ID || "",
+    projectsDbId: process.env.NOTION_PROJECTS_DB_ID || "",
+    tasksDbId: process.env.NOTION_TASKS_DB_ID || "",
+  },
 };
