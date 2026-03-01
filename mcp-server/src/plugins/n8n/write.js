@@ -5,8 +5,8 @@ import { annotateWorkflow } from "./workflow.annotate.js";
  * Apply a workflow to n8n (create / update / upsert).
  *
  * mode="create"  → POST /workflows          (id field stripped from payload)
- * mode="update"  → PATCH /workflows/:id     (requires workflowJson.id)
- * mode="upsert"  → if id present: PATCH first, fall back to POST on 404
+ * mode="update"  → PUT /workflows/:id       (requires workflowJson.id)
+ * mode="upsert"  → if id present: PUT first, fall back to POST on 404
  *                  if no id: POST directly
  *
  * Returns the structured result from createN8nClient().request().
@@ -43,12 +43,12 @@ export async function applyWorkflow(workflowJson, mode) {
         message: 'workflowJson.id is required for mode="update"',
       };
     }
-    return client.request("PATCH", `/workflows/${id}`, normalizePayload(annotated));
+    return client.request("PUT", `/workflows/${id}`, normalizePayload(annotated));
   }
 
   if (mode === "upsert") {
     if (id) {
-      const result = await client.request("PATCH", `/workflows/${id}`, normalizePayload(annotated));
+      const result = await client.request("PUT", `/workflows/${id}`, normalizePayload(annotated));
       const is404 = !result.ok && result.details?.status === 404;
       if (!is404) return result;
     }

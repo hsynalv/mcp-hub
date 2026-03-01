@@ -1,82 +1,96 @@
-# n8n MCP Server
+# mcp-hub
 
-HTTP-only MCP service for n8n. Provides **node catalog** and **workflow examples** to help AI create workflows inside n8n. Optionally creates/updates workflows when `ALLOW_N8N_WRITE=true`.
+> A plugin-based HTTP knowledge service for AI agents — starting with n8n.
 
-**HARD RULES:**
-- No LLM calls — AI runs inside n8n (n8n AI node/workflow)
-- MCP is a "knowledge + optional apply" service
+**mcp-hub** gives AI agents structured, reliable access to the tools and platforms they need to take action. Instead of guessing node types, credential names, or API structures, the agent asks mcp-hub and gets ground truth back.
+
+No LLM calls. No hallucinations. Just clean REST endpoints backed by real data.
+
+---
+
+## What it does
+
+| Capability | Description |
+|------------|-------------|
+| Node catalog | 439+ n8n nodes with full schemas, properties, and credential requirements |
+| Single-call context | One request returns node details + credentials + examples for the AI to build a workflow |
+| Workflow validation | Static analysis of AI-generated workflow JSON before sending to n8n |
+| Credential metadata | List of available credentials from n8n — id, name, type only (no secrets) |
+| Workflow management | Read, search, create, and update n8n workflows |
+| Extensible plugins | Drop a folder in `src/plugins/` — it auto-loads |
+
+---
+
+## Plugins
+
+| Plugin | Endpoints | Description |
+|--------|-----------|-------------|
+| `n8n` | `/n8n/*` | Node catalog, context, validation, workflow apply |
+| `n8n-credentials` | `/credentials/*` | Credential metadata from n8n |
+| `n8n-workflows` | `/n8n/workflows/*` | Workflow list, detail, search |
+
+> Planned: `openapi`, `github`, `notion`, `jira`, `linear`
+
+---
 
 ## Quick Start
 
 ```bash
+cd mcp-server
 npm install
-npm start
+cp .env.example .env
+# edit .env with your n8n URL and API key
+npm run dev
 ```
 
-Server runs at `http://localhost:3100` (or `PORT` env).
+Then seed the node catalog:
 
-## HTTP Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/tools` | List all tools |
-| POST | `/tools/call` | Call a tool `{ "name": "...", "arguments": {} }` |
-| GET | `/resources` | List all resources |
-| GET | `/resources/read?uri=...` | Read resource content |
-| GET | `/health` | Health check |
-
-## Tools (V1 - Always Available)
-
-| Tool | Description |
-|------|-------------|
-| `n8n_get_node_catalog` | Full node catalog, optional `category` filter |
-| `n8n_get_node_info` | Detailed info for a node type |
-| `n8n_get_examples` | Workflow examples, optional `exampleId` |
-
-## Tools (Optional - When ALLOW_N8N_WRITE=true)
-
-| Tool | Description |
-|------|-------------|
-| `n8n_create_workflow` | Create workflow in n8n |
-| `n8n_update_workflow` | Update existing workflow |
-
-## Resources
-
-| URI | Description |
-|-----|-------------|
-| `n8n://catalog` | Full node catalog JSON |
-| `n8n://examples` | Workflow examples list |
-| `n8n://examples/{id}` | Specific example (e.g. `webhook-to-set`) |
-
-## Environment
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 3100 | Server port |
-| `ALLOW_N8N_WRITE` | false | Enable workflow create/update |
-| `N8N_BASE_URL` | http://localhost:5678 | n8n instance URL |
-| `N8N_API_KEY` | - | n8n API key (required for write) |
-
-## Architecture
-
-- **Plugin-based**: n8n plugin first, extensible for future plugins
-- **ESM**: Node.js ES modules
-- **Express**: HTTP only, no stdio MCP
-
-## Example: Call Tool from n8n
-
-```json
-POST /tools/call
-{
-  "name": "n8n_get_node_catalog",
-  "arguments": { "category": "trigger" }
-}
+```bash
+curl -X POST http://localhost:8787/n8n/catalog/refresh
 ```
 
-```json
-POST /tools/call
-{
-  "name": "n8n_get_examples",
-  "arguments": { "exampleId": "webhook-to-set" }
-}
+---
+
+## Project Structure
+
 ```
+mcp-hub/
+├── mcp-server/              # Main application
+│   ├── src/
+│   │   ├── core/            # Server bootstrap, plugin loader, config
+│   │   └── plugins/
+│   │       ├── n8n/         # Node catalog, context, validation, write
+│   │       ├── n8n-credentials/  # Credential metadata
+│   │       └── n8n-workflows/    # Workflow list & detail
+│   ├── cache/               # Disk cache (gitignored)
+│   ├── .env.example
+│   ├── Dockerfile
+│   ├── system_prompt.md     # AI Agent system prompt
+│   └── README.md            # Full documentation
+└── PLAN.md                  # Plugin roadmap
+```
+
+→ See [`mcp-server/README.md`](./mcp-server/README.md) for the full documentation.
+
+---
+
+## Using with n8n AI Agent
+
+Add these tools to your n8n AI Agent node:
+
+| Tool | Method | URL |
+|------|--------|-----|
+| `get_context` | POST | `http://host.docker.internal:8787/n8n/context` |
+| `validate_workflow` | POST | `http://host.docker.internal:8787/n8n/workflow/validate` |
+| `apply_workflow` | POST | `http://host.docker.internal:8787/n8n/workflow/apply` |
+| `get_workflow` | GET | `http://host.docker.internal:8787/n8n/workflows/{id}` |
+
+Copy the system prompt from [`mcp-server/system_prompt.md`](./mcp-server/system_prompt.md) into the AI Agent's System Message field.
+
+**Result:** The agent builds complete, validated n8n workflows in 3 tool calls instead of 20.
+
+---
+
+## License
+
+MIT
