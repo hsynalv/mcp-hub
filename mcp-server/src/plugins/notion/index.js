@@ -851,6 +851,47 @@ export function register(app) {
     });
   });
 
+  // ── Archive (soft-delete) rows ───────────────────────────────────────────────
+
+  /**
+   * DELETE /notion/row/:pageId
+   * Archive a single Notion page (moves it to trash).
+   */
+  router.delete("/row/:pageId", async (req, res) => {
+    const { pageId } = req.params;
+    if (!pageId) return err(res, 400, "missing_page_id", "Provide pageId");
+
+    const result = await notionRequest("PATCH", `/pages/${pageId}`, { archived: true });
+    if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
+
+    res.json({ ok: true, archived: true, id: pageId });
+  });
+
+  /**
+   * POST /notion/rows/archive
+   * Bulk archive multiple Notion pages by ID.
+   *
+   * Body: { "ids": ["page-id-1", "page-id-2", ...] }
+   */
+  router.post("/rows/archive", async (req, res) => {
+    let ids = req.body?.ids ?? [];
+    if (typeof ids === "string") {
+      try { ids = JSON.parse(ids); } catch { ids = []; }
+    }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return err(res, 400, "missing_ids", "Provide ids array of Notion page IDs");
+    }
+
+    const results = await Promise.all(
+      ids.map((id) => notionRequest("PATCH", `/pages/${id}`, { archived: true }))
+    );
+
+    const succeeded = results.filter((r) => r.ok).length;
+    const failed    = results.filter((r) => !r.ok).length;
+
+    res.json({ ok: true, archived: succeeded, failed, total: ids.length });
+  });
+
   // ── Generic row insert (AI-friendly, works with ANY database) ───────────────
 
   /**
