@@ -1,129 +1,144 @@
-# n8n-workflows Plugin
+# Plugin: n8n-workflows
 
-n8n'deki workflow'ları listeler, tekil workflow JSON'larını sunar ve arama yapar.
-AI agent bu endpoint'leri template ve bağlam kaynağı olarak kullanır.
+Gives the AI agent read access to all workflows stored in a live n8n instance — their metadata, full JSON, and searchability.
 
-Tüm endpointler `/n8n/workflows` prefix'i altında çalışır.
+This plugin enables two key use cases:
+1. **Workflow as context** — the AI can fetch an existing workflow and use it as a reference or starting point
+2. **Workflow update** — the AI fetches the current JSON before modifying it, ensuring no manual changes are lost
 
 ---
 
-## Endpointler
+## Endpoints
 
 ### `GET /n8n/workflows`
 
-Tüm workflow'ları hafif liste olarak döner: `[{ id, name, active, updatedAt }]`
-Cache (TTL: `WORKFLOWS_TTL_MINUTES`, varsayılan 10 dk) dolmadıysa diskten okur.
+Returns a lightweight list of all workflows in n8n.
 
-```bash
-curl http://localhost:8787/n8n/workflows
-```
-
-**Yanıt:**
+**Response:**
 ```json
 [
-  { "id": "101", "name": "Slack Bildirim", "active": true, "updatedAt": "2026-02-28T..." },
-  { "id": "102", "name": "Cron → HTTP", "active": false, "updatedAt": "2026-02-25T..." }
+  { "id": "abc123", "name": "Webhook to Telegram", "active": true, "updatedAt": "2026-03-01T10:00:00.000Z" },
+  { "id": "def456", "name": "Daily Report", "active": false, "updatedAt": "2026-02-28T08:30:00.000Z" }
 ]
 ```
+
+Results are served from disk cache when fresh. Stale or missing cache triggers an automatic refresh from n8n.
 
 ---
 
 ### `GET /n8n/workflows/:id`
 
-Belirli bir workflow'un tam JSON'ını döner.
-AI bu JSON'ı template olarak kullanabilir.
+Returns the complete workflow JSON for a given ID. This is the same format n8n uses internally and the same format `POST /n8n/workflow/apply` accepts.
 
+**Example:**
 ```bash
-curl http://localhost:8787/n8n/workflows/101
+curl http://localhost:8787/n8n/workflows/abc123
 ```
 
-**Yanıt:** n8n'in döndürdüğü workflow nesnesi (nodes, connections, settings dahil).
-
-**Hata (404 benzeri):**
+**Response:**
 ```json
-{ "ok": false, "error": "n8n_api_not_supported", "details": { "status": 404 } }
+{
+  "id": "abc123",
+  "name": "Webhook to Telegram",
+  "active": true,
+  "nodes": [...],
+  "connections": {},
+  "settings": {},
+  "staticData": null
+}
 ```
+
+Use this endpoint before updating a workflow to ensure the AI works from the current state rather than reconstructing from memory.
 
 ---
 
 ### `POST /n8n/workflows/search`
 
-Workflow'ları ada ve/veya node tipine göre arar.
+Searches through workflows by name keyword or node type.
 
 **Body:**
 ```json
-{ "q": "slack", "nodeType": "n8n-nodes-base.slack" }
-```
-
-| Alan | Tip | Açıklama |
-|------|-----|----------|
-| `q` | string | Workflow adında aranacak kelime (case-insensitive) |
-| `nodeType` | string | Bu node tipini içeren workflow'ları bul |
-
-En az biri zorunludur.
-
-```bash
-# Ada göre ara
-curl -X POST http://localhost:8787/n8n/workflows/search \
-  -H "Content-Type: application/json" \
-  -d '{"q": "slack"}'
-
-# Node tipine göre ara
-curl -X POST http://localhost:8787/n8n/workflows/search \
-  -H "Content-Type: application/json" \
-  -d '{"nodeType": "n8n-nodes-base.httpRequest"}'
-
-# İkisini birden
-curl -X POST http://localhost:8787/n8n/workflows/search \
-  -H "Content-Type: application/json" \
-  -d '{"q": "bildirim", "nodeType": "n8n-nodes-base.slack"}'
-```
-
-**Yanıt (`q` ile):**
-```json
-[
-  { "id": "101", "name": "Slack Bildirim", "active": true, "updatedAt": "...", "matches": { "nodes": 0 } }
-]
-```
-
-**Yanıt (`nodeType` ile):**
-```json
 {
-  "results": [
-    { "id": "101", "name": "Slack Bildirim", "active": true, "matches": { "nodes": 2 } }
-  ],
-  "note": "3 workflow(s) not in cache — call GET /n8n/workflows/:id to cache them before searching by nodeType"
+  "q": "telegram",
+  "nodeType": "n8n-nodes-base.httpRequest"
 }
 ```
 
-> **Not:** `nodeType` araması sadece daha önce cache'lenmiş workflow'larda çalışır.
-> Cache'lenmemiş workflow'lar `note` alanında bildirilir.
-> `GET /n8n/workflows/:id` çağırarak istediğin workflow'u önce cache'leyebilirsin.
+| Field | Type | Description |
+|-------|------|-------------|
+| `q` | string | Name contains this string (case-insensitive) |
+| `nodeType` | string | Any node in the workflow matches this exact type |
+
+Both fields are optional. If both are provided, results match either condition (OR).
+
+**Response:**
+```json
+[
+  {
+    "id": "abc123",
+    "name": "Webhook to Telegram",
+    "active": true,
+    "matches": { "nodes": 1 }
+  }
+]
+```
 
 ---
 
-## Hata Yanıtları
+## Caching
 
-| HTTP | `error` | Açıklama |
-|------|---------|----------|
-| 400 | `invalid_request` | Geçersiz body veya parametre |
-| 401 | `missing_api_key` | `N8N_API_KEY` tanımlı değil |
-| 401 | `n8n_auth_error` | API key geçersiz |
-| 502 | `network_error` | n8n'e ulaşılamıyor |
-| 502 | `n8n_api_not_supported` | Endpoint bu n8n sürümünde yok |
+### Workflow list
+
+The workflow list is cached at:
+```
+{CATALOG_CACHE_DIR}/n8n-workflows/list.json
+```
+
+TTL is controlled by `WORKFLOWS_TTL_MINUTES` (default: 10 minutes). Short TTL ensures the AI sees recently created or modified workflows.
+
+### Workflow detail
+
+Individual workflow JSONs are cached per-ID at:
+```
+{CATALOG_CACHE_DIR}/n8n-workflows/<id>.json
+```
+
+These are fetched live on first access and cached for the same TTL duration.
 
 ---
 
-## Env Değişkenleri
+## Workflow Update Flow
 
-| Değişken | Varsayılan | Açıklama |
-|----------|-----------|----------|
-| `N8N_API_KEY` | — | n8n API key (zorunlu) |
-| `N8N_BASE_URL` | `http://n8n:5678` | n8n adresi |
-| `N8N_API_BASE` | `/api/v1` | API path prefix |
-| `WORKFLOWS_TTL_MINUTES` | `10` | Liste cache geçerlilik süresi |
-| `CATALOG_CACHE_DIR` | `./cache` | Cache klasörü kökü |
+The recommended flow when modifying an existing workflow:
 
-Cache dosyaları:
-- Liste: `<CATALOG_CACHE_DIR>/n8n-workflows/list.json`
-- Tekil: `<CATALOG_CACHE_DIR>/n8n-workflows/wf-<id>.json`
+```
+1. GET /n8n/workflows/:id       → fetch current JSON
+2. Modify the JSON              → add/remove/edit nodes and connections
+3. POST /n8n/workflow/validate  → validate the modified JSON
+4. POST /n8n/workflow/apply     → apply with mode: "update"
+                                   (workflowJson must include top-level "id")
+```
+
+This prevents the AI from reconstructing a workflow from scratch and accidentally losing nodes or connections that were manually added in n8n.
+
+---
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `N8N_BASE_URL` | `http://n8n:5678` | n8n instance URL |
+| `N8N_API_BASE` | `/api/v1` | n8n REST API base path |
+| `N8N_API_KEY` | — | Required — used to authenticate with n8n |
+| `CATALOG_CACHE_DIR` | `./cache` | Root cache directory |
+| `WORKFLOWS_TTL_MINUTES` | `10` | Minutes before workflow cache expires |
+
+`N8N_API_KEY` is required. Without it, all endpoints return:
+```json
+{ "ok": false, "error": "missing_api_key" }
+```
+
+If n8n is unreachable and no cache exists:
+```json
+{ "ok": false, "error": "n8n_unreachable" }
+```
