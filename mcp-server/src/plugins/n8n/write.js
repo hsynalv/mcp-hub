@@ -43,16 +43,19 @@ export async function applyWorkflow(workflowJson, mode) {
         message: 'workflowJson.id is required for mode="update"',
       };
     }
-    return client.request("PUT", `/workflows/${id}`, normalizePayload(annotated));
+    // id goes in the URL — n8n rejects it in the body ("id is read-only")
+    const { id: _omit, ...rest } = annotated;
+    return client.request("PUT", `/workflows/${id}`, normalizePayload(rest));
   }
 
   if (mode === "upsert") {
     if (id) {
-      const result = await client.request("PUT", `/workflows/${id}`, normalizePayload(annotated));
+      const { id: _omit, ...rest } = annotated;
+      const result = await client.request("PUT", `/workflows/${id}`, normalizePayload(rest));
       const is404 = !result.ok && result.details?.status === 404;
       if (!is404) return result;
     }
-    const { id: _omit, ...rest } = annotated;
+    const { id: _omit2, ...rest } = annotated;
     return client.request("POST", "/workflows", normalizePayload(rest));
   }
 
