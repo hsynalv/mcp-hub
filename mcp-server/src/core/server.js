@@ -10,6 +10,7 @@ export async function createServer() {
   app.use(cors());
   app.use(morgan("dev"));
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   app.get("/health", (req, res) => {
     res.json({ status: "ok" });

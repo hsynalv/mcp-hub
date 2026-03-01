@@ -583,18 +583,23 @@ export function register(app) {
   });
 
   const setupProjectSchema = z.object({
-    // Project fields
     name: z.string().min(1),
     status: z.enum(["Yapılmadı", "Yapılıyor", "Tamamlandı"]).optional().default("Yapılmadı"),
     oncelik: z.enum(["Az", "Normal", "Yüksek"]).optional().default("Normal"),
     baslangic: z.string().optional(),
     bitis: z.string().optional(),
-    // Tasks to create and link
-    tasks: z.array(z.object({
-      gorev: z.string().min(1),
-      sonTarih: z.string().optional(),
-      tamamlandi: z.boolean().optional().default(false),
-    })).optional(),
+    // tasks may arrive as a JSON array (application/json body)
+    // OR as a JSON string (keypair/form body from n8n HTTP Request Tool)
+    tasks: z.union([
+      z.array(z.object({
+        gorev: z.string().min(1),
+        sonTarih: z.string().optional(),
+      })),
+      z.string().transform((s) => {
+        if (!s || !s.trim()) return [];
+        try { return JSON.parse(s); } catch { return []; }
+      }),
+    ]).optional().default([]),
   });
 
   /**
@@ -791,8 +796,8 @@ export function register(app) {
       Status: { status: { name: data.status } },
       Öncelik: { select: { name: data.oncelik } },
     };
-    if (data.baslangic) projectProperties["Başlangıç"] = { date: { start: data.baslangic } };
-    if (data.bitis) projectProperties["bitiş"] = { date: { start: data.bitis } };
+    if (data.baslangic?.trim()) projectProperties["Başlangıç"] = { date: { start: data.baslangic.trim() } };
+    if (data.bitis?.trim()) projectProperties["bitiş"] = { date: { start: data.bitis.trim() } };
 
     const projectRes = await notionRequest("POST", "/pages", {
       parent: { database_id: projectsDbId },
@@ -800,8 +805,9 @@ export function register(app) {
     });
     if (!projectRes.ok) return err(res, 502, projectRes.error, projectRes.details?.message, projectRes.details);
 
-    const projectId = projectRes.data.id;
-    const projectUrl = projectRes.data.url;
+    const projectId  = projectRes.data.id;
+    const projectUrl = projectRes.data.url
+      ?? `https://www.notion.so/${(projectRes.data.id ?? "").replace(/-/g, "")}`;
 
     // ── Step 2: Create all tasks in parallel, linked to project ───────────
     const tasks = data.tasks ?? [];
@@ -809,10 +815,10 @@ export function register(app) {
       tasks.map((task) => {
         const taskProperties = {
           Görev: { title: [{ type: "text", text: { content: task.gorev } }] },
-          "": { checkbox: task.tamamlandi ?? false },
           Projeler: { relation: [{ id: projectId }] },
         };
         if (task.sonTarih) taskProperties["Son Tarih"] = { date: { start: task.sonTarih } };
+        // Notion checkbox field has empty-string name — cannot be written via API, defaults to false
         return notionRequest("POST", "/pages", {
           parent: { database_id: tasksDbId },
           properties: taskProperties,
@@ -864,7 +870,26 @@ export function register(app) {
   router.post("/row", async (req, res) => {
     const databaseId = req.body?.databaseId;
     const title      = req.body?.title;
-    const extra      = req.body?.properties ?? {};
+
+    // properties may arrive as a JSON string (from n8n body) or object — normalize both
+    let rawExtra = req.body?.properties ?? {};
+    if (typeof rawExtra === "string") {
+      try { rawExtra = rawExtra.trim() ? JSON.parse(rawExtra) : {}; }
+      catch { rawExtra = {}; }
+    }
+    const extra = (rawExtra && typeof rawExtra === "object" && !Array.isArray(rawExtra)) ? rawExtra : {};
+
+    // relations: { "Proje": "page-id-of-related-row" } → converted to Notion relation format
+    let rawRelations = req.body?.relations ?? {};
+    if (typeof rawRelations === "string") {
+      try { rawRelations = rawRelations.trim() ? JSON.parse(rawRelations) : {}; }
+      catch { rawRelations = {}; }
+    }
+    if (rawRelations && typeof rawRelations === "object") {
+      for (const [field, pageId] of Object.entries(rawRelations)) {
+        if (pageId) extra[field] = { relation: [{ id: String(pageId) }] };
+      }
+    }
 
     if (!databaseId || typeof databaseId !== "string") {
       return err(res, 400, "missing_databaseId", "Provide databaseId (Notion database ID)");
@@ -892,11 +917,45 @@ export function register(app) {
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
     const page = result.data;
+    const pageUrl = page.url ?? `https://www.notion.so/${(page.id ?? "").replace(/-/g, "")}`;
+
+    // content: optional string or array of block descriptors
+    // If string → wrap as a single paragraph block
+    // If array  → use toNotionBlock() on each item
+    let contentBlocks = [];
+    const rawContent = req.body?.content;
+    if (rawContent) {
+      let parsed = rawContent;
+      if (typeof parsed === "string") {
+        const trimmed = parsed.trim();
+        if (trimmed.startsWith("[")) {
+          try { parsed = JSON.parse(trimmed); } catch { parsed = trimmed; }
+        }
+      }
+      if (typeof parsed === "string" && parsed.trim()) {
+        // Plain text → split by newlines into paragraph blocks
+        contentBlocks = parsed.trim().split(/\n\n+/).map((para) => ({
+          object: "block",
+          type: "paragraph",
+          paragraph: { rich_text: [{ type: "text", text: { content: para.trim() } }] },
+        }));
+      } else if (Array.isArray(parsed)) {
+        contentBlocks = parsed.map(toNotionBlock).filter(Boolean);
+      }
+    }
+
+    if (contentBlocks.length > 0) {
+      await notionRequest("PATCH", `/blocks/${page.id}/children`, {
+        children: contentBlocks,
+      });
+    }
+
     res.json({
       ok: true,
       id: page.id,
-      url: page.url,
+      url: pageUrl,
       title,
+      contentBlocks: contentBlocks.length,
     });
   });
 
