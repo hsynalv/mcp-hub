@@ -321,18 +321,104 @@ Belirli bir execution'ın durumunu sorgular.
 
 ---
 
+## Context Endpoint (AI Agent için)
+
+### `GET /n8n/context?nodes=type1,type2`
+
+**AI Agent'in tek bir call ile ihtiyaç duyduğu her şeyi döner:**
+- Her node için tam schema (properties + credentials)
+- Mevcut n8n credentials listesi (sadece id/name/type)
+- İlgili workflow örnekleri
+
+**Örnek:**
+```bash
+curl "http://host.docker.internal:8787/n8n/context?nodes=webhook,telegram"
+```
+
+**Yanıt:**
+```json
+{
+  "nodes": {
+    "n8n-nodes-base.webhook": { "type": "...", "properties": [...], "credentials": [...] },
+    "n8n-nodes-base.telegram": { "type": "...", "properties": [...], "credentials": [...] }
+  },
+  "credentials": [
+    { "id": "1", "name": "My Telegram Bot", "type": "telegramApi" }
+  ],
+  "examples": [...]
+}
+```
+
+Virgülle ayrılmış node isimleri geçilebilir. Kısa isimler (webhook, telegram) ve tam prefixli isimler (n8n-nodes-base.webhook) desteklenir.
+
+---
+
 ## n8n İçinden Kullanım
 
 n8n workflow'u içindeki **HTTP Request** node'u ile bu endpointleri çağırabilirsin.
 
 n8n Docker container'ı içinden:
 ```
-http://host.docker.internal:8787/n8n/nodes/search?q=slack
+http://host.docker.internal:8787/n8n/context?nodes=webhook,telegram
 ```
 
-**Önerilen akış:**
+**Önerilen akış (minimum tool call):**
+1. `GET /n8n/context?nodes=<tüm_node_isimleri>` → tek call ile her şeyi al
+2. `POST /n8n/workflow/validate` → üretilen workflow'u kontrol et (hata varsa düzelt, tekrar gönder)
+3. `POST /n8n/workflow/apply` → n8n'e kaydet
+
+**Detaylı akış (ihtiyaç halinde):**
 1. `GET /n8n/nodes/search?q=<anahtar_kelime>` → hangi node'un kullanılacağına karar ver
 2. `GET /n8n/nodes/:type` → node'un properties ve credentials detaylarını al
 3. `GET /n8n/examples?intent=<intent>` → benzer bir örnek varsa kullan
 4. `POST /n8n/workflow/validate` → üretilen workflow'u kontrol et
 5. `POST /n8n/workflow/apply` → onaylandıktan sonra n8n'e gönder (write aktifse)
+
+---
+
+## AI Agent System Prompt (n8n)
+
+Aşağıdaki system prompt'u n8n AI Agent node'una yapıştır. Bu prompt iterasyon sayısını minimuma indirir.
+
+```
+You are an n8n workflow builder. Your job is to create correct, minimal n8n workflow JSON and save it.
+
+## EFFICIENCY RULES — READ CAREFULLY
+You have a strict tool call budget. Follow these rules exactly:
+
+1. FIRST CALL: Always call `get_context` with ALL node types you need in a SINGLE call.
+   - Example: ?nodes=webhook,telegram,set  (comma-separated, no spaces)
+   - Do NOT call search_nodes or get_node_detail separately. get_context returns everything.
+   - Do NOT call get_credentials separately. get_context already includes credentials.
+   - Do NOT call get_examples separately. get_context already includes relevant examples.
+
+2. BUILD the workflow JSON from the context you received. Do not call any tool while building.
+
+3. VALIDATE once with validate_workflow. If there are errors, fix ALL of them in one pass, then validate once more.
+
+4. APPLY with apply_workflow using mode=create.
+
+Maximum tool calls for a simple workflow: 3 (get_context → validate → apply)
+Maximum tool calls for a complex workflow: 5
+
+## WORKFLOW JSON RULES
+- Every node MUST have: id (unique string), name, type, typeVersion, position ([x,y]), parameters
+- Connections format: { "SourceNodeName": { "main": [[{ "node": "TargetNodeName", "type": "main", "index": 0 }]] } }
+- Positions: start x=250, y=300. Increment x by 200 for each next node. Keep y=300.
+- typeVersion: use 1 unless you know a specific version from the context.
+- Do NOT include "id" at top level when creating a new workflow.
+
+## CREDENTIAL RULES
+- Match credentials from the context "credentials" list by type.
+- If a credential exists, set: "credentials": { "<credType>": { "id": "<id>", "name": "<name>" } }
+- If no credential exists for a node, skip the credentials field. The workflow will still be created with a note.
+
+## NODE NAMING
+- Use short readable names: "Webhook", "Send Telegram", "Filter", "HTTP Request"
+- Never use the type string as the name.
+
+## WHEN STUCK
+- If get_context returns notFound for a node, try a shorter name (e.g. "slack" instead of "n8n-nodes-base.slack").
+- If validate_workflow returns errors, fix all errors before calling again.
+- Never call the same tool with the same arguments twice.
+```

@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from "fs";
+import { join, resolve } from "path";
 import { Router } from "express";
 import { fetchCatalog } from "./catalog.provider.js";
 import { loadFromDisk, saveToDisk, isFresh } from "./catalog.store.js";
@@ -62,6 +64,96 @@ function requireWrite(res) {
 export function register(app) {
   const router = Router();
 
+  // ── Context (single-call bootstrap for AI agents) ────────────────────────
+  //
+  // GET  /n8n/context?nodes=webhook,telegram
+  // POST /n8n/context  body: { "nodes": "webhook,telegram" }
+  //                    body: { "nodes": ["webhook","telegram"] }  (array also accepted)
+  //
+  // Returns everything the AI needs to build a workflow in ONE request:
+  //   - Full detail for each requested node type
+  //   - All available credentials (id + name + type only)
+  //   - Relevant examples (matched by node name keywords)
+  //
+  // Reduces typical AI iteration from 6+ calls to 1.
+
+  function handleContext(req, res) {
+    const catalog = requireCatalog(res);
+    if (!catalog) return;
+
+    // Accept nodes from query string (GET) OR request body (POST)
+    const rawNodes =
+      req.query.nodes ??          // GET  ?nodes=webhook,telegram
+      req.body?.nodes ??          // POST { "nodes": "webhook,telegram" }
+      "";
+
+    // Accept both comma-separated string and array
+    const nodeNames = (
+      Array.isArray(rawNodes)
+        ? rawNodes
+        : String(rawNodes).split(",")
+    )
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!nodeNames.length) {
+      return res.status(400).json({
+        error: "invalid_query",
+        message: 'Send POST body { "nodes": "webhook,slack,gmail" } or GET ?nodes=webhook,slack,gmail',
+      });
+    }
+
+    // Resolve each node name → detail (same fuzzy matching as /nodes/:type)
+    const nodes = {};
+    const notFound = [];
+    for (const name of nodeNames) {
+      const result = getNodeDetail(catalog.nodes, name);
+      if (!result) {
+        notFound.push(name);
+      } else if (result.ok === false) {
+        // node found but no properties; include summary only
+        nodes[name] = { _note: result.error };
+      } else {
+        nodes[result.node.type] = result.node;
+      }
+    }
+
+    // Load credentials from n8n-credentials plugin cache if available (no secrets)
+    let credentials = [];
+    try {
+      const credPath = resolve(
+        join(config.catalog.cacheDir, "n8n-credentials", "credentials.json")
+      );
+      if (existsSync(credPath)) {
+        const raw = JSON.parse(readFileSync(credPath, "utf8"));
+        credentials = raw.items ?? [];
+      }
+    } catch {
+      // credentials unavailable — continue without them
+    }
+
+    // Match relevant examples by node name keywords in intent or description
+    const allExamples = listExamples();
+    const lowerNames = nodeNames.map((n) => n.toLowerCase().replace(/^[a-z0-9-]+\./, ""));
+    const relevantExamples = allExamples.filter((ex) =>
+      lowerNames.some(
+        (name) =>
+          ex.intent.toLowerCase().includes(name) ||
+          ex.description.toLowerCase().includes(name)
+      )
+    );
+
+    res.json({
+      nodes,
+      credentials,
+      examples: relevantExamples,
+      ...(notFound.length ? { notFound } : {}),
+    });
+  }
+
+  router.get("/context", handleContext);
+  router.post("/context", handleContext);
+
   // ── Catalog management ───────────────────────────────────────────────────
 
   router.get("/catalog/status", (req, res) => {
@@ -119,7 +211,22 @@ export function register(app) {
 
     const result = getNodeDetail(catalog.nodes, parsed.data.type);
     if (!result) {
-      return res.status(404).json({ ok: false, error: "node_not_found" });
+      // Help the AI understand what went wrong and how to recover
+      const suggestion = catalog.nodes
+        .filter((n) =>
+          n.type.toLowerCase().includes(parsed.data.type.toLowerCase()) ||
+          n.displayName.toLowerCase().includes(parsed.data.type.toLowerCase())
+        )
+        .slice(0, 5)
+        .map((n) => ({ type: n.type, displayName: n.displayName }));
+
+      return res.status(404).json({
+        ok: false,
+        error: "node_not_found",
+        searched: parsed.data.type,
+        hint: "Use the exact 'type' field from search_nodes results. Example: n8n-nodes-base.slack",
+        suggestions: suggestion.length ? suggestion : undefined,
+      });
     }
 
     res.json(result);

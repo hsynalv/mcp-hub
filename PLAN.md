@@ -13,6 +13,8 @@ Mevcut plugin sistemi değişmez, yeni plugin sadece `register(app)` export eder
 | Plugin | Konum | Durum |
 |--------|-------|-------|
 | n8n | `src/plugins/n8n/` | ✅ Hazır |
+| n8n-credentials | `src/plugins/n8n-credentials/` | ✅ Hazır |
+| n8n-workflows | `src/plugins/n8n-workflows/` | ✅ Hazır |
 
 ---
 
@@ -20,10 +22,10 @@ Mevcut plugin sistemi değişmez, yeni plugin sadece `register(app)` export eder
 
 ---
 
-### P1 — `n8n-credentials`
+### P1 — `n8n-credentials` ✅
 
 **Klasör:** `src/plugins/n8n-credentials/`
-**Öncelik:** Kritik
+**Öncelik:** Kritik — **TAMAMLANDI**
 
 **Sorun:** AI şu an credential isimlerini tahmin ediyor.
 `"slackApi"` yazıyor ama n8n'de gerçek isim `"Slack - Şirket"` olabilir.
@@ -59,9 +61,9 @@ src/plugins/n8n-credentials/
   README.md
 ```
 
-**Sorular / Kararlar:**
-- [ ] Cache TTL ne olsun? (credential'lar sık değişmez, 1 saat yeterli mi?)
-- [ ] Credential value (şifre, token) asla dönmemeli — sadece id/name/type. Onay?
+**Kararlar:**
+- [x] Cache TTL → `CREDENTIALS_TTL_MINUTES=60` (1 saat, env ile değiştirilebilir)
+- [x] Credential value asla dönmez — sadece `id/name/type` ✅
 
 ---
 
@@ -118,10 +120,10 @@ src/plugins/openapi/
 
 ---
 
-### P3 — `n8n-workflows`
+### P3 — `n8n-workflows` ✅
 
 **Klasör:** `src/plugins/n8n-workflows/`
-**Öncelik:** Orta-Yüksek
+**Öncelik:** Orta-Yüksek — **TAMAMLANDI**
 
 **Sorun:** AI sıfırdan workflow üretiyor, ama senin n8n'inde benzer
 workflow'lar zaten var. Onları template olarak kullanabilirse çok daha hızlı
@@ -149,9 +151,9 @@ src/plugins/n8n-workflows/
 **Not:** Bu plugin `n8n-credentials` plugin'inden bağımsız çalışır ama
 ikisi birlikte kullanılınca AI'ın context'i çok güçlenir.
 
-**Sorular / Kararlar:**
-- [ ] Workflow içerikleri cache'lenmeli mi yoksa her seferinde canlı çekilmeli mi?
-- [ ] Kaç workflow'un var? 10? 100? (büyük listelerde pagination gerekebilir)
+**Kararlar:**
+- [x] Cache uygulandı → liste (`list.json`) + tekil (`wf-<id>.json`), TTL: `WORKFLOWS_TTL_MINUTES=10`
+- [x] Pagination destekleniyor → `nextCursor` ile tüm sayfalar çekilir
 
 ---
 
@@ -313,17 +315,26 @@ GET  /linear/issue/:id           → issue detayı
 
 ## Genel Kararlar (Tüm Pluginler İçin)
 
-- [ ] Cache dosyaları nerede durmalı? `cache/<plugin>/` mi, `data/<plugin>/` mi?
-- [ ] Plugin'ler arası veri paylaşımı gerekecek mi? (örn: schema plugin + n8n plugin)
-- [ ] Her plugin'in kendi TTL ayarı mı olsun env'de, yoksa global `CATALOG_TTL_HOURS` yeterli mi?
-- [ ] Hangi plugin önce yapılsın?
+- [x] Cache dosyaları → `cache/<plugin>/` altında (örn: `cache/n8n-credentials/`, `cache/n8n-workflows/`)
+- [x] Plugin'ler arası bağımlılık yok → her plugin bağımsız, `config.js` üzerinden env paylaşımı
+- [x] Her plugin'in kendi TTL env'i var (`CREDENTIALS_TTL_MINUTES`, `WORKFLOWS_TTL_MINUTES`)
 
 ---
 
-## Sıradaki Adım
+## Tamamlananlar
+
+| Sıra | Plugin | Durum |
+|------|--------|-------|
+| ✅ | n8n (catalog, nodes, examples, validate, write) | Tamamlandı |
+| ✅ | n8n-credentials | Tamamlandı |
+| ✅ | n8n-workflows | Tamamlandı |
+
+## Sıradaki Adım (n8n dışı pluginler)
 
 ```
-1. n8n-credentials   → hızlı, yüksek etki, n8n API zaten hazır
-2. openapi           → HTTP Request kullanan her workflow için kritik
-3. n8n-workflows     → mevcut workflow'ları context olarak kullanmak için
+P2 → openapi      → HTTP Request node doğruluğu için
+P4 → schema       → Set/Code node veri şeması için
+P5 → snippets     → tekrarlayan node blokları için
+P6 → github       → workflow versiyonlama / kod okuma
+P7 → jira/linear  → ticket'tan workflow üretme
 ```

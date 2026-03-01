@@ -63,10 +63,18 @@ function normalize(raw) {
     ? [raw.outputs]
     : ["main"];
 
+  // n8n-nodes-base package descriptions use short names ("telegram", "slack").
+  // Workflows require the full prefixed type ("n8n-nodes-base.telegram").
+  const shortName = raw.name ?? raw.type ?? "unknown";
+  const fullType =
+    shortName === "unknown" || shortName.includes(".")
+      ? shortName
+      : `n8n-nodes-base.${shortName}`;
+
   const node = {
-    type: raw.name ?? raw.type ?? "unknown",
+    type: fullType,
     displayName: raw.displayName ?? raw.name ?? "Unknown",
-    name: raw.name ?? raw.type ?? "unknown",
+    name: shortName,
     group: Array.isArray(raw.group) ? raw.group : [],
     description: raw.description ?? "",
     version,
@@ -110,13 +118,8 @@ function extractFromModule(mod) {
     try {
       const instance = new exported();
 
-      // Regular node: description is directly on the instance
-      if (instance.description?.name) {
-        results.push(normalize(instance.description));
-        continue;
-      }
-
-      // Versioned node: pick the highest version
+      // Versioned node — check FIRST. These have a base description with no
+      // properties; the real per-version descriptions live in nodeVersions.
       if (instance.nodeVersions && typeof instance.nodeVersions === "object") {
         const versions = Object.keys(instance.nodeVersions)
           .map(Number)
@@ -125,6 +128,12 @@ function extractFromModule(mod) {
         if (latest?.description?.name) {
           results.push(normalize(latest.description));
         }
+        continue;
+      }
+
+      // Regular node: description with properties is directly on the instance
+      if (instance.description?.name) {
+        results.push(normalize(instance.description));
       }
     } catch {
       // Skip nodes that fail to instantiate

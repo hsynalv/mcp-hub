@@ -26,10 +26,14 @@ export function searchNodes(nodes, { q, group, limit = 20 }) {
 
   if (q) {
     const lq = q.toLowerCase();
+    // Also strip package prefix so "n8n-nodes-base.webhook" matches "webhook"
+    const lqShort = lq.replace(/^[a-z0-9-]+\./, "");
     results = results.filter(
       (n) =>
         n.type.toLowerCase().includes(lq) ||
+        n.type.toLowerCase().includes(lqShort) ||
         n.displayName.toLowerCase().includes(lq) ||
+        n.displayName.toLowerCase().includes(lqShort) ||
         n.description.toLowerCase().includes(lq)
     );
   }
@@ -38,14 +42,36 @@ export function searchNodes(nodes, { q, group, limit = 20 }) {
 }
 
 /**
- * Get full node detail by type string (e.g. n8n-nodes-base.webhook).
+ * Get full node detail by type string.
+ * Matching priority (most → least specific):
+ *   1. Exact type    e.g. "n8n-nodes-base.slack"
+ *   2. Exact name    e.g. "slack"
+ *   3. Case-insensitive type
+ *   4. Case-insensitive displayName  e.g. "Slack"
+ *   5. Partial type suffix           e.g. "slack" matches "n8n-nodes-base.slack"
+ *
+ * This allows the AI to pass short names like "slack" or "Slack" and still
+ * get a result instead of a 404.
+ *
  * @param {object[]} nodes
  * @param {string} type
  * @returns {{ ok: true, node: object } | { ok: false, error: string } | null}
  *   null means the node type was not found at all.
  */
 export function getNodeDetail(nodes, type) {
-  const node = nodes.find((n) => n.type === type || n.name === type);
+  const lower = type.toLowerCase();
+  // Strip package prefix: "n8n-nodes-base.webhook" → "webhook"
+  const shortName = lower.replace(/^[a-z0-9-]+\./, "");
+
+  const node =
+    nodes.find((n) => n.type === type) ??                                  // exact: "n8n-nodes-base.webhook"
+    nodes.find((n) => n.name === type) ??                                  // exact name match
+    nodes.find((n) => n.type.toLowerCase() === lower) ??                   // case-insensitive full type
+    nodes.find((n) => n.displayName.toLowerCase() === lower) ??            // display name: "Webhook"
+    nodes.find((n) => n.type.toLowerCase() === shortName) ??               // prefix stripped: "webhook"
+    nodes.find((n) => n.displayName.toLowerCase() === shortName) ??        // display name stripped
+    nodes.find((n) => n.type.toLowerCase().endsWith(`.${lower}`));         // suffix fallback
+
   if (!node) return null;
 
   const { _properties, _credentials, ...summary } = node;

@@ -18,12 +18,26 @@ export const examplesQuerySchema = z.object({
 
 // ── Write operation body schemas ──────────────────────────────────────────
 
-const workflowJsonField = z
-  .any()
-  .refine(
-    (v) => v !== null && typeof v === "object" && !Array.isArray(v),
-    { message: "workflowJson must be a non-null, non-array object" }
-  );
+// Accept both a plain object AND a JSON string (AI tools sometimes stringify).
+// z.preprocess runs before schema validation — parse string → object first.
+const workflowJsonField = z.preprocess(
+  (v) => {
+    if (typeof v === "string") {
+      try {
+        return JSON.parse(v);
+      } catch {
+        return v;
+      }
+    }
+    return v;
+  },
+  z
+    .any()
+    .refine(
+      (v) => v !== null && typeof v === "object" && !Array.isArray(v),
+      { message: "workflowJson must be a non-null, non-array object" }
+    )
+);
 
 export const applyWorkflowBodySchema = z.object({
   workflowJson: workflowJsonField,
@@ -42,12 +56,7 @@ export const getExecutionBodySchema = z.object({
 // ── Workflow validate body schema ─────────────────────────────────────────
 
 export const workflowValidateBodySchema = z.object({
-  workflowJson: z
-    .any()
-    .refine(
-      (v) => v !== null && typeof v === "object" && !Array.isArray(v),
-      { message: "workflowJson must be a non-null, non-array object" }
-    ),
+  workflowJson: workflowJsonField,
 });
 
 // ── Semantic workflow validator ───────────────────────────────────────────
