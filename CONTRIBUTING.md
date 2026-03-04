@@ -6,7 +6,7 @@ Thank you for your interest in contributing to AI-Hub! This document provides gu
 
 1. **Fork the repository**
    ```bash
-   git clone [https://github.com/your-username/ai-hub.git](https://github.com/hsynalv/mcp-hub.git)
+   git clone https://github.com/hsynalv/mcp-hub.git
    cd ai-hub
    ```
 
