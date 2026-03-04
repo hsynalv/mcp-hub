@@ -1,7 +1,8 @@
 import express from "express";
+import "express-async-errors";
 import cors from "cors";
 import morgan from "morgan";
-import { AppError } from "./errors.js";
+import { AppError, NotFoundError } from "./errors.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
@@ -77,11 +78,27 @@ export async function createServer() {
 
   await loadPlugins(app);
 
+  // ── 404 handler ────────────────────────────────────────────────────────────
+
+  app.use((req, res, next) => next(new NotFoundError(`Route not found: ${req.method} ${req.path}`)));
+
   // ── Error handler ──────────────────────────────────────────────────────────
 
   app.use((err, req, res, next) => {
     const status = err instanceof AppError ? err.statusCode : 500;
-    res.status(status).json({ error: err.message ?? "Internal server error" });
+    const payload = err.serialize ? err.serialize() : { ok: false, error: "internal_error", message: err.message ?? "Internal server error" };
+
+    if (process.env.NODE_ENV === "development") {
+      console.error("[ERROR]", err.stack ?? err);
+    } else {
+      console.error("[ERROR]", err.message ?? err);
+    }
+
+    if (process.env.SENTRY_DSN) {
+      import("@sentry/node").then((m) => m.default).then((Sentry) => Sentry.captureException(err)).catch(() => {});
+    }
+
+    res.status(status).json(payload);
   });
 
   return app;

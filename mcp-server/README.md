@@ -2,6 +2,8 @@
 
 > A plugin-based HTTP knowledge service that gives AI agents structured access to external tools and platforms.
 
+📐 **[Mimari Dokümantasyonu (ARCHITECTURE.md)](./ARCHITECTURE.md)** — Grafikler, plugin yapısı, veri akışı
+
 **mcp-hub** bridges the gap between an AI agent (running inside n8n, Cursor, or any LLM environment) and the services it needs. It exposes clean REST endpoints so the AI can search node catalogs, manage credentials, inspect workflows, analyze GitHub repos, and document everything in Notion — all without making LLM calls itself.
 
 ---
@@ -35,9 +37,9 @@ Without a dedicated service, the agent has to guess — and gets it wrong. **mcp
 │  │ n8n  │ │n8n-    │ │n8n-    │ │ github │  │
 │  │      │ │creds   │ │workfl. │ │        │  │
 │  └──────┘ └────────┘ └────────┘ └────────┘  │
-│                           ┌────────────────┐ │
-│                           │     notion     │ │
-│                           └────────────────┘ │
+│  ┌────────────┐ ┌──────────┐ ┌────────────┐ │
+│  │file-storage│ │ database │ │   notion   │ │
+│  └────────────┘ └──────────┘ └────────────┘ │
 └─────────────────────────────────────────────┘
 ```
 
@@ -58,6 +60,8 @@ Without a dedicated service, the agent has to guess — and gets it wrong. **mcp
 | [n8n-workflows](./src/plugins/n8n-workflows/README.md) | `/n8n/workflows` | Workflow list, detail, and search |
 | [github](./src/plugins/github/README.md) | `/github` | Read access to public and private GitHub repos |
 | [notion](./src/plugins/notion/README.md) | `/notion` | Create and manage pages, databases, and tasks in Notion |
+| [file-storage](./src/plugins/file-storage/README.md) | `/file-storage` | S3, Google Drive, local file operations |
+| [database](./src/plugins/database/README.md) | `/database` | MSSQL, PostgreSQL, MongoDB queries and CRUD |
 
 ---
 

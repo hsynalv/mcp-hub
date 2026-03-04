@@ -14,13 +14,20 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1001.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "express-async-errors": "^3.1.1",
+    "googleapis": "^171.4.0",
+    "js-yaml": "^4.1.1",
+    "mongodb": "^7.1.0",
     "morgan": "^1.10.0",
+    "mssql": "^12.2.0",
     "n8n-core": "^1.122.16",
     "n8n-nodes-base": "^1.121.15",
     "n8n-workflow": "^1.120.9",
+    "pg": "^8.19.0",
     "zod": "^3.23.8"
   }
 }

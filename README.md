@@ -57,21 +57,25 @@ curl -X POST http://localhost:8787/n8n/catalog/refresh
 
 ```
 mcp-hub/
-├── mcp-server/                   # Main application
+├── mcp-server/                   # Tek uygulama (port 8787)
 │   ├── src/
-│   │   ├── core/                 # Server bootstrap, plugin loader, config
+│   │   ├── core/                 # Server, plugin loader, auth, audit
 │   │   └── plugins/
 │   │       ├── n8n/              # Node catalog, context, validation, write
 │   │       ├── n8n-credentials/  # Credential metadata
 │   │       ├── n8n-workflows/    # Workflow list & detail
 │   │       ├── github/           # GitHub repo analysis
-│   │       └── notion/           # Notion pages, databases, tasks
+│   │       ├── notion/           # Notion pages, databases, tasks
+│   │       ├── http/             # Kontrollü HTTP istekleri
+│   │       ├── openapi/          # OpenAPI spec, kod üretimi
+│   │       └── ...
 │   ├── cache/                    # Disk cache (gitignored)
 │   ├── .env.example
 │   ├── Dockerfile
-│   ├── project-planner-workflow.json  # Ready-to-import n8n workflow
-│   ├── system_prompt.md          # AI Agent system prompt
-│   └── README.md                 # Full documentation
+│   ├── project-planner-workflow.json
+│   ├── system_prompt.md
+│   ├── ARCHITECTURE.md           # Mimari dokümantasyonu
+│   └── README.md
 └── PLAN.md                       # Plugin roadmap
 ```
 

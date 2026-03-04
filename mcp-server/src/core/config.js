@@ -26,4 +26,27 @@ export const config = {
     projectsDbId: process.env.NOTION_PROJECTS_DB_ID || "",
     tasksDbId: process.env.NOTION_TASKS_DB_ID || "",
   },
+  http: {
+    allowedDomains:   process.env.HTTP_ALLOWED_DOMAINS || "",
+    blockedDomains:   process.env.HTTP_BLOCKED_DOMAINS || "",
+    maxResponseSizeKb:Number(process.env.HTTP_MAX_RESPONSE_SIZE_KB) || 512,
+    defaultTimeoutMs: Number(process.env.HTTP_DEFAULT_TIMEOUT_MS) || 10000,
+    rateLimitRpm:     Number(process.env.HTTP_RATE_LIMIT_RPM) || 60,
+    cacheTtlSeconds:  Number(process.env.HTTP_CACHE_TTL_SECONDS) || 300,
+  },
+  openapi: {
+    cacheDir: process.env.OPENAPI_CACHE_DIR || "./cache/openapi",
+  },
+  sentry: {
+    dsn: process.env.SENTRY_DSN || "",
+  },
+  fileStorage: {
+    localRoot: process.env.FILE_STORAGE_LOCAL_ROOT || "./cache/files",
+    maxFileSizeMb: Number(process.env.FILE_STORAGE_MAX_MB) || 50,
+  },
+  database: {
+    mssqlConnectionString: process.env.MSSQL_CONNECTION_STRING || "",
+    pgConnectionString: process.env.PG_CONNECTION_STRING || "",
+    mongodbUri: process.env.MONGODB_URI || "",
+  },
 };

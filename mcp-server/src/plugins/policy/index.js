@@ -1,0 +1,144 @@
+import { Router } from "express";
+import { z } from "zod";
+import { requireScope } from "../../core/auth.js";
+import {
+  listRules,
+  addRule,
+  removeRule,
+  listApprovals,
+  updateApprovalStatus,
+} from "./policy.store.js";
+import { evaluate } from "./policy.engine.js";
+
+export const name = "policy";
+export const version = "1.0.0";
+export const description = "Policy engine with rule-based access control, approval queue, dry-run, and rate limits";
+export const capabilities = ["read", "write"];
+export const requires = [];
+export const endpoints = [
+  { method: "GET",    path: "/policy/rules",                 description: "List all policy rules",        scope: "read"   },
+  { method: "POST",   path: "/policy/rules",                 description: "Add a policy rule",            scope: "danger" },
+  { method: "DELETE", path: "/policy/rules/:id",             description: "Remove a policy rule",         scope: "danger" },
+  { method: "GET",    path: "/policy/approvals",             description: "List approval requests",       scope: "read"   },
+  { method: "POST",   path: "/policy/approvals/:id/approve", description: "Approve a request",            scope: "danger" },
+  { method: "POST",   path: "/policy/approvals/:id/reject",  description: "Reject a request",             scope: "danger" },
+  { method: "POST",   path: "/policy/evaluate",              description: "Test a request against policy", scope: "read"   },
+  { method: "GET",    path: "/policy/health",                description: "Plugin health",                scope: "read"   },
+];
+export const examples = [
+  'POST /policy/rules  body: {"pattern":"POST /notion/rows/archive","action":"require_approval","description":"Bulk delete needs approval"}',
+  "GET  /policy/approvals?status=pending",
+  'POST /policy/evaluate  body: {"method":"POST","path":"/notion/rows/archive"}',
+];
+
+const ruleSchema = z.object({
+  id:          z.string().optional(),
+  pattern:     z.string().min(1, "Pattern is required (e.g. 'POST /notion/rows/archive')"),
+  action:      z.enum(["require_approval", "dry_run_first", "rate_limit", "block"]),
+  scope:       z.enum(["read", "write", "danger"]).optional(),
+  description: z.string().optional(),
+  limit:       z.number().int().positive().optional(),
+  window:      z.string().optional(),
+  enabled:     z.boolean().optional(),
+});
+
+const evaluateSchema = z.object({
+  method: z.string().min(1),
+  path:   z.string().min(1),
+  body:   z.any().optional(),
+});
+
+function validate(schema, body, res) {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    res.status(400).json({ ok: false, error: "invalid_request", details: result.error.flatten() });
+    return null;
+  }
+  return result.data;
+}
+
+export function register(app) {
+  const router = Router();
+
+  router.get("/health", requireScope("read"), (_req, res) => {
+    res.json({ ok: true, status: "healthy", plugin: name, version });
+  });
+
+  /**
+   * GET /policy/rules
+   */
+  router.get("/rules", requireScope("read"), (_req, res) => {
+    const rules = listRules();
+    res.json({ ok: true, count: rules.length, rules });
+  });
+
+  /**
+   * POST /policy/rules
+   */
+  router.post("/rules", requireScope("danger"), (req, res) => {
+    const data = validate(ruleSchema, req.body, res);
+    if (!data) return;
+
+    if (data.action === "rate_limit" && (!data.limit || !data.window)) {
+      return res.status(400).json({
+        ok:      false,
+        error:   "invalid_request",
+        message: "rate_limit action requires both 'limit' (number) and 'window' (e.g. '1h', '1d') fields",
+      });
+    }
+
+    const rule = addRule(data);
+    res.status(201).json({ ok: true, rule });
+  });
+
+  /**
+   * DELETE /policy/rules/:id
+   */
+  router.delete("/rules/:id", requireScope("danger"), (req, res) => {
+    const existed = removeRule(req.params.id);
+    if (!existed) return res.status(404).json({ ok: false, error: "not_found" });
+    res.json({ ok: true, deleted: req.params.id });
+  });
+
+  /**
+   * GET /policy/approvals
+   * Optional filter: ?status=pending|approved|rejected
+   */
+  router.get("/approvals", requireScope("read"), (req, res) => {
+    const { status } = req.query;
+    const approvals = listApprovals({ status });
+    res.json({ ok: true, count: approvals.length, approvals });
+  });
+
+  /**
+   * POST /policy/approvals/:id/approve
+   */
+  router.post("/approvals/:id/approve", requireScope("danger"), (req, res) => {
+    const approval = updateApprovalStatus(req.params.id, "approved");
+    if (!approval) return res.status(404).json({ ok: false, error: "not_found" });
+    res.json({ ok: true, approval });
+  });
+
+  /**
+   * POST /policy/approvals/:id/reject
+   */
+  router.post("/approvals/:id/reject", requireScope("danger"), (req, res) => {
+    const approval = updateApprovalStatus(req.params.id, "rejected");
+    if (!approval) return res.status(404).json({ ok: false, error: "not_found" });
+    res.json({ ok: true, approval });
+  });
+
+  /**
+   * POST /policy/evaluate
+   * Test a hypothetical request against all policies without executing.
+   */
+  router.post("/evaluate", requireScope("read"), (req, res) => {
+    const data = validate(evaluateSchema, req.body, res);
+    if (!data) return;
+
+    const result = evaluate(data.method, data.path, data.body, "manual-test");
+    res.json({ ok: true, result });
+  });
+
+  app.use("/policy", router);
+}
