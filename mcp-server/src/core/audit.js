@@ -37,6 +37,8 @@ function maskBody(body) {
   return out;
 }
 
+export { maskBody };
+
 function inferPlugin(path) {
   const match = path.match(/^\/(n8n|credentials|github|notion|jobs|audit|openapi|http|secrets|projects|policy|observability|file-storage|database)/);
   return match ? match[1] : "core";

@@ -13,16 +13,19 @@ describe("Smoke Tests", () => {
 
   beforeAll(async () => {
     app = await createServer();
-    await new Promise((resolve) => {
-      server = app.listen(0, () => { // 0 = random available port
+    await new Promise((resolve, reject) => {
+      server = app.listen(0, (err) => { // 0 = random available port
+        if (err) return reject(err);
         port = server.address().port;
         resolve();
       });
     });
-  });
+  }, 30000); // 30 second timeout for server boot
 
   afterAll(async () => {
-    await new Promise((resolve) => server.close(resolve));
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it("should boot without errors", async () => {
