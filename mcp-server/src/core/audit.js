@@ -62,10 +62,19 @@ function pushLog(entry) {
   writeToFile(entry);
 }
 
+function makeRequestId() {
+  return "req-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 /**
  * Express middleware — attach to app before routes.
+ * Sets req.requestId (from x-request-id header or generated).
+ * Adds x-request-id to response headers.
  */
 export function auditMiddleware(req, res, next) {
+  req.requestId = req.headers["x-request-id"] || makeRequestId();
+  res.setHeader("x-request-id", req.requestId);
+
   const start = Date.now();
   const originalJson = res.json.bind(res);
   let responseSummary = null;
@@ -84,9 +93,10 @@ export function auditMiddleware(req, res, next) {
     const status   = res.statusCode < 400 ? "success" : res.statusCode < 500 ? "client_error" : "server_error";
 
     const entry = {
-      timestamp: new Date().toISOString(),
-      method: req.method,
-      path: req.path,
+      timestamp:  new Date().toISOString(),
+      requestId:  req.requestId,
+      method:     req.method,
+      path:       req.path,
       plugin,
       duration,
       statusCode: res.statusCode,
@@ -114,16 +124,22 @@ export function getLogs({ plugin, status, limit = 100 } = {}) {
 
 /** Return aggregate stats per plugin. */
 export function getStats() {
-  const stats = {};
+  const byPlugin = {};
+  let total = 0;
+  let errors = 0;
+
   for (const e of ring) {
-    if (!stats[e.plugin]) stats[e.plugin] = { total: 0, success: 0, client_error: 0, server_error: 0, avgDuration: 0, _totalDuration: 0 };
-    const s = stats[e.plugin];
+    total++;
+    if (e.status !== "success") errors++;
+
+    if (!byPlugin[e.plugin]) byPlugin[e.plugin] = { total: 0, success: 0, client_error: 0, server_error: 0, avgDuration: 0, _totalDuration: 0 };
+    const s = byPlugin[e.plugin];
     s.total++;
     s[e.status] = (s[e.status] || 0) + 1;
     s._totalDuration += e.duration;
     s.avgDuration = Math.round(s._totalDuration / s.total);
   }
-  // Clean up internal field
-  for (const s of Object.values(stats)) delete s._totalDuration;
-  return stats;
+  for (const s of Object.values(byPlugin)) delete s._totalDuration;
+
+  return { total, errors, byPlugin };
 }

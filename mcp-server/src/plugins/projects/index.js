@@ -17,6 +17,7 @@ export const capabilities = ["read", "write"];
 export const requires = [];
 export const endpoints = [
   { method: "GET",    path: "/projects",            description: "List all projects",             scope: "read"   },
+  { method: "GET",    path: "/projects/validate",   description: "Validate project config",      scope: "read"   },
   { method: "POST",   path: "/projects",            description: "Create a new project",          scope: "write"  },
   { method: "GET",    path: "/projects/:name",      description: "Get project detail",            scope: "read"   },
   { method: "GET",    path: "/projects/:name/:env", description: "Get resolved env config",      scope: "read"   },
@@ -68,6 +69,46 @@ export function register(app) {
   router.get("/", requireScope("read"), (_req, res) => {
     const projects = listProjects();
     res.json({ ok: true, count: projects.length, projects });
+  });
+
+  /**
+   * GET /projects/validate
+   * Validate project config. Query: ?name=projectKey or ?name=projectKey&env=dev
+   * Returns missing/invalid fields.
+   */
+  router.get("/validate", requireScope("read"), (req, res) => {
+    const { name: projectName, env } = req.query;
+    if (!projectName) {
+      return res.status(400).json({ ok: false, error: "invalid_request", message: "Query param 'name' (project key) required" });
+    }
+
+    const project = getProject(projectName);
+    if (!project) {
+      return res.json({ ok: false, valid: false, errors: [{ field: "project", message: `Project "${projectName}" not found` }] });
+    }
+
+    const errors = [];
+    if (!project.name) errors.push({ field: "name", message: "Project name is required" });
+
+    if (env) {
+      const envConfig = project.envs?.[env];
+      if (!envConfig) {
+        errors.push({ field: "env", message: `Env "${env}" not found`, availableEnvs: Object.keys(project.envs ?? {}) });
+      } else {
+        // Optional: validate env config fields
+        if (envConfig.n8nBaseUrl && !envConfig.n8nBaseUrl.startsWith("http")) {
+          errors.push({ field: "n8nBaseUrl", message: "Must be a valid URL" });
+        }
+      }
+    }
+
+    res.json({
+      ok:    errors.length === 0,
+      valid: errors.length === 0,
+      project: projectName,
+      env:    env ?? null,
+      errors,
+    });
   });
 
   /**

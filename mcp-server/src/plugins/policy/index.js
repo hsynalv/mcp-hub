@@ -1,3 +1,6 @@
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
@@ -10,6 +13,8 @@ import {
 } from "./policy.store.js";
 import { evaluate } from "./policy.engine.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 export const name = "policy";
 export const version = "1.0.0";
 export const description = "Policy engine with rule-based access control, approval queue, dry-run, and rate limits";
@@ -17,13 +22,16 @@ export const capabilities = ["read", "write"];
 export const requires = [];
 export const endpoints = [
   { method: "GET",    path: "/policy/rules",                 description: "List all policy rules",        scope: "read"   },
-  { method: "POST",   path: "/policy/rules",                 description: "Add a policy rule",            scope: "danger" },
-  { method: "DELETE", path: "/policy/rules/:id",             description: "Remove a policy rule",         scope: "danger" },
-  { method: "GET",    path: "/policy/approvals",             description: "List approval requests",       scope: "read"   },
+  { method: "GET",    path: "/policy/presets",               description: "List preset rules",            scope: "read"   },
+  { method: "POST",   path: "/policy/rules/load-preset",      description: "Load a preset rule",          scope: "danger" },
+  { method: "POST",   path: "/policy/rules",                  description: "Add a policy rule",            scope: "danger" },
+  { method: "DELETE", path: "/policy/rules/:id",              description: "Remove a policy rule",         scope: "danger" },
+  { method: "GET",    path: "/policy/approvals",              description: "List approval requests",       scope: "read"   },
   { method: "POST",   path: "/policy/approvals/:id/approve", description: "Approve a request",            scope: "danger" },
-  { method: "POST",   path: "/policy/approvals/:id/reject",  description: "Reject a request",             scope: "danger" },
+  { method: "POST",   path: "/policy/approvals/:id/reject",   description: "Reject a request",             scope: "danger" },
   { method: "POST",   path: "/policy/evaluate",              description: "Test a request against policy", scope: "read"   },
-  { method: "GET",    path: "/policy/health",                description: "Plugin health",                scope: "read"   },
+  { method: "POST",   path: "/policy/simulate",              description: "Simulate with explanation",     scope: "read"   },
+  { method: "GET",    path: "/policy/health",                 description: "Plugin health",                scope: "read"   },
 ];
 export const examples = [
   'POST /policy/rules  body: {"pattern":"POST /notion/rows/archive","action":"require_approval","description":"Bulk delete needs approval"}',
@@ -129,6 +137,47 @@ export function register(app) {
   });
 
   /**
+   * GET /policy/presets
+   * Returns built-in preset rules (not yet loaded).
+   */
+  router.get("/presets", requireScope("read"), (_req, res) => {
+    try {
+      const raw = readFileSync(join(__dirname, "presets.json"), "utf8");
+      const { presets } = JSON.parse(raw);
+      res.json({ ok: true, count: presets.length, presets });
+    } catch {
+      res.json({ ok: true, count: 0, presets: [] });
+    }
+  });
+
+  /**
+   * POST /policy/rules/load-preset
+   * Load a preset rule by id into active rules.
+   */
+  router.post("/rules/load-preset", requireScope("danger"), (req, res) => {
+    const presetId = req.body?.presetId ?? req.body?.id;
+    if (!presetId) {
+      return res.status(400).json({ ok: false, error: "invalid_request", message: "presetId required" });
+    }
+    try {
+      const raw = readFileSync(join(__dirname, "presets.json"), "utf8");
+      const { presets } = JSON.parse(raw);
+      const preset = presets.find((p) => p.id === presetId);
+      if (!preset) {
+        return res.status(404).json({ ok: false, error: "not_found", message: `Preset "${presetId}" not found` });
+      }
+      const rule = addRule({
+        pattern:     preset.pattern,
+        action:      preset.action,
+        description: preset.description ?? "",
+      });
+      res.status(201).json({ ok: true, rule, loadedFrom: presetId });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: "internal_error", message: err.message });
+    }
+  });
+
+  /**
    * POST /policy/evaluate
    * Test a hypothetical request against all policies without executing.
    */
@@ -138,6 +187,18 @@ export function register(app) {
 
     const result = evaluate(data.method, data.path, data.body, "manual-test");
     res.json({ ok: true, result });
+  });
+
+  /**
+   * POST /policy/simulate
+   * Same as evaluate but with explicit explanation field (alias).
+   */
+  router.post("/simulate", requireScope("read"), (req, res) => {
+    const data = validate(evaluateSchema.extend({ project: z.string().optional() }), req.body, res);
+    if (!data) return;
+
+    const result = evaluate(data.method, data.path, data.body, data.project ?? "manual-test");
+    res.json({ ok: true, result, explanation: result.explanation });
   });
 
   app.use("/policy", router);

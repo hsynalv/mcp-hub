@@ -1,0 +1,53 @@
+{
+  "presets": [
+    {
+      "id": "notion-bulk-archive",
+      "pattern": "POST /notion/rows/archive",
+      "action": "require_approval",
+      "description": "Notion bulk archive needs manual approval",
+      "riskClass": "BULK"
+    },
+    {
+      "id": "notion-row-delete",
+      "pattern": "DELETE /notion/row/*",
+      "action": "require_approval",
+      "description": "Notion row archive/delete needs approval",
+      "riskClass": "DESTRUCTIVE"
+    },
+    {
+      "id": "n8n-workflow-apply",
+      "pattern": "POST /n8n/workflow/apply",
+      "action": "dry_run_first",
+      "description": "n8n workflow apply requires dry-run first",
+      "riskClass": "WRITE"
+    },
+    {
+      "id": "file-storage-delete",
+      "pattern": "DELETE /file-storage/delete",
+      "action": "require_approval",
+      "description": "File delete needs approval",
+      "riskClass": "DESTRUCTIVE"
+    },
+    {
+      "id": "file-storage-move",
+      "pattern": "POST /file-storage/move",
+      "action": "require_approval",
+      "description": "File move needs approval",
+      "riskClass": "DESTRUCTIVE"
+    },
+    {
+      "id": "database-write",
+      "pattern": "POST /database/crud/*",
+      "action": "block",
+      "description": "Database write blocked by default (enable per project)",
+      "riskClass": "WRITE"
+    },
+    {
+      "id": "database-query",
+      "pattern": "POST /database/query",
+      "action": "dry_run_first",
+      "description": "Raw database query requires dry-run first",
+      "riskClass": "WRITE"
+    }
+  ]
+}

@@ -146,14 +146,15 @@ export function register(app) {
 
   /**
    * GET /observability/errors
-   * Recent errors from the audit log.
-   * Query: ?limit=N (default 20)
+   * Recent errors from the audit log (client_error + server_error).
+   * Query: ?limit=N (default 20), ?plugin=name
    */
   router.get("/errors", requireScope("read"), (req, res) => {
     const limit  = Math.min(parseInt(req.query.limit ?? "20", 10), 100);
     const plugin = req.query.plugin;
 
-    const errors = getLogs({ status: "error", limit, plugin });
+    const allLogs = getLogs({ limit: limit * 2, plugin });
+    const errors = allLogs.filter((e) => e.status === "client_error" || e.status === "server_error").slice(0, limit);
 
     res.json({
       ok:    true,

@@ -8,6 +8,13 @@ import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
 import { createJob, getJob, listJobs } from "./jobs.js";
 
+/** Reads x-project-id and x-env headers for projects-first config. */
+function projectContextMiddleware(req, _res, next) {
+  req.projectId = req.headers["x-project-id"]?.trim() || null;
+  req.projectEnv = req.headers["x-env"]?.trim() || "dev";
+  next();
+}
+
 export async function createServer() {
   const app = express();
 
@@ -15,6 +22,7 @@ export async function createServer() {
   app.use(morgan("dev"));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use(projectContextMiddleware);
   app.use(auditMiddleware);
 
   // ── Core routes ────────────────────────────────────────────────────────────
@@ -86,7 +94,12 @@ export async function createServer() {
 
   app.use((err, req, res, next) => {
     const status = err instanceof AppError ? err.statusCode : 500;
-    const payload = err.serialize ? err.serialize() : { ok: false, error: "internal_error", message: err.message ?? "Internal server error" };
+    const requestId = req?.requestId ?? null;
+    const payload = err.serialize
+      ? err.serialize(requestId)
+      : { ok: false, error: "internal_error", message: err.message ?? "Internal server error", ...(requestId ? { requestId } : {}) };
+
+    if (req?.requestId) res.setHeader("x-request-id", req.requestId);
 
     if (process.env.NODE_ENV === "development") {
       console.error("[ERROR]", err.stack ?? err);

@@ -1,6 +1,7 @@
 import { readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import { config } from "./config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGINS_DIR = join(__dirname, "../plugins");
@@ -28,6 +29,20 @@ export async function loadPlugins(app) {
     .map((e) => e.name);
 
   for (const dir of dirs) {
+    // Check if this plugin should be disabled
+    if (dir === "n8n" && !config.plugins.enableN8n) {
+      console.log(`[plugins] "${dir}" disabled by ENABLE_N8N_PLUGIN=false`);
+      continue;
+    }
+    if (dir === "n8n-credentials" && !config.plugins.enableN8nCredentials) {
+      console.log(`[plugins] "${dir}" disabled by ENABLE_N8N_CREDENTIALS=false`);
+      continue;
+    }
+    if (dir === "n8n-workflows" && !config.plugins.enableN8nWorkflows) {
+      console.log(`[plugins] "${dir}" disabled by ENABLE_N8N_WORKFLOWS=false`);
+      continue;
+    }
+
     const url = pathToFileURL(join(PLUGINS_DIR, dir, "index.js")).href;
     let plugin;
     try {

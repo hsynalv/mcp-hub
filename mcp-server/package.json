@@ -1,7 +1,7 @@
 {
-  "name": "mcp-server",
+  "name": "ai-hub",
   "version": "1.0.0",
-  "description": "MCP server scaffold for n8n",
+  "description": "Universal tool and service bridge for AI agents",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -9,8 +9,16 @@
     "start": "node src/index.js"
   },
   "keywords": [
+    "ai",
+    "agents",
+    "automation",
+    "cursor",
+    "claude",
+    "llm",
     "mcp",
-    "n8n"
+    "github",
+    "notion",
+    "api"
   ],
   "license": "MIT",
   "dependencies": {

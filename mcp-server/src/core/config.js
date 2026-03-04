@@ -49,4 +49,9 @@ export const config = {
     pgConnectionString: process.env.PG_CONNECTION_STRING || "",
     mongodbUri: process.env.MONGODB_URI || "",
   },
+  plugins: {
+    enableN8n: process.env.ENABLE_N8N_PLUGIN !== "false",
+    enableN8nCredentials: process.env.ENABLE_N8N_CREDENTIALS !== "false", 
+    enableN8nWorkflows: process.env.ENABLE_N8N_WORKFLOWS !== "false",
+  },
 };

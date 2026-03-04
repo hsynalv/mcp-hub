@@ -1,0 +1,32 @@
+{
+  "percepta": {
+    "name": "Percepta",
+    "envs": {
+      "dev": {
+        "github": "hsynalv/percepta_fe",
+        "n8nBaseUrl": "http://localhost:5678",
+        "notionProjectsDb": "your-notion-projects-db-id",
+        "notionTasksDb": "your-notion-tasks-db-id",
+        "description": "Percepta dev environment"
+      },
+      "prod": {
+        "github": "hsynalv/percepta_fe",
+        "n8nBaseUrl": "https://n8n.yourdomain.com",
+        "notionProjectsDb": "your-notion-projects-db-id",
+        "notionTasksDb": "your-notion-tasks-db-id",
+        "description": "Percepta production"
+      }
+    }
+  },
+  "diagvoice": {
+    "name": "DiagVoice",
+    "envs": {
+      "dev": {
+        "github": "hsynalv/diagvoice",
+        "n8nBaseUrl": "http://localhost:5678",
+        "openapiSpecId": "diagvoice-api",
+        "description": "DiagVoice dev"
+      }
+    }
+  }
+}

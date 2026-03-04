@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP-Hub Project Config",
+  "type": "object",
+  "required": ["key", "name"],
+  "properties": {
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z0-9-_]+$",
+      "description": "Project key (lowercase alphanumeric, dashes, underscores)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable project name"
+    },
+    "envs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "github": { "type": "string", "description": "GitHub repo owner/repo" },
+          "notionProjectsDb": { "type": "string", "description": "Notion projects database ID" },
+          "notionTasksDb": { "type": "string", "description": "Notion tasks database ID" },
+          "n8nBaseUrl": { "type": "string", "format": "uri", "description": "n8n base URL" },
+          "openapiSpecId": { "type": "string", "description": "OpenAPI spec ID" },
+          "slackWebhook": { "type": "string", "description": "Slack webhook URL" },
+          "storage": { "type": "string", "enum": ["local", "s3", "gdrive"], "description": "File storage backend" },
+          "db": { "type": "string", "enum": ["postgres", "mssql", "mongodb"], "description": "Database type" },
+          "description": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

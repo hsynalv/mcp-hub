@@ -244,7 +244,9 @@ Import `project-planner-workflow.json` into n8n. It configures a **Tools Agent**
 | `notion_search` | GET | `/notion/search` | Find pages/databases by keyword |
 | `notion_add_row` | POST | `/notion/row` | Add a row to any Notion database |
 
-See [`system_prompt.md`](./system_prompt.md) for the AI Agent system prompt.
+→ See [`docs/integrations/`](./docs/integrations/) for AI agent integration guides.
+→ See [`docs/use-cases/`](./docs/use-cases.md) for real-world examples.
+→ See [`docs/plugin-development.md`](./docs/plugin-development.md) for building custom plugins.
 
 ### Typical Agent Flow — Existing GitHub Project
 
