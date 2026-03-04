@@ -37,6 +37,22 @@ function writeErrorStatus(error) {
 export const name = "n8n";
 export const version = "1.0.0";
 export const description = "n8n node catalog and workflow support";
+export const capabilities = ["read", "write"];
+export const requires = ["N8N_BASE_URL"];
+export const endpoints = [
+  { method: "POST", path: "/n8n/context",            description: "Node schemas + credentials + examples in one call", scope: "read"  },
+  { method: "GET",  path: "/n8n/nodes/search",        description: "Search node catalog",                              scope: "read"  },
+  { method: "GET",  path: "/n8n/nodes/:type",          description: "Full node schema",                                 scope: "read"  },
+  { method: "GET",  path: "/n8n/examples",             description: "Workflow examples",                                scope: "read"  },
+  { method: "POST", path: "/n8n/workflow/validate",    description: "Validate workflow JSON",                           scope: "read"  },
+  { method: "POST", path: "/n8n/workflow/apply",       description: "Create or update workflow in n8n",                 scope: "write" },
+  { method: "GET",  path: "/n8n/catalog/status",       description: "Catalog cache status",                             scope: "read"  },
+  { method: "POST", path: "/n8n/catalog/refresh",      description: "Rebuild node catalog",                             scope: "write" },
+];
+export const examples = [
+  "POST /n8n/context  body: {nodes: 'webhook,slack'}",
+  "POST /n8n/workflow/apply  body: {workflowJson: {...}, mode: 'create'}",
+];
 
 /** Load catalog from disk or return 503 via the helper. */
 function requireCatalog(res) {

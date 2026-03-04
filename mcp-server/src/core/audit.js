@@ -1,0 +1,129 @@
+/**
+ * Audit logging middleware.
+ *
+ * Logs every inbound API request with:
+ *   - timestamp, plugin, endpoint, method, duration, status
+ *   - masked request body (no secrets)
+ *   - truncated response summary
+ *
+ * Storage: rotating in-memory ring buffer (last 1000 entries) + optional file.
+ *
+ * Access:
+ *   GET /audit/logs   — query recent logs (admin scope required when auth enabled)
+ *   GET /audit/stats  — aggregate counts per plugin/status
+ */
+
+import { appendFileSync, existsSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MAX_RING = 1000;
+const ring = [];
+
+const SECRET_KEYS = new Set([
+  "password", "token", "secret", "key", "api_key", "apikey",
+  "authorization", "access_token", "refresh_token", "credentials",
+]);
+
+function maskBody(body) {
+  if (!body || typeof body !== "object") return body;
+  const out = {};
+  for (const [k, v] of Object.entries(body)) {
+    const lower = k.toLowerCase();
+    const isSensitive = [...SECRET_KEYS].some((s) => lower.includes(s));
+    out[k] = isSensitive ? "[REDACTED]" : (typeof v === "object" ? maskBody(v) : v);
+  }
+  return out;
+}
+
+function inferPlugin(path) {
+  const match = path.match(/^\/(n8n|credentials|github|notion|jobs|audit)/);
+  return match ? match[1] : "core";
+}
+
+function getLogFile() {
+  const dir = process.env.CATALOG_CACHE_DIR || "./cache";
+  return join(process.cwd(), dir, "audit.log");
+}
+
+function writeToFile(entry) {
+  if (process.env.AUDIT_LOG_FILE !== "true") return;
+  try {
+    const dir = join(process.cwd(), process.env.CATALOG_CACHE_DIR || "./cache");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    appendFileSync(getLogFile(), JSON.stringify(entry) + "\n");
+  } catch { /* non-fatal */ }
+}
+
+function pushLog(entry) {
+  if (ring.length >= MAX_RING) ring.shift();
+  ring.push(entry);
+  writeToFile(entry);
+}
+
+/**
+ * Express middleware — attach to app before routes.
+ */
+export function auditMiddleware(req, res, next) {
+  const start = Date.now();
+  const originalJson = res.json.bind(res);
+  let responseSummary = null;
+
+  res.json = (data) => {
+    if (data && typeof data === "object") {
+      const { ok, error, count } = data;
+      responseSummary = { ok, ...(error ? { error } : {}), ...(count != null ? { count } : {}) };
+    }
+    return originalJson(data);
+  };
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const plugin   = inferPlugin(req.path);
+    const status   = res.statusCode < 400 ? "success" : res.statusCode < 500 ? "client_error" : "server_error";
+
+    const entry = {
+      timestamp: new Date().toISOString(),
+      method: req.method,
+      path: req.path,
+      plugin,
+      duration,
+      statusCode: res.statusCode,
+      status,
+      ...(responseSummary?.error ? { error: responseSummary.error } : {}),
+    };
+
+    if (req.method !== "GET" && req.body && Object.keys(req.body).length > 0) {
+      entry.body = maskBody(req.body);
+    }
+
+    pushLog(entry);
+  });
+
+  next();
+}
+
+/** Return recent log entries with optional filters. */
+export function getLogs({ plugin, status, limit = 100 } = {}) {
+  let entries = [...ring].reverse(); // newest first
+  if (plugin) entries = entries.filter((e) => e.plugin === plugin);
+  if (status) entries = entries.filter((e) => e.status === status);
+  return entries.slice(0, Math.min(limit, MAX_RING));
+}
+
+/** Return aggregate stats per plugin. */
+export function getStats() {
+  const stats = {};
+  for (const e of ring) {
+    if (!stats[e.plugin]) stats[e.plugin] = { total: 0, success: 0, client_error: 0, server_error: 0, avgDuration: 0, _totalDuration: 0 };
+    const s = stats[e.plugin];
+    s.total++;
+    s[e.status] = (s[e.status] || 0) + 1;
+    s._totalDuration += e.duration;
+    s.avgDuration = Math.round(s._totalDuration / s.total);
+  }
+  // Clean up internal field
+  for (const s of Object.values(stats)) delete s._totalDuration;
+  return stats;
+}

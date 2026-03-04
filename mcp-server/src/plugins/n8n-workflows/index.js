@@ -13,6 +13,13 @@ import {
 export const name = "n8n-workflows";
 export const version = "1.0.0";
 export const description = "n8n workflow list, detail, and search";
+export const capabilities = ["read"];
+export const requires = ["N8N_API_KEY"];
+export const endpoints = [
+  { method: "GET",  path: "/n8n/workflows",        description: "List all workflows",              scope: "read" },
+  { method: "GET",  path: "/n8n/workflows/:id",    description: "Get full workflow JSON",           scope: "read" },
+  { method: "POST", path: "/n8n/workflows/search", description: "Search by name or node type",     scope: "read" },
+];
 
 const workflowIdSchema = z.object({
   id: z.string().min(1).max(100),

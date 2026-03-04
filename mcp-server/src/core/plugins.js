@@ -7,8 +7,21 @@ const PLUGINS_DIR = join(__dirname, "../plugins");
 
 const loaded = [];
 
-// Discover and load plugins from src/plugins/<name>/index.js.
-// Each plugin must export: { name, version, register(app) }
+/**
+ * Discover and load plugins from src/plugins/<name>/index.js.
+ *
+ * Each plugin must export:
+ *   name      string   — plugin identifier
+ *   version   string   — semver
+ *   register  function — register(app) mounts routes
+ *
+ * Optional manifest fields (used by GET /plugins and GET /plugins/:name/manifest):
+ *   description  string
+ *   capabilities string[]  e.g. ["read", "write"]
+ *   endpoints    { path, method, description, scope? }[]
+ *   requires     string[]  env var names that must be set
+ *   examples     string[]  curl examples
+ */
 export async function loadPlugins(app) {
   const dirs = readdirSync(PLUGINS_DIR, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -31,17 +44,22 @@ export async function loadPlugins(app) {
 
     plugin.register(app);
 
-    loaded.push({
-      name: plugin.name ?? dir,
-      version: plugin.version ?? "0.0.0",
-      ...(plugin.description ? { description: plugin.description } : {}),
-    });
+    const manifest = {
+      name:         plugin.name        ?? dir,
+      version:      plugin.version     ?? "0.0.0",
+      description:  plugin.description ?? "",
+      capabilities: plugin.capabilities ?? [],
+      endpoints:    plugin.endpoints    ?? [],
+      requires:     plugin.requires     ?? [],
+      examples:     plugin.examples     ?? [],
+    };
 
-    console.log(`[plugins] loaded ${plugin.name ?? dir}@${plugin.version ?? "0.0.0"}`);
+    loaded.push(manifest);
+    console.log(`[plugins] loaded ${manifest.name}@${manifest.version}`);
   }
 }
 
-/** Returns metadata of all successfully loaded plugins. */
+/** Returns full manifest of all successfully loaded plugins. */
 export function getPlugins() {
   return loaded;
 }

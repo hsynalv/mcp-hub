@@ -6,6 +6,30 @@ import { config } from "../../core/config.js";
 
 export const name = "notion";
 export const version = "1.0.0";
+export const description = "Notion pages, databases, projects and tasks";
+export const capabilities = ["read", "write"];
+export const requires = ["NOTION_API_KEY"];
+export const endpoints = [
+  { method: "GET",    path: "/notion/search",              description: "Search pages and databases",                 scope: "read"  },
+  { method: "GET",    path: "/notion/sections",            description: "List all accessible pages and databases",    scope: "read"  },
+  { method: "GET",    path: "/notion/projects",            description: "List projects from Projeler database",       scope: "read"  },
+  { method: "POST",   path: "/notion/projects",            description: "Create a project",                           scope: "write" },
+  { method: "GET",    path: "/notion/tasks",               description: "List tasks from Yapılacaklar database",      scope: "read"  },
+  { method: "POST",   path: "/notion/tasks",               description: "Create a task",                              scope: "write" },
+  { method: "POST",   path: "/notion/setup-project",       description: "Create project + all tasks in one call",     scope: "write" },
+  { method: "POST",   path: "/notion/row",                 description: "Add a row to any database with content",     scope: "write" },
+  { method: "POST",   path: "/notion/rows/archive",        description: "Bulk archive (soft-delete) rows by ID",      scope: "write" },
+  { method: "DELETE", path: "/notion/row/:pageId",         description: "Archive a single row",                       scope: "write" },
+  { method: "POST",   path: "/notion/pages",               description: "Create a page",                              scope: "write" },
+  { method: "PATCH",  path: "/notion/pages/:id/append",    description: "Append blocks to a page",                    scope: "write" },
+  { method: "GET",    path: "/notion/pages/:id/blocks",    description: "Get page content blocks",                    scope: "read"  },
+  { method: "PATCH",  path: "/notion/databases/rows/:id",  description: "Update a row's properties",                  scope: "write" },
+];
+export const examples = [
+  "POST /notion/setup-project  body: {name, status, oncelik, tasks:[{gorev}]}",
+  "GET  /notion/projects?status=Yapılıyor",
+  "POST /notion/row  body: {databaseId, title, content}",
+];
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 

@@ -4,6 +4,23 @@ import { githubRequest, githubPaginate } from "./github.client.js";
 
 export const name = "github";
 export const version = "1.0.0";
+export const description = "Read access to public and private GitHub repositories";
+export const capabilities = ["read"];
+export const requires = ["GITHUB_TOKEN"];
+export const endpoints = [
+  { method: "GET",  path: "/github/repos",                       description: "List authenticated user repos (public + private)", scope: "read" },
+  { method: "GET",  path: "/github/users/:username/repos",       description: "List public repos for any user/org",               scope: "read" },
+  { method: "GET",  path: "/github/analyze",                     description: "Full repo snapshot (tree, commits, issues, readme)", scope: "read" },
+  { method: "GET",  path: "/github/repo/:owner/:repo",           description: "Repo metadata",                                   scope: "read" },
+  { method: "GET",  path: "/github/repo/:owner/:repo/tree",      description: "File tree",                                       scope: "read" },
+  { method: "GET",  path: "/github/repo/:owner/:repo/file",      description: "File content",                                    scope: "read" },
+  { method: "GET",  path: "/github/repo/:owner/:repo/commits",   description: "Recent commits",                                  scope: "read" },
+  { method: "GET",  path: "/github/repo/:owner/:repo/issues",    description: "Open issues and PRs",                             scope: "read" },
+];
+export const examples = [
+  "GET /github/repos?sort=pushed&limit=20",
+  "GET /github/analyze?repo=hsynalv/mcp-hub",
+];
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 

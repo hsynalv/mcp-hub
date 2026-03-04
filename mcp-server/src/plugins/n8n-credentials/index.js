@@ -6,6 +6,13 @@ import { loadFromDisk, saveToDisk, isFresh } from "./credentials.store.js";
 export const name = "n8n-credentials";
 export const version = "1.0.0";
 export const description = "n8n credential metadata — id/name/type only, no secrets";
+export const capabilities = ["read"];
+export const requires = ["N8N_API_KEY"];
+export const endpoints = [
+  { method: "GET",  path: "/credentials",         description: "List all credentials (metadata only)", scope: "read"  },
+  { method: "GET",  path: "/credentials/:type",   description: "Filter credentials by type",           scope: "read"  },
+  { method: "POST", path: "/credentials/refresh", description: "Refresh from n8n",                     scope: "write" },
+];
 
 const typeParamSchema = z.object({
   type: z.string().min(1).max(100),

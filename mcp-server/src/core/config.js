@@ -2,6 +2,14 @@ import "dotenv/config";
 
 export const config = {
   port: Number(process.env.PORT) || 8787,
+  auth: {
+    readKey:  process.env.HUB_READ_KEY?.trim()  || "",
+    writeKey: process.env.HUB_WRITE_KEY?.trim() || "",
+    adminKey: process.env.HUB_ADMIN_KEY?.trim() || "",
+  },
+  audit: {
+    logToFile: process.env.AUDIT_LOG_FILE === "true",
+  },
   n8n: {
     baseUrl: process.env.N8N_BASE_URL || "http://n8n:5678",
     apiBase: process.env.N8N_API_BASE || "/api/v1",
