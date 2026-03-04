@@ -4,7 +4,7 @@
  * Keys and scopes (set via .env):
  *   HUB_READ_KEY   → scopes: ["read"]
  *   HUB_WRITE_KEY  → scopes: ["read", "write"]
- *   HUB_ADMIN_KEY  → scopes: ["read", "write", "danger"]
+ *   HUB_ADMIN_KEY  → scopes: ["read", "write", "admin"]
  *
  * Usage:
  *   import { requireScope } from "./auth.js";
@@ -13,7 +13,12 @@
  * If no keys are configured the server runs in open mode (dev-friendly).
  */
 
-const SCOPE_HIERARCHY = ["read", "write", "danger"];
+const SCOPE_HIERARCHY = ["read", "write", "admin"];
+
+function normalizeScope(scope) {
+  if (scope === "danger") return "admin";
+  return scope;
+}
 
 function getKeyMap() {
   const map = new Map();
@@ -23,7 +28,7 @@ function getKeyMap() {
 
   if (readKey)  map.set(readKey,  ["read"]);
   if (writeKey) map.set(writeKey, ["read", "write"]);
-  if (adminKey) map.set(adminKey, ["read", "write", "danger"]);
+  if (adminKey) map.set(adminKey, ["read", "write", "admin"]);
 
   return map;
 }
@@ -53,12 +58,16 @@ export function requireScope(scope = "read") {
   return (req, res, next) => {
     if (!authEnabled()) return next(); // open mode — no keys configured
 
+    const requiredScope = normalizeScope(scope);
+
     const key = extractKey(req);
     if (!key) {
       return res.status(401).json({
         ok: false,
-        error: "unauthorized",
-        message: "Authorization header required. Use: Authorization: Bearer <HUB_API_KEY>",
+        error: {
+          code: "unauthorized",
+          message: "Authorization header required. Use: Authorization: Bearer <HUB_API_KEY>",
+        },
       });
     }
 
@@ -67,26 +76,34 @@ export function requireScope(scope = "read") {
     if (!scopes) {
       return res.status(401).json({
         ok: false,
-        error: "invalid_key",
-        message: "Invalid API key.",
+        error: {
+          code: "invalid_key",
+          message: "Invalid API key.",
+        },
       });
     }
 
-    const requiredIndex = SCOPE_HIERARCHY.indexOf(scope);
+    const requiredIndex = SCOPE_HIERARCHY.indexOf(requiredScope);
     const hasScope = scopes.some(
-      (s) => SCOPE_HIERARCHY.indexOf(s) >= requiredIndex
+      (s) => SCOPE_HIERARCHY.indexOf(normalizeScope(s)) >= requiredIndex
     );
 
     if (!hasScope) {
       return res.status(403).json({
         ok: false,
-        error: "forbidden",
-        message: `This endpoint requires '${scope}' scope. Your key does not have sufficient permissions.`,
+        error: {
+          code: "forbidden",
+          message: `This endpoint requires '${scope}' scope. Your key does not have sufficient permissions.`,
+        },
       });
     }
 
     // Attach scopes to request for downstream use
-    req.authScopes = scopes;
+    req.authScopes = scopes.map(normalizeScope);
+    req.actor = {
+      type: "api_key",
+      scopes: req.authScopes,
+    };
     next();
   };
 }

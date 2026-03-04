@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
+import { validateBody } from "../../core/validate.js";
 import { getAdapter, isValidType } from "./db.adapter.js";
 
 export const name = "database";
@@ -92,9 +93,8 @@ export function register(app) {
     await runAdapter(type, (adapter) => adapter.getSchema(name), res);
   });
 
-  router.post("/query", requireScope("write"), async (req, res) => {
-    const data = validate(querySchema, req.body, res);
-    if (!data) return;
+  router.post("/query", requireScope("write"), validateBody(querySchema), async (req, res) => {
+    const data = req.validatedBody;
     const { type, query, params } = data;
     await runAdapter(type, async (adapter) => {
       if (typeof query === "object" && type === "mongodb") {
@@ -114,9 +114,8 @@ export function register(app) {
   });
 
   const insertSchema = z.object({ type: z.enum(["mssql", "postgres", "mongodb"]), table: z.string().min(1), data: z.record(z.any()) });
-  router.post("/crud/insert", requireScope("write"), async (req, res) => {
-    const data = validate(insertSchema, req.body, res);
-    if (!data) return;
+  router.post("/crud/insert", requireScope("write"), validateBody(insertSchema), async (req, res) => {
+    const data = req.validatedBody;
     await runAdapter(data.type, (adapter) => adapter.insert(data.table, data.data), res);
   });
 
@@ -126,9 +125,8 @@ export function register(app) {
     where: z.record(z.any()).optional().default({}),
     limit: z.number().int().min(1).max(10000).optional().default(100),
   });
-  router.post("/crud/select", requireScope("read"), async (req, res) => {
-    const data = validate(selectSchema, req.body, res);
-    if (!data) return;
+  router.post("/crud/select", requireScope("read"), validateBody(selectSchema), async (req, res) => {
+    const data = req.validatedBody;
     await runAdapter(data.type, (adapter) => adapter.select(data.table, data.where, data.limit), res);
   });
 
@@ -138,9 +136,8 @@ export function register(app) {
     where: z.record(z.any()),
     data:  z.record(z.any()),
   });
-  router.post("/crud/update", requireScope("write"), async (req, res) => {
-    const data = validate(updateSchema, req.body, res);
-    if (!data) return;
+  router.post("/crud/update", requireScope("write"), validateBody(updateSchema), async (req, res) => {
+    const data = req.validatedBody;
     await runAdapter(data.type, (adapter) => adapter.update(data.table, data.where, data.data), res);
   });
 
@@ -149,9 +146,8 @@ export function register(app) {
     table: z.string().min(1),
     where: z.record(z.any()),
   });
-  router.post("/crud/delete", requireScope("write"), async (req, res) => {
-    const data = validate(deleteSchema, req.body, res);
-    if (!data) return;
+  router.post("/crud/delete", requireScope("write"), validateBody(deleteSchema), async (req, res) => {
+    const data = req.validatedBody;
     await runAdapter(data.type, (adapter) => adapter.delete(data.table, data.where), res);
   });
 

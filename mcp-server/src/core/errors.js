@@ -8,9 +8,17 @@ export class AppError extends Error {
   }
 
   serialize(requestId = null) {
-    const out = { ok: false, error: this.code, message: this.message };
-    if (this.details != null) out.details = this.details;
-    if (requestId) out.requestId = requestId;
+    const out = {
+      ok: false,
+      error: {
+        code: this.code,
+        message: this.message,
+      },
+      meta: {
+        requestId: requestId ?? null,
+      },
+    };
+    if (this.details != null) out.error.details = this.details;
     return out;
   }
 }

@@ -82,7 +82,12 @@ export function auditMiddleware(req, res, next) {
   res.json = (data) => {
     if (data && typeof data === "object") {
       const { ok, error, count } = data;
-      responseSummary = { ok, ...(error ? { error } : {}), ...(count != null ? { count } : {}) };
+      let errorSummary = null;
+      if (error) {
+        if (typeof error === "string") errorSummary = error;
+        else if (typeof error === "object" && typeof error.code === "string") errorSummary = error.code;
+      }
+      responseSummary = { ok, ...(errorSummary ? { error: errorSummary } : {}), ...(count != null ? { count } : {}) };
     }
     return originalJson(data);
   };

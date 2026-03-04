@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { githubRequest, githubPaginate } from "./github.client.js";
+import { validateBody, validateQuery } from "../../core/validate.js";
 
 export const name = "github";
 export const version = "1.0.0";
@@ -26,6 +27,14 @@ export const examples = [
 
 const repoParamSchema = z.object({
   owner: z.string().min(1),
+  repo: z.string().min(1),
+});
+
+const analyzeQuerySchema = z.object({
+  repo: z.string().min(1),
+});
+
+const analyzeBodySchema = z.object({
   repo: z.string().min(1),
 });
 
@@ -402,8 +411,8 @@ export function register(app) {
    * POST /github/analyze  body: { "repo": "owner/repo" }
    * Same as GET /github/repo/:owner/:repo/analyze but easier for AI agents.
    */
-  router.get("/analyze", async (req, res) => {
-    const raw = req.query.repo ?? "";
+  router.get("/analyze", validateQuery(analyzeQuerySchema), async (req, res) => {
+    const raw = req.validatedQuery.repo;
     const parts = raw.replace("https://github.com/", "").replace(/\/$/, "").split("/");
 
     if (parts.length < 2 || !parts[0] || !parts[1]) {
@@ -451,8 +460,8 @@ export function register(app) {
     });
   });
 
-  router.post("/analyze", async (req, res) => {
-    const raw = req.body?.repo ?? req.query.repo ?? "";
+  router.post("/analyze", validateBody(analyzeBodySchema), async (req, res) => {
+    const raw = req.validatedBody.repo;
     const parts = raw.replace("https://github.com/", "").replace(/\/$/, "").split("/");
 
     if (parts.length < 2 || !parts[0] || !parts[1]) {

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
+import { validateBody } from "../../core/validate.js";
 import { resolveDeep } from "../secrets/secrets.store.js";
 import { isDomainAllowed, checkRateLimit, getPolicyInfo, getRateLimitState } from "./policy.js";
 import { getFromCache, setInCache, clearCache, getCacheStats } from "./http.cache.js";
@@ -34,15 +35,6 @@ const requestSchema = z.object({
   cache:    z.boolean().optional().default(false),
   cacheTtl: z.number().int().min(1).optional(),
 });
-
-function validate(schema, body, res) {
-  const result = schema.safeParse(body);
-  if (!result.success) {
-    res.status(400).json({ ok: false, error: "invalid_request", details: result.error.flatten() });
-    return null;
-  }
-  return result.data;
-}
 
 export function register(app) {
   const router = Router();
@@ -88,9 +80,8 @@ export function register(app) {
    *  - optional TTL cache
    *  - {{secret:NAME}} header/body resolution
    */
-  router.post("/request", requireScope("write"), async (req, res) => {
-    const data = validate(requestSchema, req.body, res);
-    if (!data) return;
+  router.post("/request", requireScope("write"), validateBody(requestSchema), async (req, res) => {
+    const data = req.validatedBody;
 
     const { method, url, headers, body: reqBody, cache: useCache, cacheTtl } = data;
 
@@ -146,7 +137,6 @@ export function register(app) {
     }
 
     res.json({
-      ok:         true,
       cached:     false,
       status:     result.status,
       statusText: result.statusText,

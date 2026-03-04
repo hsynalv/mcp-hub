@@ -3,6 +3,7 @@ import { z } from "zod";
 import { notionRequest } from "./notion.client.js";
 import { toNotionBlocks, taskDatabaseSchema, toTaskProperties } from "./blocks.js";
 import { config } from "../../core/config.js";
+import { validateBody } from "../../core/validate.js";
 
 export const name = "notion";
 export const version = "1.0.0";
@@ -77,6 +78,14 @@ const updateTaskSchema = z.object({
   priority: z.enum(["High", "Medium", "Low"]).optional(),
   dueDate: z.string().optional(),
   notes: z.string().optional(),
+});
+
+const createRowSchema = z.object({
+  databaseId: z.string().min(1),
+  title: z.string().min(1),
+  properties: z.union([z.record(z.any()), z.string()]).optional(),
+  relations: z.union([z.record(z.any()), z.string()]).optional(),
+  content: z.any().optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -804,9 +813,8 @@ export function register(app) {
    *   ]
    * }
    */
-  router.post("/setup-project", async (req, res) => {
-    const data = validate(setupProjectSchema, req.body, res);
-    if (!data) return;
+  router.post("/setup-project", validateBody(setupProjectSchema), async (req, res) => {
+    const data = req.validatedBody;
 
     const projectsDbId = config.notion.projectsDbId;
     const tasksDbId = config.notion.tasksDbId;
@@ -932,12 +940,11 @@ export function register(app) {
    *   }
    * }
    */
-  router.post("/row", async (req, res) => {
-    const databaseId = req.body?.databaseId;
-    const title      = req.body?.title;
+  router.post("/row", validateBody(createRowSchema), async (req, res) => {
+    const { databaseId, title } = req.validatedBody;
 
     // properties may arrive as a JSON string (from n8n body) or object — normalize both
-    let rawExtra = req.body?.properties ?? {};
+    let rawExtra = req.validatedBody?.properties ?? {};
     if (typeof rawExtra === "string") {
       try { rawExtra = rawExtra.trim() ? JSON.parse(rawExtra) : {}; }
       catch { rawExtra = {}; }
@@ -945,7 +952,7 @@ export function register(app) {
     const extra = (rawExtra && typeof rawExtra === "object" && !Array.isArray(rawExtra)) ? rawExtra : {};
 
     // relations: { "Proje": "page-id-of-related-row" } → converted to Notion relation format
-    let rawRelations = req.body?.relations ?? {};
+    let rawRelations = req.validatedBody?.relations ?? {};
     if (typeof rawRelations === "string") {
       try { rawRelations = rawRelations.trim() ? JSON.parse(rawRelations) : {}; }
       catch { rawRelations = {}; }
@@ -954,13 +961,6 @@ export function register(app) {
       for (const [field, pageId] of Object.entries(rawRelations)) {
         if (pageId) extra[field] = { relation: [{ id: String(pageId) }] };
       }
-    }
-
-    if (!databaseId || typeof databaseId !== "string") {
-      return err(res, 400, "missing_databaseId", "Provide databaseId (Notion database ID)");
-    }
-    if (!title || typeof title !== "string") {
-      return err(res, 400, "missing_title", "Provide a title string");
     }
 
     // Fetch the database schema to find the title property name
@@ -988,7 +988,7 @@ export function register(app) {
     // If string → wrap as a single paragraph block
     // If array  → use toNotionBlock() on each item
     let contentBlocks = [];
-    const rawContent = req.body?.content;
+    const rawContent = req.validatedBody?.content;
     if (rawContent) {
       let parsed = rawContent;
       if (typeof parsed === "string") {

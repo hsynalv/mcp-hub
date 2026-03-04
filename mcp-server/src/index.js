@@ -1,5 +1,9 @@
 import { config } from "./core/config.js";
 import { createServer } from "./core/server.js";
+import { validateStartup } from "./core/sanity.js";
+
+// Run startup sanity checks
+await validateStartup();
 
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] uncaughtException:", err);

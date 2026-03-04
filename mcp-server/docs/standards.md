@@ -1,115 +1,151 @@
-# MCP-Hub Platform Standartları
+# AI-Hub Platform Standartları
 
-Bu doküman tüm pluginler için geçerli kuralları tanımlar.
+Bu doküman tüm plugin ve core endpoint’leri için geçerli platform kurallarını tanımlar.
 
 ---
 
 ## 1. Tool / Endpoint Contract
 
-### 1.1 Standart Yanıt Formatı
+### 1.1 Response Envelope (Tek Tip Yanıt)
 
 **Başarılı:**
 ```json
-{ "ok": true, ...data }
+{
+  "ok": true,
+  "data": {},
+  "meta": { "requestId": "req-..." }
+}
 ```
 
 **Hata:**
 ```json
 {
   "ok": false,
-  "error": "error_code",
-  "message": "İnsan tarafından okunabilir mesaj",
-  "details": {},
-  "requestId": "req-abc123"
+  "error": {
+    "code": "error_code",
+    "message": "İnsan tarafından okunabilir mesaj",
+    "details": {}
+  },
+  "meta": { "requestId": "req-..." }
 }
 ```
 
-### 1.2 Request ID
+### 1.2 Headers
+
+#### `x-request-id`
 
 - Her response header'da `x-request-id` döner
 - Hata ayıklama ve trace için kullanılır
 - İstemci `x-request-id` gönderirse aynı ID yanıtta korunur
 
-### 1.3 Hata Kodları
+#### `x-project-id`
+
+- Project context için kullanılır
+- Write ve destructive aksiyonlarda zorunludur
+
+#### `x-env`
+
+- Environment context (`dev|staging|prod`)
+- Write ve destructive aksiyonlarda zorunludur
+
+### 1.3 Error Codes
 
 | Kod | HTTP | Açıklama |
 |-----|------|----------|
-| `invalid_request` | 400 | Validation hatası |
+| `invalid_request` | 400 | Geçersiz istek |
 | `validation_error` | 400 | Zod/şema hatası |
 | `invalid_path` | 400 | Path traversal vb. |
 | `invalid_backend` | 400 | Geçersiz backend/type |
 | `not_found` | 404 | Kaynak bulunamadı |
 | `unauthorized` | 401 | API key eksik/geçersiz |
 | `forbidden` | 403 | Yetki yetersiz |
+| `rate_limited` | 429 | Rate limit aşıldı |
+| `policy_blocked` | 403 | Policy kararı ile engellendi |
+| `approval_required` | 403 | Approval gerekli |
+| `dry_run_required` | 403 | Önce dry-run gerekli |
 | `connection_failed` | 502 | Harici servis bağlantı hatası |
 | `query_failed` | 422 | Sorgu/komut hatası |
+| `upstream_error` | 502 | Upstream servis hatası |
 | `internal_error` | 500 | Sunucu hatası |
 
 ---
 
-## 2. Zod ile Validasyon
+## 2. Scopes (RBAC)
 
-- Her endpoint girişi Zod schema ile validate edilir
-- Hata: `400` + `{ ok: false, error: "validation_error", details: ZodError.flatten() }`
-- `src/core/validation/` altında ortak `validate(schema, body, res)` helper kullanılır
+- `read`: okuma operasyonları
+- `write`: state-changing operasyonlar
+- `admin`: yüksek riskli operasyonlar (kodda `danger` ile alias olabilir)
 
 ---
 
-## 3. Observability
+## 3. Zod ile Validasyon
 
-### 3.1 Audit Log
+- Her endpoint girişi Zod schema ile validate edilir
+- Hata: `400` + `{ ok: false, error: "validation_error", details: ZodError.flatten() }`
+- Ortak middleware: `validateBody(schema)`, `validateQuery(schema)`
+- Hata: `400` + `validation_error`
+
+---
+
+## 4. Tool Tags
+
+| Tag | Anlam |
+|-----|------|
+| `READ` | Sadece okuma |
+| `WRITE` | Yazma/oluşturma |
+| `BULK` | Toplu işlem |
+| `DESTRUCTIVE` | Silme/archive/move |
+
+---
+
+## 5. Policy Defaults
+
+Varsayılan öneri:
+
+- `READ`: allow
+- `WRITE`: dev/staging allow, prod require_approval
+- `BULK`: require_approval
+- `DESTRUCTIVE`: require_approval
+
+Önerilen özel kurallar:
+
+- `n8n.workflow.apply`: `dry_run_first` + prod approval
+- `db write`: default `block`
+- `file delete/move`: approval
+- `github write`: approval
+
+---
+
+## 6. Observability
+
+### 6.1 Audit Log
 
 Her istek loglanır:
-- `timestamp`, `method`, `path`, `plugin`, `duration`, `statusCode`, `status`
+- `timestamp`, `requestId`, `method`, `path`, `plugin`, `duration`, `statusCode`, `status`
 - `error` (varsa)
 - `body` (maskeli — secret alanlar `[REDACTED]`)
 
-### 3.2 Metrikler
+### 6.2 Metrikler
 
 - `tool_requests_total{tool, status}` — istek sayısı
 - `tool_duration_ms_bucket{tool}` — süre dağılımı
 - Policy: `policy_blocked_total`, `policy_approval_pending_total`
 
-### 3.3 Trace
+### 6.3 Trace
 
 - `requestId` ile tüm alt çağrılar bağlanır
 - Audit log entry'de `requestId` bulunur
 
 ---
 
-## 4. Policy Entegrasyonu
-
-### 4.1 Risk Sınıfları
-
-| Sınıf | Açıklama | Varsayılan |
-|-------|----------|------------|
-| READ | Sadece okuma | İzin |
-| WRITE | Yazma/oluşturma | dry_run_first |
-| BULK | Toplu işlem | require_approval |
-| DESTRUCTIVE | Silme/archive | require_approval |
-
-### 4.2 Preset Kurallar
-
-- Notion bulk archive → `require_approval`
-- n8n workflow apply → `dry_run_first`
-- file delete/move → `require_approval`
-- db write → `block` (default, proje bazlı açılabilir)
-
-### 4.3 Policy Simulate
-
-`POST /policy/evaluate` ile `{ method, path, body?, project? }` gönderilir.
-Yanıt: `{ allowed, action, rule, reason?, message? }` — kararın nedenini açıklar.
-
----
-
-## 5. Projects-First Konfigürasyon
+## 7. Projects-First Konfigürasyon
 
 Config sırası:
 1. Request header: `x-project-id`, `x-env`
 2. `projects` registry'den base config
 3. `secrets` ile env çözümleme
 
-### 5.1 Project Schema
+### 7.1 Project Schema
 
 ```json
 {
@@ -131,7 +167,7 @@ Config sırası:
 
 ---
 
-## 6. Cache Standardı
+## 8. Cache Standardı
 
 - Cache key: `plugin:project:resource:version`
 - TTL + stale-while-revalidate (opsiyonel)
@@ -139,14 +175,14 @@ Config sırası:
 
 ---
 
-## 7. Rate Limiting / Backoff
+## 9. Rate Limiting / Backoff
 
 - Notion, GitHub, n8n gibi API'ler için: retry + exponential backoff
 - `429` / `5xx` için: max 3 retry, backoff 1s, 2s, 4s
 
 ---
 
-## 8. Secret Redaction
+## 10. Secret Redaction
 
 - Audit log'da: `password`, `token`, `secret`, `key`, `authorization` vb. → `[REDACTED]`
 - Response'larda secret değeri asla dönmez

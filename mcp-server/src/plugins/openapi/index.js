@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
+import { validateBody } from "../../core/validate.js";
 import { makeId, saveSpec, loadSpec, deleteSpec, listSpecs } from "./spec.store.js";
 import { parseSpec, extractOperations, detectAuth, generateCode } from "./spec.parser.js";
 
@@ -136,9 +137,8 @@ export function register(app) {
    * POST /openapi/specs/:id/generate
    * Generate code for a specific operation.
    */
-  router.post("/specs/:id/generate", requireScope("read"), (req, res) => {
-    const data = validate(generateSchema, req.body, res);
-    if (!data) return;
+  router.post("/specs/:id/generate", requireScope("read"), validateBody(generateSchema), (req, res) => {
+    const data = req.validatedBody;
 
     const entry = loadSpec(req.params.id);
     if (!entry) return res.status(404).json({ ok: false, error: "not_found" });
@@ -160,9 +160,8 @@ export function register(app) {
    * POST /openapi/load
    * Load a spec from a URL or raw body.
    */
-  router.post("/load", requireScope("write"), async (req, res) => {
-    const data = validate(loadSchema, req.body, res);
-    if (!data) return;
+  router.post("/load", requireScope("write"), validateBody(loadSchema), async (req, res) => {
+    const data = req.validatedBody;
 
     const TIMEOUT_MS = 25000;
     const timeoutId = setTimeout(() => {
