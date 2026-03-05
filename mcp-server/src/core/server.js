@@ -2,16 +2,13 @@ import express from "express";
 import "express-async-errors";
 import cors from "cors";
 import morgan from "morgan";
-import { performance } from "perf_hooks";
 import { AppError, NotFoundError } from "./errors.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
-import { createJob, getJob, listJobs, submitJob } from "./jobs.js";
+import { createJob, getJob, listJobs } from "./jobs.js";
 import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.js";
 import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
-import { getAllCircuitStates } from "./resilience.js";
-import { getAllMetrics, httpRequestsTotal, httpRequestDuration, httpActiveConnections } from "./metrics.js";
 
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -121,97 +118,10 @@ export async function createServer() {
   app.use(enforceProjectContextMiddleware);
   app.use(policyGuardrailMiddleware);
 
-  // ── Metrics tracking middleware ────────────────────────────────────────────
-  app.use((req, res, next) => {
-    const start = performance.now();
-    
-    // Track active connections
-    httpActiveConnections.inc({}, 1);
-    
-    // Override end to capture metrics
-    const originalEnd = res.end.bind(res);
-    res.end = function(chunk, encoding) {
-      res.end = originalEnd;
-      res.end(chunk, encoding);
-      
-      const duration = (performance.now() - start) / 1000;
-      const route = req.route?.path || req.path || "unknown";
-      
-      // Record metrics
-      httpRequestsTotal.inc({ method: req.method, route, status: res.statusCode });
-      httpRequestDuration.observe({ method: req.method, route }, duration);
-      httpActiveConnections.dec({}, 1);
-    };
-    
-    next();
-  });
-
   // ── Core routes ────────────────────────────────────────────────────────────
 
   app.get("/health", (req, res) => {
     res.json({ status: "ok", auth: isAuthEnabled() ? "enabled" : "disabled" });
-  });
-
-  app.get("/health/detailed", async (req, res) => {
-    const timestamp = new Date().toISOString();
-    const circuitStates = getAllCircuitStates();
-
-    // Check Redis if configured
-    let redisStatus = { status: "not_configured", latency_ms: null };
-    if (process.env.REDIS_URL) {
-      try {
-        const { redis } = await import("./redis.js");
-        const start = Date.now();
-        await redis.ping();
-        redisStatus = { status: "up", latency_ms: Date.now() - start };
-      } catch (err) {
-        redisStatus = { status: "down", error: err.message };
-      }
-    }
-
-    // Determine overall status
-    const servicesDown = Object.values(circuitStates).filter(
-      (c) => c.state === "OPEN"
-    ).length;
-    const redisDown = redisStatus.status === "down";
-    let overallStatus = "healthy";
-    if (redisDown || servicesDown > 2) {
-      overallStatus = "unhealthy";
-    } else if (servicesDown > 0) {
-      overallStatus = "degraded";
-    }
-
-    res.json({
-      status: overallStatus,
-      timestamp,
-      version: process.env.npm_package_version || "1.0.0",
-      services: {
-        redis: redisStatus,
-        ...Object.fromEntries(
-          Object.entries(circuitStates).map(([name, state]) => [
-            name,
-            {
-              status: state.state === "CLOSED" ? "up" : "down",
-              circuit_state: state.state,
-              failure_count: state.failureCount,
-              ...(state.nextAttempt
-                ? { next_attempt: new Date(state.nextAttempt).toISOString() }
-                : {}),
-            },
-          ])
-        ),
-      },
-      config: {
-        auth_enabled: isAuthEnabled(),
-        redis_enabled: !!process.env.REDIS_URL,
-      },
-    });
-  });
-
-  // ── Prometheus Metrics endpoint ────────────────────────────────────────────
-  app.get("/metrics", (_req, res) => {
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.send(getAllMetrics());
   });
 
   app.get("/whoami", requireScope("read"), (req, res) => {
@@ -332,24 +242,14 @@ export async function createServer() {
     const { type, payload } = req.body ?? {};
     if (!type) return res.status(400).json({ ok: false, error: { code: "missing_type", message: "Provide job type" } });
 
-    try {
-      // Use submitJob which requires a registered runner
-      const job = submitJob(type, payload ?? {});
-      res.status(202).json({ job });
-    } catch (err) {
-      // If no runner registered, return helpful error
-      if (err.message?.includes("No runner registered")) {
-        return res.status(400).json({
-          ok: false,
-          error: {
-            code: "unknown_job_type",
-            message: err.message,
-            availableTypes: ["tests:run", "tests:lint"] // Document available job types
-          }
-        });
-      }
-      throw err;
-    }
+    // Built-in job types can be added here; external callers use type="custom"
+    const job = createJob(type, payload ?? {}, async (j) => {
+      // Placeholder — real runners are registered by plugins
+      await new Promise((r) => setTimeout(r, 100));
+      j.succeed({ message: "Job runner not implemented for type: " + j.type });
+    });
+
+    res.status(202).json({ job });
   });
 
   app.get("/jobs", requireScope("read"), (req, res) => {

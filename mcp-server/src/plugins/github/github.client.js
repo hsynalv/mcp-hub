@@ -6,9 +6,6 @@
  * Works with public repos without a token; private repos require GITHUB_TOKEN.
  */
 
-import { withResilience, withRetry, getCircuitBreaker } from "../../core/resilience.js";
-import { isRetryableError } from "../../core/error-categories.js";
-
 const BASE_URL = "https://api.github.com";
 
 function getToken() {
@@ -24,10 +21,6 @@ function getToken() {
  * @returns {Promise<{ ok: boolean, data?: any, error?: string, details?: object }>}
  */
 export async function githubRequest(method, path, body = null) {
-  return githubRequestWithResilience(method, path, body);
-}
-
-async function githubRequestInternal(method, path, body = null) {
   const token = getToken();
   const headers = {
     Accept: "application/vnd.github+json",
@@ -73,43 +66,7 @@ async function githubRequestInternal(method, path, body = null) {
  * Paginate a GitHub list endpoint automatically (up to maxPages).
  * GitHub returns Link headers for cursor-based pagination.
  */
-/**
- * Paginate with resilience
- */
-async function githubPaginateWithResilience(path, maxItems = 100) {
-  const circuit = getCircuitBreaker("github", {
-    failureThreshold: 5,
-    resetTimeoutMs: 30000,
-  });
-
-  return circuit.execute(async () => {
-    return withRetry(
-      async () => {
-        const result = await githubPaginateInternal(path, maxItems);
-        if (!result.ok) {
-          const error = new Error(result.error || "GitHub pagination error");
-          error.status = result.details?.status;
-          throw error;
-        }
-        return result;
-      },
-      {
-        maxAttempts: 3,
-        backoffMs: 1000,
-        retryableError: (err) => {
-          if (err.status === 401 || err.status === 403) return false;
-          return isRetryableError(err);
-        },
-      }
-    );
-  });
-}
-
 export async function githubPaginate(path, maxItems = 100) {
-  return githubPaginateWithResilience(path, maxItems);
-}
-
-async function githubPaginateInternal(path, maxItems = 100) {
   const token = getToken();
   const headers = {
     Accept: "application/vnd.github+json",

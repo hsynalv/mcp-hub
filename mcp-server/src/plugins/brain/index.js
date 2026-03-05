@@ -7,8 +7,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createJob } from "../../core/jobs.js";
-import { withRetry, getCircuitBreaker } from "../../core/resilience.js";
-import { isRetryableError } from "../../core/error-categories.js";
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -48,71 +46,38 @@ function getOrCreateContext(sessionId) {
 
 // ── LLM Client ───────────────────────────────────────────────────────────────
 
-const llmCircuit = getCircuitBreaker("openai", {
-  failureThreshold: 5,
-  resetTimeoutMs: 60000, // 1 minute for OpenAI (rate limits)
-});
-
 async function callLLM(messages, options = {}) {
   if (!LLM_API_KEY) {
     return { ok: false, error: { code: "llm_not_configured", message: "LLM API key not configured" } };
   }
 
-  return llmCircuit.execute(async () => {
-    return withRetry(
-      async () => {
-        const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${LLM_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: options.model || DEFAULT_MODEL,
-            messages,
-            temperature: options.temperature ?? 0.7,
-            max_tokens: options.maxTokens ?? 2000,
-            ...(options.functions && { functions: options.functions }),
-            ...(options.function_call && { function_call: options.function_call }),
-          }),
-        });
-
-        if (!response.ok) {
-          const err = await response.text();
-          const error = new Error(err);
-          error.status = response.status;
-          throw error;
-        }
-
-        const data = await response.json();
-        return { ok: true, data: data.choices[0] };
+  try {
+    const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${LLM_API_KEY}`,
       },
-      {
-        maxAttempts: 3,
-        backoffMs: 2000, // 2 second base for rate limits
-        retryableError: (err) => {
-          // Don't retry auth errors
-          if (err.status === 401) return false;
-          // Retry rate limits (429) and server errors (5xx)
-          if (err.status === 429 || (err.status >= 500 && err.status < 600)) return true;
-          return isRetryableError(err);
-        },
-        onRetry: ({ attempt, error, delay }) => {
-          console.error(`[Brain] LLM call attempt ${attempt} failed: ${error.message}. Retrying in ${Math.round(delay)}ms...`);
-        },
-      }
-    );
-  }).catch((err) => {
-    // Convert circuit/retry errors to our error format
-    return {
-      ok: false,
-      error: {
-        code: err.name === "CircuitBreakerError" ? "llm_circuit_open" : "llm_error",
-        message: err.message,
-        retryable: false,
-      },
-    };
-  });
+      body: JSON.stringify({
+        model: options.model || DEFAULT_MODEL,
+        messages,
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 2000,
+        ...(options.functions && { functions: options.functions }),
+        ...(options.function_call && { function_call: options.function_call }),
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      return { ok: false, error: { code: "llm_error", message: err, status: response.status } };
+    }
+
+    const data = await response.json();
+    return { ok: true, data: data.choices[0] };
+  } catch (err) {
+    return { ok: false, error: { code: "llm_error", message: err.message } };
+  }
 }
 
 // ── Built-in Skills ──────────────────────────────────────────────────────────
