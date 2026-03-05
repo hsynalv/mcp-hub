@@ -7,7 +7,7 @@ import { AppError, NotFoundError } from "./errors.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
-import { createJob, getJob, listJobs } from "./jobs.js";
+import { createJob, getJob, listJobs, submitJob } from "./jobs.js";
 import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.js";
 import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
 import { getAllCircuitStates } from "./resilience.js";
@@ -332,14 +332,24 @@ export async function createServer() {
     const { type, payload } = req.body ?? {};
     if (!type) return res.status(400).json({ ok: false, error: { code: "missing_type", message: "Provide job type" } });
 
-    // Built-in job types can be added here; external callers use type="custom"
-    const job = createJob(type, payload ?? {}, async (j) => {
-      // Placeholder — real runners are registered by plugins
-      await new Promise((r) => setTimeout(r, 100));
-      j.succeed({ message: "Job runner not implemented for type: " + j.type });
-    });
-
-    res.status(202).json({ job });
+    try {
+      // Use submitJob which requires a registered runner
+      const job = submitJob(type, payload ?? {});
+      res.status(202).json({ job });
+    } catch (err) {
+      // If no runner registered, return helpful error
+      if (err.message?.includes("No runner registered")) {
+        return res.status(400).json({
+          ok: false,
+          error: {
+            code: "unknown_job_type",
+            message: err.message,
+            availableTypes: ["tests:run", "tests:lint"] // Document available job types
+          }
+        });
+      }
+      throw err;
+    }
   });
 
   app.get("/jobs", requireScope("read"), (req, res) => {

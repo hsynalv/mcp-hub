@@ -7,6 +7,7 @@
 import { Router } from "express";
 import { runTests, runLint, getCoverage } from "./tests.core.js";
 import { ToolTags } from "../../core/tool-registry.js";
+import { registerJobRunner } from "../../core/jobs.js";
 
 export const name = "tests";
 export const version = "1.0.0";
@@ -68,6 +69,36 @@ export const tools = [
 
 export function register(app) {
   const router = Router();
+
+  // Register job runners for async execution
+  registerJobRunner("tests:run", async (job, updateProgress, log) => {
+    log(`Starting test run for: ${job.payload.path || "."}`);
+    updateProgress(10);
+    
+    const result = await runTests(job.payload.path || ".", {
+      pattern: job.payload.pattern,
+      watch: false // Jobs don't support watch mode
+    });
+    
+    updateProgress(100);
+    log(`Test run completed: ${result.ok ? "passed" : "failed"}`);
+    
+    return result;
+  });
+
+  registerJobRunner("tests:lint", async (job, updateProgress, log) => {
+    log(`Starting lint for: ${job.payload.path || "."}`);
+    updateProgress(10);
+    
+    const result = await runLint(job.payload.path || ".", {
+      linter: job.payload.linter
+    });
+    
+    updateProgress(100);
+    log(`Lint completed: ${result.ok ? "passed" : "failed"}`);
+    
+    return result;
+  });
 
   // POST /tests/run { path, pattern, watch }
   router.post("/run", async (req, res) => {

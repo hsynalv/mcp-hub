@@ -8,40 +8,21 @@ No LLM calls. No hallucinations. Just clean REST endpoints backed by real data.
 
 ---
 
-## ✨ What's New
-
-### Phase 4: AI Enhancement
-- **Tech Stack Detector** - Automatically detect project technologies
-- **Multi-LLM Router** - Route tasks to specialized LLMs (Claude for coding, GPT-4o for design)
-- **Code Review Plugin** - Automated PR reviews, security scanning, quality checks
-- **Image Generation** - DALL-E 3 & Stability AI for logos, mockups, UI assets
-- **Video Generation** - Runway & Pika for demos, tutorials, promos
-
-### Developer Tools
-- **CLI Interface** - Interactive terminal for managing the server
-- **Plugin Generator** - Scaffold new plugins with one command
-- **Debug Mode** - Request tracing, performance profiling, detailed logging
-- **Hot Reload** - Auto-restart on file changes during development
-
----
-
 ## What it does
 
 | Capability | Description |
 |------------|-------------|
-| **Universal API Bridge** | Connect any AI agent to 20+ services via REST |
-| **GitHub Integration** | Repository analysis, file tree, commits, issues, PRs |
+| **Universal API Bridge** | Connect any AI agent to 13+ services via REST |
+| **GitHub Integration** | Repository analysis, file tree, commits, issues |
 | **Notion Management** | Pages, databases, projects and tasks |
 | **HTTP Control** | Safe, rate-limited HTTP requests with caching |
 | **Database Access** | MSSQL, PostgreSQL, MongoDB connections |
 | **File Storage** | S3, Google Drive, local file operations |
 | **OpenAPI Support** | Load and analyze API specifications |
-| **n8n Integration** | Node catalog, workflow validation, credentials |
+| **n8n Integration** | Optional: Node catalog, workflow validation (disable with ENABLE_N8N_PLUGIN=false) |
 | **Secret Management** | Secure credential reference system |
 | **Policy Engine** | Rule-based approval system |
-| **Observability** | Health checks, Prometheus metrics, structured logging |
-| **AI Enhancement** | Tech detection, multi-LLM routing, image/video generation |
-| **Developer Tools** | CLI, hot reload, debug mode, plugin generator |
+| **Observability** | Health checks, metrics, error tracking |
 
 ---
 
@@ -60,13 +41,8 @@ No LLM calls. No hallucinations. Just clean REST endpoints backed by real data.
 | `observability` | `/observability/*` | Health checks, metrics, error tracking |
 | `projects` | `/projects/*` | Multi-project configuration management |
 | `n8n` | `/n8n/*` | **Optional**: Node catalog, context, validation |
-| `n8n-credentials` | `/credentials/*` | Credential metadata from n8n |
-| `n8n-workflows` | `/n8n/workflows/*` | Workflow list, detail, search |
-| **tech-detector** | `/tech/*` | **NEW:** Auto-detect project technologies |
-| **llm-router** | `/llm/*` | **NEW:** Multi-LLM task routing |
-| **code-review** | `/code-review/*` | **NEW:** Automated PR reviews |
-| **image-gen** | `/image/*` | **NEW:** AI image generation |
-| **video-gen** | `/video/*` | **NEW:** AI video generation |
+| `n8n-credentials` | `/credentials/*` | **Optional**: Credential metadata from n8n |
+| `n8n-workflows` | `/n8n/workflows/*` | **Optional**: Workflow list, detail, search |
 
 ---
 
@@ -87,57 +63,6 @@ For non-n8n deployments, disable n8n plugins:
 ENABLE_N8N_PLUGIN=false
 ENABLE_N8N_CREDENTIALS=false
 ENABLE_N8N_WORKFLOWS=false
-```
-
----
-
-## Developer Tools
-
-### CLI Interface
-
-```bash
-# Start interactive CLI
-node bin/mcp-cli.js
-
-# Inside CLI
-mcp> help              # Show commands
-mcp> status            # Check server health
-mcp> plugins           # List plugins
-mcp> tools             # List MCP tools
-mcp> generate my-plugin # Create new plugin
-mcp> test all          # Run tests
-mcp> exit
-```
-
-### Hot Reload
-
-```bash
-# Auto-restart on file changes
-node src/core/hot-reload.js start
-
-# Check status
-node src/core/hot-reload.js status
-```
-
-### Debug Mode
-
-```bash
-# Enable verbose logging
-DEBUG=true npm start
-
-# Or via CLI
-mcp> debug on
-```
-
-### Plugin Generator
-
-```bash
-# Generate a new plugin scaffold
-mcp> generate my-awesome-plugin
-
-# Creates:
-# - src/plugins/my-awesome-plugin/index.js
-# - tests/plugins/my-awesome-plugin.test.js
 ```
 
 ---
@@ -179,15 +104,8 @@ ai-hub/
 │   │       ├── policy/            # Rule engine
 │   │       ├── observability/     # Health, metrics
 │   │       ├── projects/          # Multi-project config
-│   │       ├── tech-detector/     # Tech stack detection
-│   │       ├── llm-router/        # Multi-LLM routing
-│   │       ├── code-review/       # Automated code review
-│   │       ├── image-gen/         # AI image generation
-│   │       ├── video-gen/         # AI video generation
-│   │       └── n8n*/             # n8n integration
-│   ├── bin/
-│   │   └── mcp-cli.js            # CLI interface
-│   ├── tests/                     # Unit tests
+│   │       └── n8n*/             # Optional n8n integration
+│   ├── cache/                    # Disk cache (gitignored)
 │   └── .env.example
 ├── PLAN.md                       # Plugin roadmap
 └── README.md                     # This file
@@ -268,16 +186,6 @@ curl http://localhost:8787/plugins
 curl -X POST http://localhost:8787/github/analyze \
   -H "Content-Type: application/json" \
   -d '{"repo": "vercel/next.js"}'
-
-# Detect tech stack
-curl -X POST http://localhost:8787/tech/detect \
-  -H "Content-Type: application/json" \
-  -d '{"path": "./src"}'
-
-# Generate an image
-curl -X POST http://localhost:8787/image/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "modern dashboard UI", "type": "mockup"}'
 
 # List Docker containers (requires Docker)
 curl http://localhost:8787/docker/containers

@@ -1,14 +1,10 @@
 # mcp-hub
 
 > A plugin-based HTTP service for AI agents with REST APIs and MCP (Model Context Protocol) support.
-> 
-> **Phase 4: AI Enhancement** — Tech detection, multi-LLM routing, code review, image/video generation
-> 
-> **Developer Tools** — CLI, hot reload, debug mode, plugin generator
 
 📐 **[Architecture Documentation (ARCHITECTURE.md)](./ARCHITECTURE.md)** — Diagrams, plugin structure, data flow
 
-**mcp-hub** bridges the gap between AI agents (n8n, Cursor, Claude Desktop, or any LLM environment) and external services. It exposes clean REST endpoints **and** MCP tools so the AI can analyze GitHub repos, manage Notion projects, run tests, index documents for RAG, orchestrate tasks, detect tech stacks, route to specialized LLMs, review code, generate images/videos — with consistent authentication, caching, policy enforcement, and resilience patterns.
+**mcp-hub** bridges the gap between AI agents (n8n, Cursor, Claude Desktop, or any LLM environment) and external services. It exposes clean REST endpoints **and** MCP tools so the AI can analyze GitHub repos, manage Notion projects, run tests, index documents for RAG, and orchestrate tasks — with consistent authentication, caching, and policy enforcement.
 
 ---
 
@@ -20,10 +16,6 @@
 - **Policy Engine**: Approval workflows, rate limiting, dry-run mode
 - **Job Queue**: Async task execution with status tracking
 - **Plugin System**: Auto-discovery and loading
-- **Resilience Patterns**: Retry with exponential backoff, circuit breaker
-- **Observability**: Prometheus metrics, structured JSON logging, health checks
-- **AI Enhancement**: Tech detection, multi-LLM routing, code review, image/video generation
-- **Developer Tools**: CLI, hot reload, debug mode, plugin generator
 
 ---
 
@@ -123,11 +115,6 @@ Without a dedicated service, the agent has to guess — and gets it wrong. **mcp
 | [rag](./src/plugins/rag/README.md) | `/rag` | Document indexing, semantic search |
 | [workspace](./src/plugins/workspace/README.md) | `/workspace` | File operations |
 | [policy](./src/plugins/policy/README.md) | `/policy` | Approval rules, rate limits |
-| [tech-detector](./src/plugins/tech-detector/README.md) | `/tech` | **NEW:** Auto-detect project technologies |
-| [llm-router](./src/plugins/llm-router/README.md) | `/llm` | **NEW:** Multi-LLM task routing |
-| [code-review](./src/plugins/code-review/README.md) | `/code-review` | **NEW:** Automated PR reviews |
-| [image-gen](./src/plugins/image-gen/README.md) | `/image` | **NEW:** AI image generation (DALL-E, Stability) |
-| [video-gen](./src/plugins/video-gen/README.md) | `/video` | **NEW:** AI video generation (Runway, Pika) |
 
 ### Integration Plugins
 
