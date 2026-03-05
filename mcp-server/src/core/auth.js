@@ -112,3 +112,147 @@ export function requireScope(scope = "read") {
 export function isAuthEnabled() {
   return authEnabled();
 }
+
+// ── OAuth 2.1 Bearer Token Support ───────────────────────────────────────────
+
+/**
+ * OAuth 2.1 Token Introspection (RFC 7662)
+ * Validates a Bearer token against an authorization server.
+ *
+ * Environment variables:
+ *   OAUTH_INTROSPECTION_ENDPOINT - Token introspection URL
+ *   OAUTH_INTROSPECTION_AUTH     - Basic auth credentials (optional)
+ *
+ * @param {string} token - The Bearer token to validate
+ * @returns {Promise<Object|null>} Token claims or null if invalid
+ */
+export async function introspectOAuthToken(token) {
+  const endpoint = process.env.OAUTH_INTROSPECTION_ENDPOINT;
+  if (!endpoint) {
+    return null;
+  }
+
+  try {
+    const headers = {
+      "Content-Type": "application/x-www-form-urlencoded",
+    };
+
+    // Add Basic auth if configured
+    const auth = process.env.OAUTH_INTROSPECTION_AUTH;
+    if (auth) {
+      headers["Authorization"] = `Basic ${Buffer.from(auth).toString("base64")}`;
+    }
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({ token }),
+    });
+
+    if (!response.ok) {
+      console.error(`[auth] Token introspection failed: ${response.status}`);
+      return null;
+    }
+
+    const claims = await response.json();
+
+    // RFC 7662: active=true means token is valid
+    if (!claims.active) {
+      return null;
+    }
+
+    return claims;
+  } catch (err) {
+    console.error("[auth] Token introspection error:", err.message);
+    return null;
+  }
+}
+
+/**
+ * Validate a Bearer token (API key or OAuth 2.1)
+ * @param {string} token
+ * @returns {Promise<{valid: boolean, scopes?: string[], claims?: Object}>}
+ */
+export async function validateBearerToken(token) {
+  // First check if it's a configured API key
+  const keyMap = getKeyMap();
+  const apiKeyScopes = keyMap.get(token);
+  if (apiKeyScopes) {
+    return { valid: true, scopes: apiKeyScopes, type: "api_key" };
+  }
+
+  // Try OAuth 2.1 introspection
+  const claims = await introspectOAuthToken(token);
+  if (claims) {
+    // Extract scopes from claims (space-separated per RFC 6749)
+    const scopes = claims.scope?.split(" ") || [];
+    return { valid: true, scopes, claims, type: "oauth" };
+  }
+
+  return { valid: false };
+}
+
+/**
+ * Middleware for OAuth 2.1 Bearer token validation
+ * Usage: app.use('/mcp', requireOAuthScope('read'))
+ *
+ * @param {string} scope - Required scope
+ * @returns {Function} Express middleware
+ */
+export function requireOAuthScope(scope = "read") {
+  return async (req, res, next) => {
+    // Skip if no auth configured
+    if (!authEnabled() && !process.env.OAUTH_INTROSPECTION_ENDPOINT) {
+      return next();
+    }
+
+    const token = extractKey(req);
+    if (!token) {
+      return res.status(401).json({
+        ok: false,
+        error: {
+          code: "unauthorized",
+          message: "Authorization header required. Use: Authorization: Bearer <token>",
+        },
+      });
+    }
+
+    const validation = await validateBearerToken(token);
+    if (!validation.valid) {
+      return res.status(401).json({
+        ok: false,
+        error: {
+          code: "invalid_token",
+          message: "Invalid or expired token.",
+        },
+      });
+    }
+
+    // Check scope
+    const requiredScope = normalizeScope(scope);
+    const requiredIndex = SCOPE_HIERARCHY.indexOf(requiredScope);
+    const hasScope = validation.scopes.some(
+      (s) => SCOPE_HIERARCHY.indexOf(normalizeScope(s)) >= requiredIndex
+    );
+
+    if (!hasScope) {
+      return res.status(403).json({
+        ok: false,
+        error: {
+          code: "insufficient_scope",
+          message: `This endpoint requires '${scope}' scope. Token has: ${validation.scopes.join(", ")}`,
+        },
+      });
+    }
+
+    // Attach auth info to request
+    req.authScopes = validation.scopes.map(normalizeScope);
+    req.actor = {
+      type: validation.type,
+      scopes: req.authScopes,
+      ...(validation.claims?.sub ? { subject: validation.claims.sub } : {}),
+    };
+
+    next();
+  };
+}

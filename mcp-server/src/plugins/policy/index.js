@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
+import { ToolTags } from "../../core/tool-registry.js";
 import {
   listRules,
   addRule,
@@ -37,6 +38,91 @@ export const examples = [
   'POST /policy/rules  body: {"pattern":"POST /notion/rows/archive","action":"require_approval","description":"Bulk delete needs approval"}',
   "GET  /policy/approvals?status=pending",
   'POST /policy/evaluate  body: {"method":"POST","path":"/notion/rows/archive"}',
+];
+
+// ── MCP Tools ────────────────────────────────────────────────────────────────
+
+export const tools = [
+  {
+    name: "policy_list_rules",
+    description: "List all policy rules",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    handler: async () => {
+      const rules = listRules();
+      return { ok: true, data: { count: rules.length, rules } };
+    },
+  },
+  {
+    name: "policy_evaluate",
+    description: "Test a request against all policy rules",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        method: { type: "string", description: "HTTP method" },
+        path: { type: "string", description: "Request path" },
+        body: { type: "object", description: "Request body" },
+      },
+      required: ["method", "path"],
+    },
+    handler: async (args) => {
+      const result = evaluate(args.method, args.path, args.body, "agent");
+      return { ok: true, data: result };
+    },
+  },
+  {
+    name: "policy_list_approvals",
+    description: "List pending or all approval requests",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["pending", "approved", "rejected"], description: "Filter by status" },
+      },
+    },
+    handler: async (args) => {
+      const approvals = listApprovals({ status: args.status });
+      return { ok: true, data: { count: approvals.length, approvals } };
+    },
+  },
+  {
+    name: "policy_approve",
+    description: "Approve a pending request (requires danger scope)",
+    tags: [ToolTags.WRITE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Approval ID" },
+      },
+      required: ["id"],
+    },
+    handler: async (args) => {
+      const approval = updateApprovalStatus(args.id, "approved", "agent");
+      if (!approval) return { ok: false, error: { code: "not_found", message: "Approval not found" } };
+      return { ok: true, data: approval };
+    },
+  },
+  {
+    name: "policy_reject",
+    description: "Reject a pending request (requires danger scope)",
+    tags: [ToolTags.WRITE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Approval ID" },
+      },
+      required: ["id"],
+    },
+    handler: async (args) => {
+      const approval = updateApprovalStatus(args.id, "rejected", "agent");
+      if (!approval) return { ok: false, error: { code: "not_found", message: "Approval not found" } };
+      return { ok: true, data: approval };
+    },
+  },
 ];
 
 const ruleSchema = z.object({

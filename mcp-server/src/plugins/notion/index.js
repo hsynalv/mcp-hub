@@ -4,6 +4,7 @@ import { notionRequest } from "./notion.client.js";
 import { toNotionBlocks, taskDatabaseSchema, toTaskProperties } from "./blocks.js";
 import { config } from "../../core/config.js";
 import { validateBody } from "../../core/validate.js";
+import { ToolTags } from "../../core/tool-registry.js";
 
 export const name = "notion";
 export const version = "1.0.0";
@@ -25,11 +26,131 @@ export const endpoints = [
   { method: "PATCH",  path: "/notion/pages/:id/append",    description: "Append blocks to a page",                    scope: "write" },
   { method: "GET",    path: "/notion/pages/:id/blocks",    description: "Get page content blocks",                    scope: "read"  },
   { method: "PATCH",  path: "/notion/databases/rows/:id",  description: "Update a row's properties",                  scope: "write" },
+  { method: "POST",   path: "/notion/templates/apply",       description: "Apply a page template",                      scope: "write" },
+  { method: "POST",   path: "/notion/templates/pages",       description: "Create page from template",                  scope: "write" },
 ];
 export const examples = [
   "POST /notion/setup-project  body: {name, status, oncelik, tasks:[{gorev}]}",
   "GET  /notion/projects?status=Yapılıyor",
   "POST /notion/row  body: {databaseId, title, content}",
+];
+
+// ── MCP Tools ────────────────────────────────────────────────────────────────
+
+export const tools = [
+  {
+    name: "notion_search",
+    description: "Search pages and databases in Notion",
+    tags: [ToolTags.READ, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" },
+        type: { type: "string", enum: ["page", "database"], description: "Filter by type" },
+        limit: { type: "number", default: 20 },
+      },
+    },
+    handler: async (args) => {
+      const body = { page_size: args.limit || 20 };
+      if (args.query) body.query = args.query;
+      if (args.type) body.filter = { value: args.type, property: "object" };
+      const result = await notionRequest("POST", "/search", body);
+      if (!result.ok) return result;
+      return { ok: true, data: result.data.results };
+    },
+  },
+  {
+    name: "notion_create_page",
+    description: "Create a new Notion page",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Page title" },
+        parentPageId: { type: "string", description: "Parent page ID" },
+        icon: { type: "string", description: "Emoji icon" },
+        blocks: { type: "array", description: "Content blocks" },
+      },
+      required: ["title"],
+    },
+    handler: async (args) => {
+      const payload = {
+        parent: { page_id: args.parentPageId },
+        properties: { title: [{ text: { content: args.title } }] },
+      };
+      if (args.icon) payload.icon = { type: "emoji", emoji: args.icon };
+      if (args.blocks) payload.children = toNotionBlocks(args.blocks);
+      const result = await notionRequest("POST", "/pages", payload);
+      if (!result.ok) return result;
+      return { ok: true, data: { id: result.data.id, url: result.data.url } };
+    },
+  },
+  {
+    name: "notion_apply_template",
+    description: "Apply a template to create structured Notion content",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        template: { type: "string", enum: ["feature_delivery", "task"], description: "Template name" },
+        parentPageId: { type: "string", description: "Parent page ID" },
+        title: { type: "string", description: "Page title" },
+        summary: { type: "string" },
+        criteria: { type: "array", items: { type: "string" } },
+        plan: { type: "string" },
+        prUrl: { type: "string" },
+        releaseNotes: { type: "string" },
+      },
+      required: ["template", "parentPageId", "title"],
+    },
+    handler: async (args) => {
+      const templateResult = await applyTemplate(args.template, args);
+      if (!templateResult.ok) return templateResult;
+
+      const payload = {
+        parent: { page_id: args.parentPageId },
+        properties: { title: [{ text: { content: templateResult.data.title } }] },
+        icon: { type: "emoji", emoji: templateResult.data.icon },
+        children: templateResult.data.blocks,
+      };
+
+      const result = await notionRequest("POST", "/pages", payload);
+      if (!result.ok) return result;
+      return { ok: true, data: { id: result.data.id, url: result.data.url, template: args.template } };
+    },
+  },
+  {
+    name: "notion_create_task",
+    description: "Create a task in a Notion database",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        databaseId: { type: "string", description: "Database ID" },
+        name: { type: "string", description: "Task name" },
+        status: { type: "string", enum: ["Todo", "In Progress", "Done", "Blocked"] },
+        priority: { type: "string", enum: ["High", "Medium", "Low"] },
+        dueDate: { type: "string", description: "ISO date YYYY-MM-DD" },
+      },
+      required: ["databaseId", "name"],
+    },
+    handler: async (args) => createTask(args.databaseId, args),
+  },
+  {
+    name: "notion_attach_link",
+    description: "Attach a link (bookmark) to a Notion page",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        pageId: { type: "string", description: "Page ID" },
+        url: { type: "string", description: "URL to attach" },
+        label: { type: "string", description: "Link label" },
+      },
+      required: ["pageId", "url"],
+    },
+    handler: async (args) => attachLink(args.pageId, args.url, args.label),
+  },
 ];
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
@@ -1024,5 +1145,159 @@ export function register(app) {
     });
   });
 
+  // ── Templates ──────────────────────────────────────────────────────────────
+
+  /**
+   * POST /notion/templates/apply
+   * Apply a template and get structured content blocks.
+   */
+  router.post("/templates/apply", async (req, res) => {
+    const { template, ...inputs } = req.body;
+    if (!template) {
+      return err(res, 400, "missing_template", "Template name is required");
+    }
+    const result = await applyTemplate(template, inputs);
+    res.status(result.ok ? 200 : 400).json(result);
+  });
+
+  /**
+   * POST /notion/templates/pages
+   * Create a page from a template.
+   */
+  router.post("/templates/pages", async (req, res) => {
+    const { template, parentPageId, ...inputs } = req.body;
+    if (!template) {
+      return err(res, 400, "missing_template", "Template name is required");
+    }
+    if (!parentPageId) {
+      return err(res, 400, "missing_parent", "parentPageId is required");
+    }
+
+    const templateResult = await applyTemplate(template, inputs);
+    if (!templateResult.ok) return res.status(400).json(templateResult);
+
+    const payload = {
+      parent: { page_id: parentPageId },
+      properties: { title: [{ text: { content: templateResult.data.title } }] },
+      icon: { type: "emoji", emoji: templateResult.data.icon },
+      children: templateResult.data.blocks,
+    };
+
+    const result = await notionRequest("POST", "/pages", payload);
+    if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
+
+    res.json({
+      ok: true,
+      page: { id: result.data.id, url: result.data.url },
+      template,
+    });
+  });
+
   app.use("/notion", router);
+}
+
+// ── Templates ────────────────────────────────────────────────────────────────
+
+/**
+ * Apply a template to create a structured Notion page
+ * @param {string} templateName - Template name (e.g., "feature_delivery")
+ * @param {Object} inputs - Template inputs
+ * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
+ */
+export async function applyTemplate(templateName, inputs = {}) {
+  const templates = {
+    feature_delivery: {
+      title: inputs.title || "Feature: [Name]",
+      icon: "🚀",
+      blocks: [
+        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Summary" } }] } },
+        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.summary || "What this feature does and why it matters." } }] } },
+        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Acceptance Criteria" } }] } },
+        ...(inputs.criteria || ["Criteria 1", "Criteria 2", "Criteria 3"]).map(c => ({
+          type: "bulleted_list_item",
+          bulleted_list_item: { rich_text: [{ text: { content: c } }] },
+        })),
+        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Implementation Plan" } }] } },
+        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.plan || "Steps to implement this feature." } }] } },
+        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Related Links" } }] } },
+        { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ text: { content: `PR: ${inputs.prUrl || "[PR URL]"}` } }] } },
+        { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ text: { content: `Design: ${inputs.designUrl || "[Design Doc]"}` } }] } },
+        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Release Notes" } }] } },
+        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.releaseNotes || "What users should know about this change." } }] } },
+      ],
+    },
+    task: {
+      title: inputs.title || "Task: [Name]",
+      icon: "📋",
+      blocks: [
+        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.description || "Task description." } }] } },
+        { type: "divider", divider: {} },
+        { type: "heading_3", heading_3: { rich_text: [{ text: { content: "Checklist" } }] } },
+        ...(inputs.checklist || ["Step 1", "Step 2", "Step 3"]).map(item => ({
+          type: "to_do",
+          to_do: { rich_text: [{ text: { content: item } }], checked: false },
+        })),
+      ],
+    },
+  };
+
+  const template = templates[templateName];
+  if (!template) {
+    return { ok: false, error: { code: "unknown_template", message: `Template '${templateName}' not found. Available: ${Object.keys(templates).join(", ")}` } };
+  }
+
+  return { ok: true, data: { template: templateName, ...template } };
+}
+
+/**
+ * Create a task in a database
+ * @param {string} databaseId - Database ID
+ * @param {Object} task - Task data
+ * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
+ */
+export async function createTask(databaseId, task) {
+  const properties = {
+    Name: { title: [{ text: { content: task.name } }] },
+    ...(task.status ? { Status: { status: { name: task.status } } } : {}),
+    ...(task.priority ? { Priority: { select: { name: task.priority } } } : {}),
+    ...(task.dueDate ? { "Due Date": { date: { start: task.dueDate } } } : {}),
+  };
+
+  const result = await notionRequest("POST", "/pages", {
+    parent: { database_id: databaseId },
+    properties,
+  });
+
+  if (!result.ok) return result;
+
+  return {
+    ok: true,
+    data: {
+      id: result.data.id,
+      url: result.data.url,
+      name: task.name,
+    },
+  };
+}
+
+/**
+ * Attach a link to a page
+ * @param {string} pageId - Page ID
+ * @param {string} url - URL to attach
+ * @param {string} label - Link label
+ * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
+ */
+export async function attachLink(pageId, url, label) {
+  const result = await notionRequest("PATCH", `/blocks/${pageId}/children`, {
+    children: [
+      {
+        type: "bookmark",
+        bookmark: { url },
+      },
+    ],
+  });
+
+  if (!result.ok) return result;
+
+  return { ok: true, data: { attached: true, url, label } };
 }

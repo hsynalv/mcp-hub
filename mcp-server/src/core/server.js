@@ -8,6 +8,7 @@ import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
 import { createJob, getJob, listJobs } from "./jobs.js";
 import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.js";
+import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
 
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -262,6 +263,10 @@ export async function createServer() {
     if (!job) return res.status(404).json({ ok: false, error: { code: "job_not_found", message: "Job not found" } });
     res.json({ job });
   });
+
+  // ── MCP Gateway ──────────────────────────────────────────────────────────────
+
+  app.all("/mcp", createMcpHttpMiddleware());
 
   // ── Plugin loader ──────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ import { readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { config } from "./config.js";
+import { registerTool } from "./tool-registry.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGINS_DIR = join(__dirname, "../plugins");
@@ -22,6 +23,7 @@ const loaded = [];
  *   endpoints    { path, method, description, scope? }[]
  *   requires     string[]  env var names that must be set
  *   examples     string[]  curl examples
+ *   tools        { name, description, inputSchema?, handler }[]  — MCP tools
  */
 export async function loadPlugins(app) {
   const dirs = readdirSync(PLUGINS_DIR, { withFileTypes: true })
@@ -59,12 +61,31 @@ export async function loadPlugins(app) {
 
     plugin.register(app);
 
+    // Register MCP tools from plugin
+    if (Array.isArray(plugin.tools)) {
+      for (const tool of plugin.tools) {
+        try {
+          registerTool({
+            ...tool,
+            plugin: plugin.name || dir,
+          });
+        } catch (err) {
+          console.warn(`[plugins] failed to register tool "${tool.name}" from "${dir}": ${err.message}`);
+        }
+      }
+    }
+
     const manifest = {
       name:         plugin.name        ?? dir,
       version:      plugin.version     ?? "0.0.0",
       description:  plugin.description ?? "",
       capabilities: plugin.capabilities ?? [],
       endpoints:    plugin.endpoints    ?? [],
+      tools:        plugin.tools?.map(t => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema || { type: "object" },
+      })) ?? [],
       requires:     plugin.requires     ?? [],
       examples:     plugin.examples     ?? [],
     };

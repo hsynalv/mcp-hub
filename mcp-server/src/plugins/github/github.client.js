@@ -113,3 +113,80 @@ function classifyError(status) {
   if (status === 429) return "github_rate_limited";
   return "github_api_error";
 }
+
+// ── Pull Request Functions ──────────────────────────────────────────────────
+
+/**
+ * Create a pull request
+ * @param {string} owner - Repo owner
+ * @param {string} repo - Repo name
+ * @param {Object} prData - PR data
+ * @returns {Promise<Object>}
+ */
+export async function createPullRequest(owner, repo, prData) {
+  const path = `/repos/${owner}/${repo}/pulls`;
+  return githubRequest("POST", path, prData);
+}
+
+/**
+ * List pull requests
+ * @param {string} owner - Repo owner
+ * @param {string} repo - Repo name
+ * @param {Object} options - Query options
+ * @returns {Promise<Object>}
+ */
+export async function listPullRequests(owner, repo, options = {}) {
+  const state = options.state || "open";
+  const path = `/repos/${owner}/${repo}/pulls?state=${state}`;
+  return githubPaginate(path, options.limit || 30);
+}
+
+/**
+ * Get a single pull request
+ * @param {string} owner - Repo owner
+ * @param {string} repo - Repo name
+ * @param {number} number - PR number
+ * @returns {Promise<Object>}
+ */
+export async function getPullRequest(owner, repo, number) {
+  const path = `/repos/${owner}/${repo}/pulls/${number}`;
+  return githubRequest("GET", path);
+}
+
+/**
+ * Create PR comment
+ * @param {string} owner - Repo owner
+ * @param {string} repo - Repo name
+ * @param {number} number - PR number
+ * @param {string} body - Comment body
+ * @returns {Promise<Object>}
+ */
+export async function createPRComment(owner, repo, number, body) {
+  const path = `/repos/${owner}/${repo}/issues/${number}/comments`;
+  return githubRequest("POST", path, { body });
+}
+
+/**
+ * Create a branch
+ * @param {string} owner - Repo owner
+ * @param {string} repo - Repo name
+ * @param {string} branch - New branch name
+ * @param {string} baseRef - Base ref (branch or SHA)
+ * @returns {Promise<Object>}
+ */
+export async function createBranch(owner, repo, branch, baseRef) {
+  // First get the base ref SHA
+  const basePath = `/repos/${owner}/${repo}/git/ref/heads/${baseRef}`;
+  const baseResult = await githubRequest("GET", basePath);
+
+  if (!baseResult.ok) return baseResult;
+
+  const sha = baseResult.data.object.sha;
+
+  // Create the new reference
+  const refPath = `/repos/${owner}/${repo}/git/refs`;
+  return githubRequest("POST", refPath, {
+    ref: `refs/heads/${branch}`,
+    sha,
+  });
+}

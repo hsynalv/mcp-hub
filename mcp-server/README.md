@@ -1,10 +1,60 @@
 # mcp-hub
 
-> A plugin-based HTTP knowledge service that gives AI agents structured access to external tools and platforms.
+> A plugin-based HTTP service for AI agents with REST APIs and MCP (Model Context Protocol) support.
 
-📐 **[Mimari Dokümantasyonu (ARCHITECTURE.md)](./ARCHITECTURE.md)** — Grafikler, plugin yapısı, veri akışı
+📐 **[Architecture Documentation (ARCHITECTURE.md)](./ARCHITECTURE.md)** — Diagrams, plugin structure, data flow
 
-**mcp-hub** bridges the gap between an AI agent (running inside n8n, Cursor, or any LLM environment) and the services it needs. It exposes clean REST endpoints so the AI can search node catalogs, manage credentials, inspect workflows, analyze GitHub repos, and document everything in Notion — all without making LLM calls itself.
+**mcp-hub** bridges the gap between AI agents (n8n, Cursor, Claude Desktop, or any LLM environment) and external services. It exposes clean REST endpoints **and** MCP tools so the AI can analyze GitHub repos, manage Notion projects, run tests, index documents for RAG, and orchestrate tasks — with consistent authentication, caching, and policy enforcement.
+
+---
+
+## Features
+
+- **Dual Interface**: REST API + MCP Tools
+- **Tool Registry**: Tagged tools with policy enforcement (`READ`, `WRITE`, `NETWORK`, etc.)
+- **MCP Transport**: Stdio and Streamable HTTP endpoints
+- **Policy Engine**: Approval workflows, rate limiting, dry-run mode
+- **Job Queue**: Async task execution with status tracking
+- **Plugin System**: Auto-discovery and loading
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AI Agent / LLM Client                     │
+│         - Claude Desktop, Cursor, n8n, custom apps          │
+├─────────────────────────────────────────────────────────────┤
+│  MCP Protocol                    REST API                   │
+│  - tools/list                     - /github/analyze        │
+│  - tools/call                     - /notion/setup-project  │
+└────────────────┬────────────────────────────┬─────────────────┘
+                 │                          │
+┌────────────────▼────────────┐  ┌──────────▼─────────────────┐
+│      MCP Gateway            │  │    Express REST Server     │
+│   - Tool registry           │  │  - Plugin routes            │
+│   - Policy checks           │  │  - Auth middleware          │
+│   - Stdio transport         │  │  - Validation               │
+└────────────────┬────────────┘  └──────────┬─────────────────┘
+                 └──────────────┬─────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│                      Plugin System                           │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐ │
+│  │ github  │ │ notion  │ │  git    │ │  tests  │ │ brain │ │
+│  ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤ ├───────┤ │
+│  │ analyze │ │ project │ │ commit  │ │   run   │ │ skills│ │
+│  │   PRs   │ │  tasks  │ │  push   │ │  lint   │ │  chat │ │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └───────┘ │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────┐ │
+│  │   rag   │ │workspace│ │ policy  │ │  jobs   │ │  n8n  │ │
+│  ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤ ├───────┤ │
+│  │  index  │ │  files  │ │  rules  │ │  queue  │ │nodes  │ │
+│  │ search  │ │  tree   │ │approve  │ │ status  │ │workflows│ │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └───────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -53,15 +103,29 @@ Without a dedicated service, the agent has to guess — and gets it wrong. **mcp
 
 ## Plugins
 
+### Core Plugins
+
 | Plugin | Prefix | Description |
 |--------|--------|-------------|
-| [n8n](./src/plugins/n8n/README.md) | `/n8n` | Node catalog, search, context, workflow validation & write |
-| [n8n-credentials](./src/plugins/n8n-credentials/README.md) | `/credentials` | Credential metadata from n8n (no secrets) |
-| [n8n-workflows](./src/plugins/n8n-workflows/README.md) | `/n8n/workflows` | Workflow list, detail, and search |
-| [github](./src/plugins/github/README.md) | `/github` | Read access to public and private GitHub repos |
-| [notion](./src/plugins/notion/README.md) | `/notion` | Create and manage pages, databases, and tasks in Notion |
-| [file-storage](./src/plugins/file-storage/README.md) | `/file-storage` | S3, Google Drive, local file operations |
-| [database](./src/plugins/database/README.md) | `/database` | MSSQL, PostgreSQL, MongoDB queries and CRUD |
+| [github](./src/plugins/github/README.md) | `/github` | Repos, PRs, branches, analysis |
+| [notion](./src/plugins/notion/README.md) | `/notion` | Pages, databases, tasks, templates |
+| [git](./src/plugins/git/README.md) | `/git` | Repository operations |
+| [tests](./src/plugins/tests/README.md) | `/tests` | Test runner (Vitest, Jest, Mocha) |
+| [brain](./src/plugins/brain/README.md) | `/brain` | LLM skills, chat, planning |
+| [rag](./src/plugins/rag/README.md) | `/rag` | Document indexing, semantic search |
+| [workspace](./src/plugins/workspace/README.md) | `/workspace` | File operations |
+| [policy](./src/plugins/policy/README.md) | `/policy` | Approval rules, rate limits |
+
+### Integration Plugins
+
+| Plugin | Prefix | Description |
+|--------|--------|-------------|
+| [n8n](./src/plugins/n8n/README.md) | `/n8n` | Node catalog, workflows |
+| [n8n-credentials](./src/plugins/n8n-credentials/README.md) | `/credentials` | Credential metadata |
+| [n8n-workflows](./src/plugins/n8n-workflows/README.md) | `/n8n/workflows` | Workflow management |
+| [database](./src/plugins/database/README.md) | `/database` | SQL/NoSQL queries |
+| [file-storage](./src/plugins/file-storage/README.md) | `/file-storage` | S3, GCS, local files |
+| [slack](./src/plugins/slack/README.md) | `/slack` | Slack integration |
 
 ---
 
@@ -202,31 +266,43 @@ http://host.docker.internal:8787
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/github/repos` | List authenticated user's repos (public + private) |
-| `GET` | `/github/users/:username/repos` | List public repos for any user/org |
-| `GET` | `/github/analyze?repo=owner/repo` | **Primary AI tool** — full repo snapshot in one call |
-| `GET` | `/github/repo/:owner/:repo` | Repo metadata only |
-| `GET` | `/github/repo/:owner/:repo/tree` | File tree |
-| `GET` | `/github/repo/:owner/:repo/file` | File content |
-| `GET` | `/github/repo/:owner/:repo/commits` | Recent commits |
-| `GET` | `/github/repo/:owner/:repo/issues` | Open issues and PRs |
+| `GET` | `/github/analyze?repo=owner/repo` | Full repo snapshot |
+| `POST` | `/github/pulls` | Create PR |
+| `GET` | `/github/pulls?repo=owner/repo` | List PRs |
+| `POST` | `/github/branches` | Create branch |
 
 ### Notion Plugin
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/notion/search` | Search pages and databases by keyword |
-| `GET` | `/notion/sections` | List all pages and databases (for discovery) |
-| `POST` | `/notion/setup-project` | **Primary AI tool** — create project + all tasks in one call |
-| `POST` | `/notion/row` | Add a row to any Notion database |
-| `GET` | `/notion/projects` | List projects from Projeler database |
-| `POST` | `/notion/projects` | Create a project in Projeler database |
-| `GET` | `/notion/tasks` | List tasks from Yapılacaklar database |
-| `POST` | `/notion/tasks` | Create a task in Yapılacaklar database |
-| `POST` | `/notion/pages` | Create a page |
-| `PATCH` | `/notion/pages/:id/append` | Append blocks to a page |
-| `GET` | `/notion/pages/:id/blocks` | Get page content |
-| `POST` | `/notion/databases/:id/rows` | Add a row to a specific database |
-| `PATCH` | `/notion/databases/rows/:rowId` | Update a row |
+| `POST` | `/notion/setup-project` | Create project + tasks |
+| `POST` | `/notion/templates/apply` | Apply template |
+| `POST` | `/notion/templates/pages` | Create from template |
+
+### Git Plugin
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/git/status` | Repository status |
+| `POST` | `/git/commit` | Commit changes |
+| `POST` | `/git/push` | Push to remote |
+| `POST` | `/git/branches` | Create branch |
+
+### Brain Plugin
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/brain/skills/:name/invoke` | Invoke skill |
+| `POST` | `/brain/chat` | Chat with context |
+| `POST` | `/brain/planner` | Create plan |
+
+### RAG Plugin
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/rag/index` | Index document |
+| `POST` | `/rag/search` | Semantic search |
+| `GET` | `/rag/stats` | Index statistics |
 
 ---
 
@@ -247,6 +323,43 @@ Import `project-planner-workflow.json` into n8n. It configures a **Tools Agent**
 → See [`docs/integrations/`](./docs/integrations/) for AI agent integration guides.
 → See [`docs/use-cases/`](./docs/use-cases.md) for real-world examples.
 → See [`docs/plugin-development.md`](./docs/plugin-development.md) for building custom plugins.
+
+---
+
+## MCP Usage
+
+### Claude Desktop Config
+
+```json
+{
+  "mcpServers": {
+    "mcp-hub": {
+      "command": "node",
+      "args": ["/path/to/mcp-server/src/mcp/stdio-bridge.js"],
+      "env": {
+        "MCP_SERVER_URL": "http://localhost:8787"
+      }
+    }
+  }
+}
+```
+
+### Available MCP Tools
+
+| Tool | Plugin | Description |
+|------|--------|-------------|
+| `github_analyze_repo` | github | Analyze repository |
+| `github_create_pr` | github | Create pull request |
+| `notion_apply_template` | notion | Apply page template |
+| `notion_create_task` | notion | Create task in database |
+| `git_commit` | git | Commit changes |
+| `git_push` | git | Push to remote |
+| `tests_run` | tests | Run test suite |
+| `brain_invoke_skill` | brain | Use AI skills |
+| `brain_chat` | brain | Conversational AI |
+| `rag_search` | rag | Semantic search |
+| `workspace_read_file` | workspace | Read project files |
+| `policy_evaluate` | policy | Check policy rules |
 
 ### Typical Agent Flow — Existing GitHub Project
 
@@ -283,27 +396,55 @@ Import `project-planner-workflow.json` into n8n. It configures a **Tools Agent**
 | `NOTION_API_KEY` | — | Notion internal integration secret |
 | `NOTION_ROOT_PAGE_ID` | — | Default parent page for new pages |
 | `NOTION_PROJECTS_DB_ID` | — | Notion database ID for projects (Projeler) |
-| `NOTION_TASKS_DB_ID` | — | Notion database ID for tasks (Yapılacaklar) |
+| `NOTION_TASKS_DB_ID` | — | Notion database ID for tasks |
+| `WORKSPACE_PATH` | — | File storage root |
+| `OPENAI_API_KEY` | — | For brain plugin |
+| `HUB_ADMIN_KEY` | — | Admin scope for policy |
 
 ---
 
 ## Plugin Development
 
-Each plugin is a folder in `src/plugins/` that exports:
+Each plugin exports REST routes and MCP tools:
 
 ```javascript
 // src/plugins/my-plugin/index.js
+import { ToolTags } from "../../core/tool-registry.js";
+
 export const name = "my-plugin";
 export const version = "1.0.0";
+export const description = "...";
+export const endpoints = [...];
+export const examples = [...];
 
+// REST routes
 export function register(app) {
-  app.get("/my-plugin/hello", (req, res) => {
-    res.json({ ok: true, message: "Hello from my plugin" });
-  });
+  app.get("/my-plugin/hello", handler);
 }
+
+// MCP tools
+export const tools = [
+  {
+    name: "my_tool",
+    description: "...",
+    tags: [ToolTags.READ],
+    inputSchema: { ... },
+    handler: async (args) => { ... }
+  }
+];
 ```
 
-The plugin loader discovers and mounts it automatically on server start.
+## Tool Tags
+
+| Tag | Description |
+|-----|-------------|
+| `READ` | Read-only operations |
+| `WRITE` | Modifies state |
+| `NETWORK` | Makes HTTP requests |
+| `EXTERNAL_API` | Calls external services |
+| `GIT` | Git operations |
+| `LOCAL_FS` | Local file system |
+| `BULK` | Batch operations |
 
 ---
 
