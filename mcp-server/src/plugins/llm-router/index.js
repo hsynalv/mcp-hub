@@ -52,8 +52,43 @@ const PROVIDERS = {
   },
 };
 
-// Task routing rules
+// Task routing rules - Maps task types to optimal providers
 const ROUTING_RULES = [
+  {
+    task: "coding",
+    description: "Programming, code generation, debugging",
+    primary: { provider: "anthropic", model: "claude-3-opus-20240229" },
+    fallback: { provider: "openai", model: "gpt-4o" },
+    priority: 1,
+  },
+  {
+    task: "analysis",
+    description: "Data analysis, reasoning, complex problem solving",
+    primary: { provider: "openai", model: "gpt-4o" },
+    fallback: { provider: "anthropic", model: "claude-3-sonnet-20240229" },
+    priority: 1,
+  },
+  {
+    task: "documentation",
+    description: "Write docs, comments, explanations",
+    primary: { provider: "openai", model: "gpt-4o-mini" },
+    fallback: { provider: "mistral", model: "mistral-small-latest" },
+    priority: 2,
+  },
+  {
+    task: "fast",
+    description: "Quick responses, simple queries",
+    primary: { provider: "google", model: "gemini-1.5-flash" },
+    fallback: { provider: "openai", model: "gpt-4o-mini" },
+    priority: 3,
+  },
+  {
+    task: "local",
+    description: "Local/self-hosted models via Ollama",
+    primary: { provider: "ollama", model: "llama3" },
+    fallback: null,
+    priority: 3,
+  },
   {
     task: "backend_api",
     description: "Backend API development, database schemas, server logic",
@@ -94,13 +129,6 @@ const ROUTING_RULES = [
     description: "Code refactoring, optimization",
     primary: { provider: "anthropic", model: "claude-3-sonnet-20240229" },
     fallback: { provider: "openai", model: "gpt-4o" },
-    priority: 2,
-  },
-  {
-    task: "documentation",
-    description: "Write documentation, README, comments",
-    primary: { provider: "openai", model: "gpt-4o-mini" },
-    fallback: { provider: "mistral", model: "mistral-small-latest" },
     priority: 2,
   },
   {
@@ -222,6 +250,12 @@ function getClient(provider) {
         },
       },
     };
+  } else if (provider === "mistral") {
+    // Mistral uses OpenAI-compatible API
+    client = new OpenAI({
+      apiKey: process.env.MISTRAL_API_KEY,
+      baseURL: "https://api.mistral.ai/v1",
+    });
   } else if (provider === "ollama") {
     // Ollama local API
     client = {
@@ -263,13 +297,17 @@ export async function routeTask(task, prompt, options = {}) {
   // Find routing rule
   const rule = ROUTING_RULES.find(r => r.task === task) || ROUTING_RULES.find(r => r.task === "general");
 
-  const { provider, model } = rule.primary;
+  // Determine which provider to use (primary or fallback)
+  const useFallback = options.useFallback || false;
+  const providerConfig = useFallback && rule.fallback ? rule.fallback : rule.primary;
+  const { provider, model } = providerConfig;
   const config = PROVIDERS[provider];
 
   // Check if provider is available
   if (config.requiresKey && !process.env[config.requiresKey]) {
-    // Try fallback
-    if (rule.fallback) {
+    // Try fallback if not already using it
+    if (!useFallback && rule.fallback) {
+      console.log(`[llm-router] Provider ${provider} unavailable (no API key), trying fallback...`);
       return routeTask(task, prompt, { ...options, useFallback: true });
     }
     throw new Error(`Provider ${provider} requires ${config.requiresKey}`);
@@ -278,29 +316,40 @@ export async function routeTask(task, prompt, options = {}) {
   const client = getClient(provider);
 
   // Call LLM with resilience
-  const result = await withResilience(`llm-${provider}`, async () => {
-    const response = await client.chat.completions.create({
-      model: model,
-      messages: [
-        { role: "system", content: getSystemPrompt(task) },
-        { role: "user", content: prompt },
-      ],
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
+  try {
+    const result = await withResilience(`llm-${provider}`, async () => {
+      const response = await client.chat.completions.create({
+        model: model,
+        messages: [
+          { role: "system", content: getSystemPrompt(task) },
+          { role: "user", content: prompt },
+        ],
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 4096,
+      });
+
+      return response.choices[0].message.content;
+    }, {
+      circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
+      retry: { maxAttempts: 2, backoffMs: 1000 },
     });
 
-    return response.choices[0].message.content;
-  }, {
-    circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
-    retry: { maxAttempts: 2, backoffMs: 1000 },
-  });
-
-  return {
-    content: result,
-    provider,
-    model,
-    task,
-  };
+    return {
+      content: result,
+      provider,
+      model,
+      task,
+      usedFallback: useFallback,
+    };
+  } catch (error) {
+    // If primary fails and fallback exists, try fallback
+    if (!useFallback && rule.fallback) {
+      console.log(`[llm-router] Provider ${provider} failed: ${error.message}, trying fallback...`);
+      return routeTask(task, prompt, { ...options, useFallback: true });
+    }
+    // No fallback available, re-throw
+    throw error;
+  }
 }
 
 /**
@@ -413,18 +462,22 @@ export function estimateCost(task, promptTokens = 1000, responseTokens = 2000) {
 export const tools = [
   {
     name: "llm_route",
-    description: "Route a task to the best LLM provider",
-    parameters: {
+    description: "Route prompts to the best LLM provider based on task type",
+    inputSchema: {
       type: "object",
       properties: {
         task: {
           type: "string",
           enum: ROUTING_RULES.map(r => r.task),
-          description: "Type of task to route",
+          description: "Type of task to route (coding, analysis, documentation, fast, local, etc.)",
         },
         prompt: {
           type: "string",
           description: "The prompt to send to the LLM",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain why you selected this task type and provider",
         },
         temperature: {
           type: "number",
@@ -437,14 +490,18 @@ export const tools = [
           default: 4096,
         },
       },
-      required: ["task", "prompt"],
+      required: ["task", "prompt", "explanation"],
     },
-    handler: async ({ task, prompt, temperature, maxTokens }) => {
+    handler: async ({ task, prompt, explanation, temperature, maxTokens }) => {
       try {
         const result = await routeTask(task, prompt, { temperature, maxTokens });
         return {
           ok: true,
-          data: result,
+          data: {
+            ...result,
+            explanation,
+            routing_reason: `Selected ${result.provider} (${result.model}) for ${task} task`,
+          },
         };
       } catch (error) {
         return {
@@ -460,7 +517,7 @@ export const tools = [
   {
     name: "llm_compare",
     description: "Compare responses from multiple LLM providers",
-    parameters: {
+    inputSchema: {
       type: "object",
       properties: {
         task: {
@@ -472,6 +529,10 @@ export const tools = [
           type: "string",
           description: "The prompt to send",
         },
+        explanation: {
+          type: "string",
+          description: "Explain why you want to compare these providers",
+        },
         providers: {
           type: "array",
           items: { type: "string" },
@@ -479,14 +540,17 @@ export const tools = [
           default: ["openai", "anthropic"],
         },
       },
-      required: ["task", "prompt"],
+      required: ["task", "prompt", "explanation"],
     },
-    handler: async ({ task, prompt, providers }) => {
+    handler: async ({ task, prompt, explanation, providers }) => {
       try {
         const results = await compareLLMs(task, prompt, providers);
         return {
           ok: true,
-          data: results,
+          data: {
+            comparison: results,
+            explanation,
+          },
         };
       } catch (error) {
         return {
@@ -502,7 +566,7 @@ export const tools = [
   {
     name: "llm_list_models",
     description: "List available LLM models and providers",
-    parameters: {
+    inputSchema: {
       type: "object",
       properties: {},
     },
@@ -515,14 +579,18 @@ export const tools = [
   },
   {
     name: "llm_estimate_cost",
-    description: "Estimate cost for a task",
-    parameters: {
+    description: "Estimate cost for a task before running it",
+    inputSchema: {
       type: "object",
       properties: {
         task: {
           type: "string",
           enum: ROUTING_RULES.map(r => r.task),
           description: "Task type",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain why you need this cost estimate",
         },
         promptTokens: {
           type: "number",
@@ -535,64 +603,17 @@ export const tools = [
           default: 2000,
         },
       },
-      required: ["task"],
+      required: ["task", "explanation"],
     },
-    handler: ({ task, promptTokens, responseTokens }) => {
+    handler: ({ task, explanation, promptTokens, responseTokens }) => {
       const estimate = estimateCost(task, promptTokens, responseTokens);
       return {
         ok: true,
-        data: estimate || { error: "Cannot estimate cost for this task" },
+        data: {
+          ...estimate,
+          explanation,
+        },
       };
-    },
-  },
-  {
-    name: "llm_route_backend",
-    description: "Send task to Backend Agent (specialized for API development)",
-    parameters: {
-      type: "object",
-      properties: {
-        requirement: {
-          type: "string",
-          description: "Backend requirement or feature description",
-        },
-        techStack: {
-          type: "object",
-          description: "Current tech stack context",
-        },
-      },
-      required: ["requirement"],
-    },
-    handler: async ({ requirement, techStack }) => {
-      const prompt = `Tech Stack: ${JSON.stringify(techStack || {})}\n\nRequirement: ${requirement}\n\nGenerate the backend implementation with proper error handling, types, and best practices.`;
-      return await tools.find(t => t.name === "llm_route").handler({
-        task: "backend_api",
-        prompt,
-      });
-    },
-  },
-  {
-    name: "llm_route_frontend",
-    description: "Send task to Frontend Agent (specialized for UI development)",
-    parameters: {
-      type: "object",
-      properties: {
-        component: {
-          type: "string",
-          description: "Component description or requirements",
-        },
-        designSystem: {
-          type: "object",
-          description: "Design system context (colors, typography, etc.)",
-        },
-      },
-      required: ["component"],
-    },
-    handler: async ({ component, designSystem }) => {
-      const prompt = `Design System: ${JSON.stringify(designSystem || {})}\n\nComponent: ${component}\n\nGenerate a clean, accessible, responsive component with TypeScript and modern CSS.`;
-      return await tools.find(t => t.name === "llm_route").handler({
-        task: "frontend_component",
-        prompt,
-      });
     },
   },
 ];

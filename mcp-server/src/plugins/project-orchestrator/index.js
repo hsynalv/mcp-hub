@@ -801,6 +801,83 @@ router.post("/projects/:id/commit", async (req, res) => {
   });
 });
 
+// New workflow tool endpoints
+
+/**
+ * POST /project-orchestrator/repo
+ * Create new GitHub repository
+ */
+router.post("/repo", async (req, res) => {
+  const { name, description, isPrivate, template, explanation } = req.body || {};
+  if (!name || !description) {
+    return res.status(400).json({ ok: false, error: "name and description are required" });
+  }
+
+  const tool = tools.find(t => t.name === "project_create_repo");
+  const result = await tool.handler({ name, description, isPrivate, template, explanation });
+  res.json(result);
+});
+
+/**
+ * POST /project-orchestrator/structure
+ * Generate project folder structure
+ */
+router.post("/structure", async (req, res) => {
+  const { idea, techStack, repoPath, explanation } = req.body || {};
+  if (!idea || !techStack || !repoPath) {
+    return res.status(400).json({ ok: false, error: "idea, techStack, and repoPath are required" });
+  }
+
+  const tool = tools.find(t => t.name === "project_generate_structure");
+  const result = await tool.handler({ idea, techStack, repoPath, explanation });
+  res.json(result);
+});
+
+/**
+ * POST /project-orchestrator/tasks
+ * Create project tasks
+ */
+router.post("/tasks", async (req, res) => {
+  const { idea, techStack, outputFormat, explanation } = req.body || {};
+  if (!idea || !techStack) {
+    return res.status(400).json({ ok: false, error: "idea and techStack are required" });
+  }
+
+  const tool = tools.find(t => t.name === "project_create_tasks");
+  const result = await tool.handler({ idea, techStack, outputFormat, explanation });
+  res.json(result);
+});
+
+/**
+ * POST /project-orchestrator/code
+ * Generate initial code
+ */
+router.post("/code", async (req, res) => {
+  const { idea, techStack, component, repoPath, explanation } = req.body || {};
+  if (!idea || !techStack || !component || !repoPath) {
+    return res.status(400).json({ ok: false, error: "idea, techStack, component, and repoPath are required" });
+  }
+
+  const tool = tools.find(t => t.name === "project_generate_code");
+  const result = await tool.handler({ idea, techStack, component, repoPath, explanation });
+  res.json(result);
+});
+
+/**
+ * POST /project-orchestrator/pr
+ * Open initial PR/issue
+ */
+router.post("/pr", async (req, res) => {
+  const { repo, title, description, branch, explanation } = req.body || {};
+  if (!repo || !title || !description) {
+    return res.status(400).json({ ok: false, error: "repo, title, and description are required" });
+  }
+
+  const tool = tools.find(t => t.name === "project_open_pr");
+  const result = await tool.handler({ repo, title, description, branch, explanation });
+  res.json(result);
+});
+
 // ── Plugin Export ────────────────────────────────────────────────────────────
 
 export const name = "project-orchestrator";
@@ -822,6 +899,12 @@ export const endpoints = [
   { method: "GET", path: "/project-orchestrator/projects/:id", description: "Get project details" },
   { method: "POST", path: "/project-orchestrator/projects/:id/execute", description: "Execute next task" },
   { method: "POST", path: "/project-orchestrator/projects/:id/commit", description: "Commit changes to git" },
+  // New workflow tools
+  { method: "POST", path: "/project-orchestrator/repo", description: "Create new GitHub repository" },
+  { method: "POST", path: "/project-orchestrator/structure", description: "Generate project folder structure" },
+  { method: "POST", path: "/project-orchestrator/tasks", description: "Create project tasks" },
+  { method: "POST", path: "/project-orchestrator/code", description: "Generate initial code" },
+  { method: "POST", path: "/project-orchestrator/pr", description: "Open initial PR/issue" },
 ];
 
 export const examples = [
@@ -929,6 +1012,283 @@ export const tools = [
         plan: project.plan,
         workspacePath: args.projectId,
       });
+    },
+  },
+  {
+    name: "project_create_repo",
+    description: "Create a new GitHub repository for the project",
+    tags: [ToolTags.WRITE, ToolTags.EXTERNAL_API, ToolTags.NETWORK],
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Repository name" },
+        description: { type: "string", description: "Repository description" },
+        isPrivate: { type: "boolean", description: "Private repository", default: false },
+        template: { type: "string", description: "Optional: node, python, nextjs, etc.", enum: ["node", "python", "nextjs", "go", "rust", "empty"] },
+        explanation: { type: "string", description: "Why you're creating this repo" },
+      },
+      required: ["name", "description", "explanation"],
+    },
+    handler: async ({ name, description, isPrivate = false, template = "empty", explanation }) => {
+      try {
+        const response = await fetch("https://api.github.com/user/repos", {
+          method: "POST",
+          headers: {
+            "Authorization": `token ${process.env.GITHUB_TOKEN}`,
+            "Accept": "application/vnd.github.v3+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name,
+            description,
+            private: isPrivate,
+            auto_init: true,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          return { ok: false, error: { code: "github_error", message: error.message } };
+        }
+
+        const repo = await response.json();
+        return {
+          ok: true,
+          data: {
+            repo_id: repo.id,
+            name: repo.name,
+            full_name: repo.full_name,
+            url: repo.html_url,
+            clone_url: repo.clone_url,
+            ssh_url: repo.ssh_url,
+            template,
+            explanation,
+          },
+        };
+      } catch (err) {
+        return { ok: false, error: { code: "create_error", message: err.message } };
+      }
+    },
+  },
+  {
+    name: "project_generate_structure",
+    description: "Generate project folder structure using AI",
+    inputSchema: {
+      type: "object",
+      properties: {
+        idea: { type: "string", description: "Project idea/concept" },
+        techStack: { type: "string", description: "Technology stack (e.g., nextjs, python, node)" },
+        repoPath: { type: "string", description: "Local repository path" },
+        explanation: { type: "string", description: "Why you're generating this structure" },
+      },
+      required: ["idea", "techStack", "repoPath", "explanation"],
+    },
+    tags: [ToolTags.WRITE, ToolTags.DESTRUCTIVE, ToolTags.LOCAL_FS],
+    handler: async ({ idea, techStack, repoPath, explanation }) => {
+      const prompt = `Generate a project structure for:
+Idea: ${idea}
+Tech Stack: ${techStack}
+
+Provide as JSON:
+{
+  "structure": [
+    { "path": "src/components", "type": "directory" },
+    { "path": "src/index.js", "type": "file", "template": "..." }
+  ],
+  "files": [
+    { "path": "package.json", "content": "..." },
+    { "path": "README.md", "content": "..." }
+  ]
+}`;
+
+      const result = await callLLM([
+        { role: "system", content: "You are an expert software architect." },
+        { role: "user", content: prompt }
+      ], { jsonMode: true });
+
+      if (!result.ok) return result;
+
+      let structure;
+      try {
+        structure = JSON.parse(result.content);
+      } catch {
+        return { ok: false, error: { code: "parse_error", message: "Failed to parse AI structure" } };
+      }
+
+      const created = [];
+      const { mkdir, writeFile } = await import("fs/promises");
+      const { join } = await import("path");
+
+      for (const item of structure.structure || []) {
+        if (item.type === "directory") {
+          await mkdir(join(repoPath, item.path), { recursive: true });
+          created.push({ type: "dir", path: item.path });
+        }
+      }
+
+      for (const file of structure.files || []) {
+        await writeFile(join(repoPath, file.path), file.content, "utf8");
+        created.push({ type: "file", path: file.path });
+      }
+
+      return {
+        ok: true,
+        data: { repoPath, created, explanation },
+      };
+    },
+  },
+  {
+    name: "project_create_tasks",
+    description: "Create project tasks/todos",
+    inputSchema: {
+      type: "object",
+      properties: {
+        idea: { type: "string", description: "Project idea" },
+        techStack: { type: "string", description: "Tech stack" },
+        outputFormat: { type: "string", description: "notion, markdown, or json", default: "markdown" },
+        explanation: { type: "string", description: "Why you're creating these tasks" },
+      },
+      required: ["idea", "techStack", "explanation"],
+    },
+    tags: [ToolTags.WRITE, ToolTags.NETWORK],
+    handler: async ({ idea, techStack, outputFormat = "markdown", explanation }) => {
+      const prompt = `Create project tasks for:
+Idea: ${idea}
+Tech Stack: ${techStack}
+
+Generate tasks in ${outputFormat} format covering:
+1. Project setup
+2. Core features
+3. Testing
+4. Documentation
+
+Return structured tasks.`;
+
+      const result = await callLLM([
+        { role: "system", content: "You are a project manager." },
+        { role: "user", content: prompt }
+      ]);
+
+      if (!result.ok) return result;
+
+      return {
+        ok: true,
+        data: {
+          tasks: result.content,
+          format: outputFormat,
+          explanation,
+        },
+      };
+    },
+  },
+  {
+    name: "project_generate_code",
+    description: "Generate initial code for the project",
+    inputSchema: {
+      type: "object",
+      properties: {
+        idea: { type: "string", description: "Project idea" },
+        techStack: { type: "string", description: "Tech stack" },
+        component: { type: "string", description: "Specific component to generate" },
+        repoPath: { type: "string", description: "Repository path to write to" },
+        explanation: { type: "string", description: "Why you're generating this code" },
+      },
+      required: ["idea", "techStack", "component", "repoPath", "explanation"],
+    },
+    tags: [ToolTags.WRITE, ToolTags.DESTRUCTIVE, ToolTags.LOCAL_FS, ToolTags.NETWORK],
+    handler: async ({ idea, techStack, component, repoPath, explanation }) => {
+      const prompt = `Generate code for:
+Project: ${idea}
+Tech Stack: ${techStack}
+Component: ${component}
+
+Provide:
+1. File path
+2. Complete code
+3. Dependencies needed
+
+Return as JSON: { "files": [{ "path": "...", "content": "..." }] }`;
+
+      const result = await callLLM([
+        { role: "system", content: "You are an expert programmer." },
+        { role: "user", content: prompt }
+      ], { jsonMode: true });
+
+      if (!result.ok) return result;
+
+      let files;
+      try {
+        files = JSON.parse(result.content).files;
+      } catch {
+        return { ok: false, error: { code: "parse_error", message: "Could not parse generated code" } };
+      }
+
+      const { writeFile } = await import("fs/promises");
+      const { join } = await import("path");
+
+      const written = [];
+      for (const file of files) {
+        await writeFile(join(repoPath, file.path), file.content, "utf8");
+        written.push(file.path);
+      }
+
+      return {
+        ok: true,
+        data: { component, files: written, explanation },
+      };
+    },
+  },
+  {
+    name: "project_open_pr",
+    description: "Open initial pull request",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "Repository full name (owner/repo)" },
+        title: { type: "string", description: "PR title" },
+        description: { type: "string", description: "PR description" },
+        branch: { type: "string", description: "Branch name", default: "main" },
+        explanation: { type: "string", description: "Why you're opening this PR" },
+      },
+      required: ["repo", "title", "description", "explanation"],
+    },
+    tags: [ToolTags.WRITE, ToolTags.EXTERNAL_API, ToolTags.NETWORK],
+    handler: async ({ repo, title, description, branch = "main", explanation }) => {
+      try {
+        const response = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+          method: "POST",
+          headers: {
+            "Authorization": `token ${process.env.GITHUB_TOKEN}`,
+            "Accept": "application/vnd.github.v3+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title,
+            body: description,
+            labels: ["enhancement"],
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          return { ok: false, error: { code: "github_error", message: error.message } };
+        }
+
+        const issue = await response.json();
+        return {
+          ok: true,
+          data: {
+            issue_id: issue.id,
+            issue_number: issue.number,
+            url: issue.html_url,
+            repo,
+            branch,
+            explanation,
+          },
+        };
+      } catch (err) {
+        return { ok: false, error: { code: "pr_error", message: err.message } };
+      }
     },
   },
 ];

@@ -73,7 +73,12 @@ export function listApprovals({ status } = {}) {
   return status ? approvals.filter((a) => a.status === status) : approvals;
 }
 
-export function createApproval({ ruleId, path, method, body, requestedBy }) {
+export function getApproval(id) {
+  const data = load();
+  return (data.approvals ?? []).find((a) => a.id === id) ?? null;
+}
+
+export function createApproval({ ruleId, path, method, body, requestedBy, toolName, explanation }) {
   const data = load();
   data.approvals ??= [];
 
@@ -84,6 +89,8 @@ export function createApproval({ ruleId, path, method, body, requestedBy }) {
     method,
     body:        body ?? null,
     requestedBy: requestedBy ?? "agent",
+    toolName:    toolName ?? null,
+    explanation: explanation ?? null,
     status:      "pending",
     createdAt:   new Date().toISOString(),
     decidedAt:   null,

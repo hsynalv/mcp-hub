@@ -70,8 +70,9 @@ export const tools = [
         parentPageId: { type: "string", description: "Parent page ID" },
         icon: { type: "string", description: "Emoji icon" },
         blocks: { type: "array", description: "Content blocks" },
+        explanation: { type: "string", description: "Explain why you are creating this page" },
       },
-      required: ["title"],
+      required: ["title", "explanation"],
     },
     handler: async (args) => {
       const payload = {
@@ -82,7 +83,91 @@ export const tools = [
       if (args.blocks) payload.children = toNotionBlocks(args.blocks);
       const result = await notionRequest("POST", "/pages", payload);
       if (!result.ok) return result;
-      return { ok: true, data: { id: result.data.id, url: result.data.url } };
+      return { 
+        ok: true, 
+        data: { 
+          id: result.data.id, 
+          url: result.data.url,
+          explanation: args.explanation,
+        } 
+      };
+    },
+  },
+  {
+    name: "notion_update_page",
+    description: "Update an existing Notion page properties",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        pageId: { type: "string", description: "Page ID to update" },
+        title: { type: "string", description: "New page title" },
+        icon: { type: "string", description: "New emoji icon" },
+        archived: { type: "boolean", description: "Archive or restore page" },
+        explanation: { type: "string", description: "Explain why you are updating this page" },
+      },
+      required: ["pageId", "explanation"],
+    },
+    handler: async (args) => {
+      const properties = {};
+      if (args.title) {
+        properties.title = [{ text: { content: args.title } }];
+      }
+      
+      const payload = { properties };
+      if (args.icon) payload.icon = { type: "emoji", emoji: args.icon };
+      if (typeof args.archived === "boolean") payload.archived = args.archived;
+      
+      const result = await notionRequest("PATCH", `/pages/${args.pageId}`, payload);
+      if (!result.ok) return result;
+      return { 
+        ok: true, 
+        data: { 
+          id: result.data.id, 
+          url: result.data.url,
+          explanation: args.explanation,
+        } 
+      };
+    },
+  },
+  {
+    name: "notion_append_block",
+    description: "Append content blocks to an existing Notion page",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        pageId: { type: "string", description: "Page ID to append to" },
+        blocks: { 
+          type: "array", 
+          description: "Content blocks to append",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", description: "Block type (paragraph, heading_1, heading_2, heading_3, bullet_list_item, numbered_list_item, to_do, code, etc.)" },
+              text: { type: "string", description: "Block text content" },
+              checked: { type: "boolean", description: "For to_do blocks" },
+              language: { type: "string", description: "For code blocks" },
+            },
+          },
+        },
+        explanation: { type: "string", description: "Explain why you are appending to this page" },
+      },
+      required: ["pageId", "blocks", "explanation"],
+    },
+    handler: async (args) => {
+      const result = await notionRequest("PATCH", `/blocks/${args.pageId}/children`, {
+        children: toNotionBlocks(args.blocks),
+      });
+      if (!result.ok) return result;
+      return { 
+        ok: true, 
+        data: { 
+          pageId: args.pageId,
+          appended: args.blocks.length,
+          explanation: args.explanation,
+        } 
+      };
     },
   },
   {

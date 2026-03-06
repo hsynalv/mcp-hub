@@ -30,6 +30,7 @@ export const endpoints = [
   { method: "GET",    path: "/policy/approvals",              description: "List approval requests",       scope: "read"   },
   { method: "POST",   path: "/policy/approvals/:id/approve", description: "Approve a request",            scope: "danger" },
   { method: "POST",   path: "/policy/approvals/:id/reject",   description: "Reject a request",             scope: "danger" },
+  { method: "POST",   path: "/approve",                       description: "Approve tool execution",       scope: "danger" },
   { method: "POST",   path: "/policy/evaluate",              description: "Test a request against policy", scope: "read"   },
   { method: "POST",   path: "/policy/simulate",              description: "Simulate with explanation",     scope: "read"   },
   { method: "GET",    path: "/policy/health",                 description: "Plugin health",                scope: "read"   },
@@ -220,6 +221,26 @@ export function register(app) {
     const approval = updateApprovalStatus(req.params.id, "rejected");
     if (!approval) return res.status(404).json({ ok: false, error: "not_found" });
     res.json({ ok: true, approval });
+  });
+
+  /**
+   * POST /approve (alias for /policy/approvals/:id/approve)
+   * Simple endpoint for tool approval
+   */
+  router.post("/approve", requireScope("danger"), async (req, res) => {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ ok: false, error: "invalid_request", message: "id is required" });
+    }
+    
+    // Import approveTool from tool-registry dynamically to avoid circular deps
+    const { approveTool } = await import("../../core/tool-registry.js");
+    const result = await approveTool(id, { user: req.user || "manual" });
+    
+    if (!result.ok) {
+      return res.status(404).json(result);
+    }
+    res.json(result);
   });
 
   /**

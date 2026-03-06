@@ -1,0 +1,6 @@
+{
+  "_comment": "AI-Hub Policy Configuration",
+  "destructive_requires_approval": true,
+  "write_requires_approval": false,
+  "_description": "When set to true, tools with 'destructive' or 'write' tags will require manual approval before execution. Tools can also have 'needs_approval' tag for explicit approval requirement."
+}

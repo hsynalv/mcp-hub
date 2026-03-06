@@ -93,3 +93,148 @@ export async function fetchWorkflowList() {
 export async function fetchWorkflowById(id) {
   return apiRequest(`/workflows/${encodeURIComponent(id)}`);
 }
+
+/**
+ * Create a new workflow in n8n.
+ * @param {Object} workflowJson - The workflow JSON to create
+ * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
+ */
+export async function createWorkflow(workflowJson) {
+  const { baseUrl, apiBase, apiKey } = config.n8n;
+
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: "missing_api_key",
+      message: "N8N_API_KEY is not configured",
+    };
+  }
+
+  const url = `${baseUrl}${apiBase}/workflows`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-N8N-API-KEY": apiKey,
+      },
+      body: JSON.stringify(workflowJson),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: classifyHttpError(res.status),
+        details: {
+          status: res.status,
+          message: data?.message ?? res.statusText,
+        },
+      };
+    }
+
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: "network_error", message: err.message };
+  }
+}
+
+/**
+ * Update an existing workflow in n8n.
+ * @param {string} id - Workflow ID
+ * @param {Object} workflowJson - The workflow JSON to update
+ * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
+ */
+export async function updateWorkflow(id, workflowJson) {
+  const { baseUrl, apiBase, apiKey } = config.n8n;
+
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: "missing_api_key",
+      message: "N8N_API_KEY is not configured",
+    };
+  }
+
+  const url = `${baseUrl}${apiBase}/workflows/${encodeURIComponent(id)}`;
+
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-N8N-API-KEY": apiKey,
+      },
+      body: JSON.stringify(workflowJson),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: classifyHttpError(res.status),
+        details: {
+          status: res.status,
+          message: data?.message ?? res.statusText,
+        },
+      };
+    }
+
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: "network_error", message: err.message };
+  }
+}
+
+/**
+ * Activate/deactivate a workflow in n8n.
+ * @param {string} id - Workflow ID
+ * @param {boolean} active - Whether to activate or deactivate
+ * @returns {Promise<{ok: boolean, data?: any, error?: string}>}
+ */
+export async function activateWorkflow(id, active) {
+  const { baseUrl, apiBase, apiKey } = config.n8n;
+
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: "missing_api_key",
+      message: "N8N_API_KEY is not configured",
+    };
+  }
+
+  const url = `${baseUrl}${apiBase}/workflows/${encodeURIComponent(id)}/${active ? "activate" : "deactivate"}`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-N8N-API-KEY": apiKey,
+      },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: classifyHttpError(res.status),
+        details: {
+          status: res.status,
+          message: data?.message ?? res.statusText,
+        },
+      };
+    }
+
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: "network_error", message: err.message };
+  }
+}

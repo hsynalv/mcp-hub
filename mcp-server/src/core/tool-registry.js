@@ -11,20 +11,25 @@
  *     inputSchema: JSONSchema,
  *     handler: async (args, context) => result,
  *     plugin: string,
- *     tags: string[] // READ, WRITE, BULK, DESTRUCTIVE, NETWORK, LOCAL_FS, GIT, EXTERNAL_API
+ *     tags: string[] // read_only, write, destructive, needs_approval, BULK, NETWORK, LOCAL_FS, GIT, EXTERNAL_API
  *   }
  */
 
 import { evaluate } from "../plugins/policy/policy.engine.js";
+import { createApproval, updateApprovalStatus, getApproval, listApprovals } from "../plugins/policy/policy.store.js";
+import { loadPolicyConfig } from "../plugins/policy/policy.config.js";
 
 const tools = new Map();
 
 /** Standard tool tags for policy and UX */
 export const ToolTags = {
-  READ: "READ",
-  WRITE: "WRITE",
+  // Primary policy tags
+  READ_ONLY: "read_only",
+  WRITE: "write",
+  DESTRUCTIVE: "destructive",
+  NEEDS_APPROVAL: "needs_approval",
+  // Capability tags
   BULK: "BULK",
-  DESTRUCTIVE: "DESTRUCTIVE",
   NETWORK: "NETWORK",
   LOCAL_FS: "LOCAL_FS",
   GIT: "GIT",
@@ -33,6 +38,52 @@ export const ToolTags = {
 
 /** All valid tags */
 export const VALID_TAGS = Object.values(ToolTags);
+
+/**
+ * Validate tool according to MCP contract
+ * Required fields: name, description, inputSchema
+ * @param {Object} tool
+ * @throws {Error} if validation fails
+ */
+export function validateTool(tool) {
+  const errors = [];
+
+  if (!tool.name || typeof tool.name !== "string") {
+    errors.push("Tool must have a 'name' (string)");
+  }
+
+  if (!tool.description || typeof tool.description !== "string") {
+    errors.push("Tool must have a 'description' (string)");
+  }
+
+  if (!tool.inputSchema || typeof tool.inputSchema !== "object") {
+    errors.push("Tool must have an 'inputSchema' (JSON Schema object)");
+  } else {
+    // Check if inputSchema has properties
+    if (!tool.inputSchema.properties) {
+      errors.push("Tool inputSchema should have 'properties' defined");
+    }
+    // Encourage explanation field for write/destructive tools
+    const hasExplanation = tool.inputSchema.properties?.explanation;
+    const isWriteTool = tool.tags?.some(tag => 
+      ["write", "destructive", "DESTRUCTIVE", "WRITE"].includes(tag)
+    );
+    if (isWriteTool && !hasExplanation) {
+      console.warn(`[tool-registry] Warning: Tool '${tool.name}' is a write/destructive tool but lacks 'explanation' field in inputSchema. Consider adding it so LLM can explain why it runs this tool.`);
+    }
+  }
+
+  // Map legacy 'parameters' to 'inputSchema' if present
+  if (tool.parameters && !tool.inputSchema) {
+    console.warn(`[tool-registry] Tool '${tool.name}' uses deprecated 'parameters'. Mapping to 'inputSchema'.`);
+    tool.inputSchema = tool.parameters;
+    delete tool.parameters;
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Tool validation failed for '${tool.name || "unknown"}':\n  - ${errors.join("\n  - ")}`);
+  }
+}
 
 /**
  * Validate tags array
@@ -89,19 +140,19 @@ export function listToolsByTags(includeTags = [], excludeTags = []) {
  * @param {string} tool.plugin - Plugin name that owns this tool
  */
 export function registerTool(tool) {
-  if (!tool.name || typeof tool.name !== "string") {
-    throw new Error("Tool must have a name");
-  }
+  // Validate according to MCP contract
+  validateTool(tool);
+
   if (!tool.handler || typeof tool.handler !== "function") {
-    throw new Error("Tool must have a handler function");
+    throw new Error(`Tool '${tool.name}' must have a handler function`);
   }
 
   const validatedTags = validateTags(tool.tags);
 
   tools.set(tool.name, {
     name: tool.name,
-    description: tool.description || "",
-    inputSchema: tool.inputSchema || { type: "object" },
+    description: tool.description,
+    inputSchema: tool.inputSchema,
     handler: tool.handler,
     plugin: tool.plugin || "unknown",
     tags: validatedTags,
@@ -145,6 +196,7 @@ export function clearTools() {
 /**
  * Call a tool with the given arguments.
  * Performs policy check before executing the handler.
+ * Supports approval flow for tools with needs_approval tag.
  *
  * @param {string} name - Tool name
  * @param {Object} args - Tool arguments
@@ -153,6 +205,7 @@ export function clearTools() {
  * @param {string} context.method - HTTP method or "MCP"
  * @param {string} context.projectId - Project ID (optional)
  * @param {string} context.projectEnv - Project environment (optional)
+ * @param {string} context.approvalId - Pre-approved ID (optional)
  * @returns {Promise<Object>} Tool result
  */
 export async function callTool(name, args, context = {}) {
@@ -185,13 +238,89 @@ export async function callTool(name, args, context = {}) {
     };
   }
 
+  // Tool tag-based policy checking
+  const policyConfig = loadPolicyConfig();
+  const toolTags = tool.tags || [];
+  
+  // Check if tool requires approval based on tags
+  const needsApproval = toolTags.includes(ToolTags.NEEDS_APPROVAL) ||
+    (toolTags.includes(ToolTags.DESTRUCTIVE) && policyConfig.destructive_requires_approval) ||
+    (toolTags.includes(ToolTags.WRITE) && policyConfig.write_requires_approval);
+
+  // If approval required and no pre-approved ID, create approval request
+  if (needsApproval && !context.approvalId) {
+    const approval = createApproval({
+      ruleId: "tool_tag_policy",
+      path,
+      method,
+      body: args,
+      requestedBy: context.user || "agent",
+      toolName: name,
+      explanation: args.explanation || "No explanation provided",
+    });
+
+    return {
+      ok: false,
+      status: "approval_required",
+      tool: name,
+      explanation: args.explanation || "Tool requires manual approval",
+      parameters: args,
+      approval: {
+        id: approval.id,
+        status: "pending",
+        createdAt: approval.createdAt,
+      },
+      message: `Tool '${name}' requires approval. Use POST /approve with id '${approval.id}' to confirm.`,
+    };
+  }
+
+  // If pre-approved ID provided, verify it
+  if (context.approvalId) {
+    const approval = getApproval(context.approvalId);
+    if (!approval) {
+      return {
+        ok: false,
+        error: {
+          code: "approval_not_found",
+          message: `Approval ID not found: ${context.approvalId}`,
+        },
+      };
+    }
+    if (approval.status !== "approved") {
+      return {
+        ok: false,
+        error: {
+          code: "approval_pending",
+          message: `Approval not granted for ID: ${context.approvalId}`,
+          approval: {
+            id: approval.id,
+            status: approval.status,
+          },
+        },
+      };
+    }
+  }
+
+  // Execute the tool
+  const startTime = Date.now();
   try {
     const result = await tool.handler(args, context);
+
+    // Audit logging
+    logToolExecution({
+      toolName: name,
+      timestamp: new Date().toISOString(),
+      projectId: context.projectId,
+      parameters: args,
+      result: result,
+      duration: Date.now() - startTime,
+      user: context.user,
+      approvalId: context.approvalId,
+    });
 
     // Normalize result to standard envelope if not already
     if (result && typeof result === "object") {
       if (result.ok === true || result.ok === false) {
-        // Already in envelope format
         return result;
       }
     }
@@ -203,6 +332,19 @@ export async function callTool(name, args, context = {}) {
       meta: { requestId: context.requestId },
     };
   } catch (err) {
+    // Audit logging for failures
+    logToolExecution({
+      toolName: name,
+      timestamp: new Date().toISOString(),
+      projectId: context.projectId,
+      parameters: args,
+      error: err.message,
+      duration: Date.now() - startTime,
+      user: context.user,
+      approvalId: context.approvalId,
+      failed: true,
+    });
+
     return {
       ok: false,
       error: {
@@ -213,6 +355,77 @@ export async function callTool(name, args, context = {}) {
       meta: { requestId: context.requestId },
     };
   }
+}
+
+/**
+ * Approve a pending tool execution.
+ * @param {string} approvalId - The approval ID
+ * @param {Object} context - Approval context
+ * @returns {Object} Approval result
+ */
+export async function approveTool(approvalId, context = {}) {
+  const approval = getApproval(approvalId);
+  if (!approval) {
+    return {
+      ok: false,
+      error: {
+        code: "approval_not_found",
+        message: `Approval ID not found: ${approvalId}`,
+      },
+    };
+  }
+
+  if (approval.status !== "pending") {
+    return {
+      ok: false,
+      error: {
+        code: "approval_already_processed",
+        message: `Approval already ${approval.status}`,
+        approval: {
+          id: approval.id,
+          status: approval.status,
+        },
+      },
+    };
+  }
+
+  // Update approval status
+  updateApprovalStatus(approvalId, "approved", context.user || "manual");
+
+  // Re-execute the tool with the approval ID
+  const toolName = approval.toolName || approval.path.replace("/tools/", "");
+  const result = await callTool(toolName, approval.body, {
+    ...context,
+    approvalId,
+    user: context.user || "agent",
+  });
+
+  return {
+    ok: true,
+    data: {
+      approval: {
+        id: approvalId,
+        status: "approved",
+        approvedBy: context.user || "manual",
+      },
+      result,
+    },
+  };
+}
+
+/**
+ * Audit logging for tool executions.
+ * @param {Object} logEntry
+ */
+function logToolExecution(logEntry) {
+  // In production, this could write to a file, database, or external service
+  const logLine = JSON.stringify({
+    type: "tool_audit",
+    ...logEntry,
+  });
+
+  // Write to stderr for now (can be redirected to file)
+  console.error(logLine);
 }
 
 /**
