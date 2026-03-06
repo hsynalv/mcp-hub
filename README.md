@@ -2,9 +2,9 @@
 
 > A plugin-based HTTP knowledge service for AI agents — universal tool and service bridge for Cursor, Claude Desktop, n8n and custom LLM applications.
 
-**AI-Hub** bridges AI agents (running in Cursor, Claude Desktop, n8n, or any LLM environment) with the tools and platforms they need. Instead of guessing API parameters, credential names, or service structures, the agent asks AI-Hub and gets ground truth back.
+**AI-Hub** is an AI Operating System backend that bridges AI agents with real-world tools and services. It provides a multi-LLM routing layer, policy-based approval system, and 20+ integrations for building autonomous AI workflows.
 
-No LLM calls. No hallucinations. Just clean REST endpoints backed by real data.
+From simple API calls to complex multi-step automations, AI-Hub serves as the execution backbone for AI agents running in Cursor, Claude Desktop, n8n, or custom LLM applications.
 
 ---
 
@@ -26,16 +26,82 @@ No LLM calls. No hallucinations. Just clean REST endpoints backed by real data.
 
 ---
 
+## Architecture Overview
+
+AI-Hub operates as a multi-layer AI Operating System backend:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AI Agent (Cursor/Claude/n8n)              │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ MCP/REST
+┌──────────────────────▼──────────────────────────────────────┐
+│  1. TOOL REGISTRY                                           │
+│     - Central MCP tool registration                         │
+│     - Schema validation & tagging                           │
+│     - Policy enforcement hooks                              │
+├───────────────────────────────────────────────────────────────┤
+│  2. POLICY & APPROVAL SYSTEM                                │
+│     - Rule-based access control                             │
+│     - Human-in-the-loop approvals                           │
+│     - Audit logging                                         │
+├───────────────────────────────────────────────────────────────┤
+│  3. MULTI-LLM ROUTER                                        │
+│     - Provider routing (OpenAI, Anthropic, Google, Mistral) │
+│     - Task-based model selection                            │
+│     - Fallback & resilience                                 │
+├───────────────────────────────────────────────────────────────┤
+│  4. INTEGRATION PLUGINS                                     │
+│     - GitHub, Notion, n8n, Databases, File Storage          │
+│     - REST endpoints + MCP tools                            │
+├───────────────────────────────────────────────────────────────┤
+│  5. PROJECT CONTEXT LAYER                                   │
+│     - Multi-project configuration                           │
+│     - Workspace management                                  │
+│     - Repository intelligence                               │
+├───────────────────────────────────────────────────────────────┤
+│  6. JOB SYSTEM                                              │
+│     - Async task execution                                  │
+│     - Queue management                                      │
+│     - Progress tracking                                     │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+| Layer | Purpose | Tags |
+|-------|---------|------|
+| **Tool Registry** | Central registration and validation of all MCP tools | `core` |
+| **Policy System** | Rule engine for approvals, rate limiting, access control | `security` |
+| **LLM Router** | Intelligent routing to 5+ providers with fallback | `ai` |
+| **Plugins** | 20+ integrations for external services | `integration` |
+| **Project Layer** | Context management for multi-project workflows | `context` |
+| **Job System** | Background task execution and queue management | `async` |
+
+---
+
 ## Plugins
 
 | Plugin | Endpoints | Description |
 |--------|-----------|-------------|
 | `github` | `/github/*` | Repository analysis, file tree, commits, issues |
 | `notion` | `/notion/*` | Pages, databases, projects and tasks |
+| `llm-router` | `/llm/*` | Multi-LLM routing (OpenAI, Anthropic, Google, Mistral, Ollama) |
+| `project-orchestrator` | `/project-orchestrator/*` | AI-powered project scaffolding and code generation |
+| `repo-intelligence` | `/repo/*` | Repository analysis, AI summaries, roadmap generation |
+| `local-sidecar` | `/local/*` | Safe local filesystem access with whitelist protection |
+| `prompt-registry` | `/prompts/*` | System prompt management with versioning |
 | `http` | `/http/*` | Controlled HTTP requests with rate limiting |
 | `database` | `/database/*` | MSSQL, PostgreSQL, MongoDB connections |
 | `file-storage` | `/files/*` | S3, Google Drive, local file operations |
 | `openapi` | `/openapi/*` | API specification loading and analysis |
+| `secrets` | `/secrets/*` | Secure credential reference system |
+| `policy` | `/policy/*` | Rule-based approval system |
+| `observability` | `/observability/*` | Health checks, metrics, error tracking |
+| `projects` | `/projects/*` | Multi-project configuration management |
+| `n8n` | `/n8n/*` | **Optional**: Node catalog, context, validation |
+| `n8n-credentials` | `/credentials/*` | **Optional**: Credential metadata from n8n |
+| `n8n-workflows` | `/n8n/workflows/*` | **Optional**: Workflow list, detail, search |
 | `secrets` | `/secrets/*` | Secure credential reference system |
 | `policy` | `/policy/*` | Rule-based approval system |
 | `observability` | `/observability/*` | Health checks, metrics, error tracking |

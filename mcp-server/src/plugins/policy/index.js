@@ -28,6 +28,7 @@ export const endpoints = [
   { method: "POST",   path: "/policy/rules",                  description: "Add a policy rule",            scope: "danger" },
   { method: "DELETE", path: "/policy/rules/:id",              description: "Remove a policy rule",         scope: "danger" },
   { method: "GET",    path: "/policy/approvals",              description: "List approval requests",       scope: "read"   },
+  { method: "GET",    path: "/approvals/pending",             description: "List pending approvals",       scope: "read"   },
   { method: "POST",   path: "/policy/approvals/:id/approve", description: "Approve a request",            scope: "danger" },
   { method: "POST",   path: "/policy/approvals/:id/reject",   description: "Reject a request",             scope: "danger" },
   { method: "POST",   path: "/approve",                       description: "Approve tool execution",       scope: "danger" },
@@ -202,6 +203,15 @@ export function register(app) {
   router.get("/approvals", requireScope("read"), (req, res) => {
     const { status } = req.query;
     const approvals = listApprovals({ status });
+    res.json({ ok: true, count: approvals.length, approvals });
+  });
+
+  /**
+   * GET /approvals/pending
+   * Convenience endpoint for listing only pending approvals
+   */
+  router.get("/approvals/pending", requireScope("read"), (req, res) => {
+    const approvals = listApprovals({ status: "pending" });
     res.json({ ok: true, count: approvals.length, approvals });
   });
 
