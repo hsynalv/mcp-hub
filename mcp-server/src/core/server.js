@@ -8,6 +8,8 @@ import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
 import { createJob, getJob, listJobs } from "./jobs.js";
 import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.js";
+import { listApprovals, getApproval, updateApprovalStatus } from "../plugins/policy/policy.store.js";
+import { callTool } from "./tool-registry.js";
 import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
 
 function isPlainObject(value) {
@@ -262,6 +264,114 @@ export async function createServer() {
     const job = getJob(req.params.id);
     if (!job) return res.status(404).json({ ok: false, error: { code: "job_not_found", message: "Job not found" } });
     res.json({ job });
+  });
+
+  // ── Approval routes ──────────────────────────────────────────────────────
+
+  /**
+   * GET /approvals/pending
+   * Return all pending approval requests
+   */
+  app.get("/approvals/pending", requireScope("read"), (req, res) => {
+    const approvals = listApprovals({ status: "pending" });
+    res.json({
+      ok: true,
+      data: {
+        count: approvals.length,
+        approvals,
+      },
+    });
+  });
+
+  /**
+   * POST /approve
+   * Approve a pending tool execution and execute it
+   */
+  app.post("/approve", requireScope("write"), async (req, res) => {
+    const { approval_id } = req.body ?? {};
+
+    if (!approval_id) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "missing_approval_id",
+          message: "approval_id is required",
+        },
+      });
+    }
+
+    // Retrieve the approval request
+    const approval = getApproval(approval_id);
+    if (!approval) {
+      return res.status(404).json({
+        ok: false,
+        error: {
+          code: "approval_not_found",
+          message: `Approval request not found: ${approval_id}`,
+        },
+      });
+    }
+
+    if (approval.status !== "pending") {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "approval_already_processed",
+          message: `Approval already ${approval.status}`,
+          approval: {
+            id: approval.id,
+            status: approval.status,
+          },
+        },
+      });
+    }
+
+    // Update approval status
+    updateApprovalStatus(approval_id, "approved", req.user || "manual");
+
+    // Execute the tool call
+    const toolName = approval.toolName || approval.path?.replace("/tools/", "");
+    if (!toolName) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "invalid_approval",
+          message: "Approval request missing tool name",
+        },
+      });
+    }
+
+    try {
+      const result = await callTool(toolName, approval.body || {}, {
+        user: req.user || "manual",
+        approvalId: approval_id,
+        method: approval.method || "POST",
+      });
+
+      // Log the approval execution
+      console.log(`[APPROVAL] Executed tool ${toolName} for approval ${approval_id}`);
+
+      res.json({
+        ok: true,
+        data: {
+          approval: {
+            id: approval_id,
+            status: "approved",
+            executedAt: new Date().toISOString(),
+          },
+          result,
+        },
+      });
+    } catch (error) {
+      console.error(`[APPROVAL] Error executing tool ${toolName}:`, error);
+      res.status(500).json({
+        ok: false,
+        error: {
+          code: "execution_failed",
+          message: error.message || "Tool execution failed after approval",
+        },
+      });
+    }
   });
 
   // ── MCP Gateway ──────────────────────────────────────────────────────────────

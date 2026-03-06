@@ -7,6 +7,7 @@
 import { Router } from "express";
 import { ToolTags } from "../../core/tool-registry.js";
 import { getRecentCommits, getProjectStructure, getOpenIssues } from "./repo.core.js";
+import { repoAnalyze } from "./repo.analyze.js";
 
 export const name = "repo-intelligence";
 export const version = "1.0.0";
@@ -18,6 +19,7 @@ export const endpoints = [
   { method: "GET", path: "/repo/commits", description: "Get recent commits with stats", scope: "read" },
   { method: "GET", path: "/repo/issues", description: "Get open issues from code", scope: "read" },
   { method: "GET", path: "/repo/structure", description: "Get project structure", scope: "read" },
+  { method: "POST", path: "/repo/analyze", description: "Analyze repository and generate roadmap", scope: "read" },
   { method: "POST", path: "/repo/summary", description: "Generate AI summary of repository", scope: "read" },
 ];
 
@@ -280,6 +282,42 @@ Format your response as JSON with these exact keys: summary, currentState, risks
       }
     },
   },
+  {
+    name: "repo_analyze",
+    description: "Comprehensive repository analysis with roadmap generation (uses llm_router internally)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Repository path (default: current)",
+          default: ".",
+        },
+        context: {
+          type: "string",
+          description: "Analysis context or purpose (e.g., 'for roadmap generation')",
+          default: "Repository analysis",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain what you want to analyze and why",
+        },
+      },
+      required: ["explanation"],
+    },
+    tags: [ToolTags.READ_ONLY, ToolTags.NETWORK],
+    handler: async ({ path = ".", context = "Repository analysis", explanation }) => {
+      const result = await repoAnalyze(path, context);
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        data: {
+          ...result.data,
+          explanation,
+        },
+      };
+    },
+  },
 ];
 
 // ─── REST API Endpoints ───────────────────────────────────────────────────
@@ -305,6 +343,13 @@ export function register(app) {
   router.get("/structure", async (req, res) => {
     const { path = ".", maxDepth = 3 } = req.query;
     const result = await getProjectStructure(path, { maxDepth: parseInt(maxDepth, 10) });
+    res.json(result);
+  });
+
+  // POST /repo/analyze
+  router.post("/analyze", async (req, res) => {
+    const { path = ".", context = "Repository analysis", explanation = "Repository analysis" } = req.body || {};
+    const result = await repoAnalyze(path, context);
     res.json(result);
   });
 

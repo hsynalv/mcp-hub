@@ -315,7 +315,48 @@ export async function routeTask(task, prompt, options = {}) {
 
   const client = getClient(provider);
 
-  // Call LLM with resilience
+  // Special handling for image generation
+  if (task === "image_generation") {
+    if (provider !== "openai") {
+      throw new Error("Image generation currently only supported with OpenAI provider");
+    }
+    
+    try {
+      const result = await withResilience(`llm-${provider}-image`, async () => {
+        // Use OpenAI images API
+        const response = await client.images.generate({
+          model: model || "dall-e-3",
+          prompt: prompt,
+          n: options.n || 1,
+          size: options.size || "1024x1024",
+          quality: options.quality || "standard",
+        });
+        
+        return {
+          url: response.data?.[0]?.url,
+          revised_prompt: response.data?.[0]?.revised_prompt,
+        };
+      }, {
+        circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
+        retry: { maxAttempts: 2, backoffMs: 1000 },
+      });
+
+      return {
+        content: result.url || result.revised_prompt || "Image generated",
+        url: result.url,
+        revised_prompt: result.revised_prompt,
+        provider,
+        model,
+        task,
+        usedFallback: useFallback,
+        type: "image",
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Call LLM with resilience (for chat/text tasks)
   try {
     const result = await withResilience(`llm-${provider}`, async () => {
       const response = await client.chat.completions.create({

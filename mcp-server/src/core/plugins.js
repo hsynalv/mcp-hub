@@ -30,6 +30,14 @@ export async function loadPlugins(app) {
     .filter((e) => e.isDirectory())
     .map((e) => e.name);
 
+  // Statistics for startup validation report
+  let stats = {
+    pluginsLoaded: 0,
+    pluginsFailed: 0,
+    toolsRegistered: 0,
+    toolsFailed: 0,
+  };
+
   for (const dir of dirs) {
     // Check if this plugin should be disabled
     if (dir === "n8n" && !config.plugins.enableN8n) {
@@ -62,6 +70,8 @@ export async function loadPlugins(app) {
     plugin.register(app);
 
     // Register MCP tools from plugin
+    let pluginToolsRegistered = 0;
+    let pluginToolsFailed = 0;
     if (Array.isArray(plugin.tools)) {
       for (const tool of plugin.tools) {
         try {
@@ -69,8 +79,12 @@ export async function loadPlugins(app) {
             ...tool,
             plugin: plugin.name || dir,
           });
+          stats.toolsRegistered++;
+          pluginToolsRegistered++;
         } catch (err) {
           console.warn(`[plugins] failed to register tool "${tool.name}" from "${dir}": ${err.message}`);
+          stats.toolsFailed++;
+          pluginToolsFailed++;
         }
       }
     }
@@ -91,8 +105,23 @@ export async function loadPlugins(app) {
     };
 
     loaded.push(manifest);
-    console.log(`[plugins] loaded ${manifest.name}@${manifest.version}`);
+    stats.pluginsLoaded++;
+    console.log(`[plugins] loaded ${manifest.name}@${manifest.version} (${pluginToolsRegistered} tools${pluginToolsFailed > 0 ? `, ${pluginToolsFailed} failed` : ""})`);
   }
+
+  // Print startup validation summary
+  console.log("\n[plugins] ═══════════════════════════════════════");
+  console.log(`[plugins] Startup Validation Summary:`);
+  console.log(`[plugins]   Plugins loaded: ${stats.pluginsLoaded}`);
+  console.log(`[plugins]   Plugins failed: ${stats.pluginsFailed}`);
+  console.log(`[plugins]   Tools registered: ${stats.toolsRegistered}`);
+  console.log(`[plugins]   Tools failed: ${stats.toolsFailed}`);
+  if (stats.toolsFailed === 0) {
+    console.log(`[plugins]   ✅ All tools passed validation`);
+  } else {
+    console.log(`[plugins]   ⚠️  Some tools failed validation - check warnings above`);
+  }
+  console.log("[plugins] ═══════════════════════════════════════\n");
 }
 
 /** Returns full manifest of all successfully loaded plugins. */

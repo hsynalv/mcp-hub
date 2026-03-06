@@ -80,6 +80,55 @@ AI-Hub operates as a multi-layer AI Operating System backend:
 
 ---
 
+## Example Workflows
+
+AI-Hub supports complex multi-step workflows for AI agents:
+
+### Create an n8n Workflow
+```
+User: "Create an n8n workflow that scrapes stock prices daily"
+
+Flow:
+1. llm_route (coding) → Generate workflow JSON
+2. n8n_validate → Validate structure
+3. n8n_apply → Import to n8n
+4. Return workflow ID and activation URL
+```
+
+### Analyze Repository & Generate Roadmap
+```
+User: "Analyze percepta repository and create roadmap"
+
+Flow:
+1. repo_analyze → Fetch commits, issues, structure
+2. llm_route (analysis) → Generate summary and roadmap
+3. notion_create_page → Save roadmap to Notion
+```
+
+### Upload Report to Storage
+```
+User: "Upload this report to Google Drive"
+
+Flow:
+1. local-sidecar fs_read → Read report file
+2. local-sidecar drive_upload → Upload to Drive (with approval)
+3. Return file URL and metadata
+```
+
+### Turn Idea into Project
+```
+User: "Turn this idea into a project and start coding"
+
+Flow:
+1. llm_route (complex_reasoning) → Plan architecture
+2. project_create_repo → Create GitHub repository
+3. project_generate_structure → Generate initial files
+4. project_generate_code → Implement core features
+5. project_open_pr → Create initial PR
+```
+
+---
+
 ## Plugins
 
 | Plugin | Endpoints | Description |
@@ -95,13 +144,6 @@ AI-Hub operates as a multi-layer AI Operating System backend:
 | `database` | `/database/*` | MSSQL, PostgreSQL, MongoDB connections |
 | `file-storage` | `/files/*` | S3, Google Drive, local file operations |
 | `openapi` | `/openapi/*` | API specification loading and analysis |
-| `secrets` | `/secrets/*` | Secure credential reference system |
-| `policy` | `/policy/*` | Rule-based approval system |
-| `observability` | `/observability/*` | Health checks, metrics, error tracking |
-| `projects` | `/projects/*` | Multi-project configuration management |
-| `n8n` | `/n8n/*` | **Optional**: Node catalog, context, validation |
-| `n8n-credentials` | `/credentials/*` | **Optional**: Credential metadata from n8n |
-| `n8n-workflows` | `/n8n/workflows/*` | **Optional**: Workflow list, detail, search |
 | `secrets` | `/secrets/*` | Secure credential reference system |
 | `policy` | `/policy/*` | Rule-based approval system |
 | `observability` | `/observability/*` | Health checks, metrics, error tracking |
