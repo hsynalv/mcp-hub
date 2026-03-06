@@ -54,4 +54,10 @@ export const config = {
     enableN8nCredentials: process.env.ENABLE_N8N_CREDENTIALS !== "false", 
     enableN8nWorkflows: process.env.ENABLE_N8N_WORKFLOWS !== "false",
   },
+  redis: {
+    url: process.env.REDIS_URL || "",
+    enabled: !!process.env.REDIS_URL,
+    keyPrefix: process.env.REDIS_PREFIX || "mcp-hub:",
+    ttlSeconds: Number(process.env.REDIS_TTL_SECONDS) || 86400, // 24 hours
+  },
 };

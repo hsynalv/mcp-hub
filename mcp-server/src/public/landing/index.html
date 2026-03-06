@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP-Hub | AI Operating System Backend</title>
+  <meta name="description" content="MCP-Hub - AI Operating System backend enabling agents to perform real-world tasks via plugins">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/landing/styles.css">
+</head>
+<body>
+  <div class="landing-page">
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="container">
+        <div class="hero-content">
+          <div class="badge">
+            <span class="status-dot"></span>
+            <span id="system-status">System Online</span>
+          </div>
+          <h1>MCP-Hub</h1>
+          <p class="subtitle">AI Operating System Backend</p>
+          <p class="description">
+            Enabling AI agents to perform real-world tasks through a modular plugin architecture.
+            Policy-gated operations, multi-LLM routing, and observability built-in.
+          </p>
+          <div class="hero-stats" id="hero-stats">
+            <div class="stat">
+              <span class="stat-value" id="total-plugins">-</span>
+              <span class="stat-label">Active Plugins</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="total-jobs">-</span>
+              <span class="stat-label">Jobs Today</span>
+            </div>
+            <div class="stat">
+              <span class="stat-value" id="uptime">-</span>
+              <span class="stat-label">Uptime</span>
+            </div>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="code-block">
+            <pre><code><span class="comment">// MCP-Hub in action</span>
+<span class="keyword">await</span> <span class="function">callTool</span>(<span class="string">'github_create_pr'</span>, {
+  repo: <span class="string">'acme/project'</span>,
+  title: <span class="string">'Fix authentication bug'</span>,
+  branch: <span class="string">'hotfix/auth'</span>
+});
+<span class="comment">// → PR created, awaiting approval</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Live Activity Section -->
+    <section class="live-activity">
+      <div class="container">
+        <div class="section-header">
+          <h2>Live Activity</h2>
+          <div class="live-indicator">
+            <span class="pulse"></span>
+            <span>Real-time</span>
+          </div>
+        </div>
+
+        <div class="activity-grid">
+          <!-- Job Queue Status -->
+          <div class="activity-card jobs-card">
+            <div class="card-header">
+              <h3>Job Queue</h3>
+              <span class="count" id="queue-count">0 jobs</span>
+            </div>
+            <div class="job-breakdown">
+              <div class="breakdown-item">
+                <span class="dot queued"></span>
+                <span class="label">Queued</span>
+                <span class="value" id="jobs-queued">-</span>
+              </div>
+              <div class="breakdown-item">
+                <span class="dot running"></span>
+                <span class="label">Running</span>
+                <span class="value" id="jobs-running">-</span>
+              </div>
+              <div class="breakdown-item">
+                <span class="dot completed"></span>
+                <span class="label">Completed</span>
+                <span class="value" id="jobs-completed">-</span>
+              </div>
+              <div class="breakdown-item">
+                <span class="dot failed"></span>
+                <span class="label">Failed</span>
+                <span class="value" id="jobs-failed">-</span>
+              </div>
+            </div>
+            <div class="recent-jobs" id="recent-jobs">
+              <div class="loading">Loading jobs...</div>
+            </div>
+          </div>
+
+          <!-- Plugin Activity -->
+          <div class="activity-card plugins-card">
+            <div class="card-header">
+              <h3>Plugin Activity</h3>
+              <span class="count" id="plugins-count">0 plugins</span>
+            </div>
+            <div class="plugins-list" id="plugins-list">
+              <div class="loading">Loading plugins...</div>
+            </div>
+          </div>
+
+          <!-- Recent Events -->
+          <div class="activity-card events-card">
+            <div class="card-header">
+              <h3>Recent Events</h3>
+              <span class="subtitle">Last 24 hours</span>
+            </div>
+            <div class="events-list" id="events-list">
+              <div class="loading">Loading events...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Capabilities Section -->
+    <section class="capabilities">
+      <div class="container">
+        <h2>System Capabilities</h2>
+        <div class="capabilities-grid">
+          <div class="capability">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <h3>Plugin Architecture</h3>
+            <p>Modular, isolated integrations with auto-discovery and hot-loading</p>
+          </div>
+          <div class="capability">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path d="M9 12l2 2 4-4"/>
+              </svg>
+            </div>
+            <h3>Policy & Approval</h3>
+            <p>Gated operations for destructive or write actions with manual approval</p>
+          </div>
+          <div class="capability">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 6v6l4 2"/>
+              </svg>
+            </div>
+            <h3>Job Queue</h3>
+            <p>Redis-backed persistent queue for long-running operations</p>
+          </div>
+          <div class="capability">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 3v18h18"/>
+                <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/>
+              </svg>
+            </div>
+            <h3>Observability</h3>
+            <p>Prometheus metrics, audit logs, and real-time monitoring dashboard</p>
+          </div>
+          <div class="capability">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+            </div>
+            <h3>Multi-LLM Router</h3>
+            <p>Intelligent routing across providers with cost optimization</p>
+          </div>
+          <div class="capability">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+            </div>
+            <h3>Marketplace</h3>
+            <p>Community plugin discovery and installation from npm</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div class="container">
+        <div class="footer-content">
+          <div class="brand">
+            <h4>MCP-Hub</h4>
+            <p>AI Operating System Backend</p>
+          </div>
+          <div class="links">
+            <a href="/observability/dashboard">Dashboard</a>
+            <a href="/observability/health">Health API</a>
+            <a href="/observability/metrics">Metrics</a>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <p>Last updated: <span id="last-updated">-</span></p>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/landing/app.js"></script>
+</body>
+</html>

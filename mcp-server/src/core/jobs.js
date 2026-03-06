@@ -8,8 +8,40 @@
  */
 
 import { randomUUID } from "crypto";
+import { config } from "./config.js";
+import { RedisJobStore } from "./jobs.redis.js";
 
-// Job storage and runners
+// Initialize store (Redis or in-memory fallback)
+let store = null;
+let useRedis = false;
+
+function initStore() {
+  if (config.redis.enabled && !store) {
+    try {
+      store = new RedisJobStore({
+        url: config.redis.url,
+        keyPrefix: config.redis.keyPrefix,
+        ttlSeconds: config.redis.ttlSeconds,
+      });
+      useRedis = true;
+      console.log("[jobs] Redis store initialized");
+
+      // Recover orphaned jobs on startup
+      store.recoverOrphanedJobs().then((count) => {
+        if (count > 0) {
+          console.log(`[jobs] Recovered ${count} orphaned jobs from previous session`);
+        }
+      });
+    } catch (err) {
+      console.warn("[jobs] Redis initialization failed, using memory store:", err.message);
+      store = null;
+      useRedis = false;
+    }
+  }
+  return store;
+}
+
+// Job storage and runners (memory fallback)
 const jobs = new Map();
 const jobRunners = new Map();
 
@@ -82,7 +114,19 @@ export function submitJob(type, payload = {}, context = {}) {
     finishedAt: null,
   };
 
-  jobs.set(id, job);
+  // Initialize store if needed
+  initStore();
+
+  // Store in Redis or memory
+  if (useRedis && store) {
+    store.enqueue(job).catch((err) => {
+      console.error("[jobs] Failed to enqueue job in Redis:", err);
+      // Fallback to memory
+      jobs.set(id, job);
+    });
+  } else {
+    jobs.set(id, job);
+  }
 
   // Start job execution asynchronously
   setImmediate(() => runJob(id));
@@ -95,78 +139,137 @@ export function submitJob(type, payload = {}, context = {}) {
  * Internal: Execute a job
  */
 async function runJob(id) {
-  const job = jobs.get(id);
+  // Get job from appropriate store
+  let job;
+  if (useRedis && store) {
+    job = await store.get(id);
+  } else {
+    job = jobs.get(id);
+  }
+
   if (!job || job.state !== JobState.QUEUED) return;
 
   const runner = jobRunners.get(job.type);
   if (!runner) {
-    job.state = JobState.FAILED;
-    job.error = "Runner not found";
-    job.finishedAt = new Date().toISOString();
+    const error = "Runner not found";
+    if (useRedis && store) {
+      await store.markFailed(id, error);
+    } else {
+      job.state = JobState.FAILED;
+      job.error = error;
+      job.finishedAt = new Date().toISOString();
+    }
     return;
   }
 
-  job.state = JobState.RUNNING;
-  job.startedAt = new Date().toISOString();
+  // Update state to running
+  if (useRedis && store) {
+    await store.set(id, { ...job, state: JobState.RUNNING, startedAt: new Date().toISOString() });
+    await store.redis.sadd(`${store.keyPrefix}jobs:running`, id);
+  } else {
+    job.state = JobState.RUNNING;
+    job.startedAt = new Date().toISOString();
+  }
 
-  // Helper functions for runner
-  const updateProgress = (percent) => {
-    job.progress = Math.min(100, Math.max(0, Math.round(percent)));
+  // Helper functions for runner with Redis persistence
+  const updateProgress = async (percent) => {
+    const progress = Math.min(100, Math.max(0, Math.round(percent)));
+    if (useRedis && store) {
+      await store.updateProgress(id, progress);
+    } else {
+      job.progress = progress;
+    }
   };
 
-  const log = (message) => {
+  const log = async (message) => {
     const timestamp = new Date().toISOString();
     const entry = `[${timestamp}] ${message}`;
-    job.logs.push(entry);
-    // Keep only last 1000 logs
-    if (job.logs.length > 1000) {
-      job.logs.shift();
+    if (useRedis && store) {
+      await store.addLog(id, message);
+    } else {
+      job.logs.push(entry);
+      if (job.logs.length > 1000) job.logs.shift();
     }
   };
 
   // Legacy compatibility wrapper
   const legacyJob = {
     ...job,
-    succeed(result) {
-      if (job.state === JobState.RUNNING) {
-        job.state = JobState.COMPLETED;
-        job.result = result ?? null;
-        job.finishedAt = new Date().toISOString();
+    succeed: async (result) => {
+      if (useRedis && store) {
+        const current = await store.get(id);
+        if (current && current.state === JobState.RUNNING) {
+          await store.markCompleted(id, result ?? null);
+        }
+      } else {
+        if (job.state === JobState.RUNNING) {
+          job.state = JobState.COMPLETED;
+          job.result = result ?? null;
+          job.finishedAt = new Date().toISOString();
+        }
       }
     },
-    fail(err) {
-      if (job.state === JobState.RUNNING) {
-        job.state = JobState.FAILED;
-        job.error = err?.message ?? String(err);
-        job.finishedAt = new Date().toISOString();
+    fail: async (err) => {
+      const errorMsg = err?.message ?? String(err);
+      if (useRedis && store) {
+        const current = await store.get(id);
+        if (current && current.state === JobState.RUNNING) {
+          await store.markFailed(id, errorMsg);
+        }
+      } else {
+        if (job.state === JobState.RUNNING) {
+          job.state = JobState.FAILED;
+          job.error = errorMsg;
+          job.finishedAt = new Date().toISOString();
+        }
       }
     },
   };
 
   try {
-    log(`Starting ${job.type} job`);
+    await log(`Starting ${job.type} job`);
     const result = await runner(legacyJob, updateProgress, log);
-    
+
     // If runner didn't call succeed/fail, mark as done
-    if (job.state === JobState.RUNNING) {
-      job.state = JobState.COMPLETED;
-      job.result = result ?? null;
-      job.finishedAt = new Date().toISOString();
-      job.progress = 100;
+    if (useRedis && store) {
+      const current = await store.get(id);
+      if (current && current.state === JobState.RUNNING) {
+        await store.markCompleted(id, result ?? null);
+      }
+    } else {
+      if (job.state === JobState.RUNNING) {
+        job.state = JobState.COMPLETED;
+        job.result = result ?? null;
+        job.finishedAt = new Date().toISOString();
+        job.progress = 100;
+      }
     }
-    
-    log(`Job ${job.state}`);
+
+    await log(`Job completed`);
   } catch (err) {
-    if (job.state === JobState.RUNNING) {
-      job.state = JobState.FAILED;
-      job.error = err?.message ?? String(err);
-      job.finishedAt = new Date().toISOString();
-      log(`Job failed: ${job.error}`);
+    const errorMsg = err?.message ?? String(err);
+    if (useRedis && store) {
+      const current = await store.get(id);
+      if (current && current.state === JobState.RUNNING) {
+        await store.markFailed(id, errorMsg);
+      }
+    } else {
+      if (job.state === JobState.RUNNING) {
+        job.state = JobState.FAILED;
+        job.error = errorMsg;
+        job.finishedAt = new Date().toISOString();
+      }
     }
+    await log(`Job failed: ${errorMsg}`);
   }
 }
 
-export function listJobs({ state, type, limit = 50 } = {}) {
+export async function listJobs({ state, type, limit = 50 } = {}) {
+  if (useRedis && store) {
+    const jobs = await store.list({ state, type, limit });
+    return jobs.map(publicView);
+  }
+
   let list = [...jobs.values()].sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
@@ -175,31 +278,53 @@ export function listJobs({ state, type, limit = 50 } = {}) {
   return list.slice(0, limit).map(publicView);
 }
 
-export function getJob(id) {
+export async function getJob(id) {
+  if (useRedis && store) {
+    const job = await store.get(id);
+    return job ? publicView(job) : null;
+  }
   const job = jobs.get(id);
   return job ? publicView(job) : null;
 }
 
-export function getJobLogs(id) {
+export async function getJobLogs(id) {
+  if (useRedis && store) {
+    return await store.getLogs(id);
+  }
   const job = jobs.get(id);
   return job ? job.logs : null;
 }
 
-export function cancelJob(id) {
+export async function cancelJob(id) {
+  if (useRedis && store) {
+    const job = await store.get(id);
+    if (!job) return false;
+    if (job.state === JobState.QUEUED || job.state === JobState.RUNNING) {
+      await store.markCancelled(id);
+      await store.addLog(id, "Job cancelled");
+      return true;
+    }
+    return false;
+  }
+
   const job = jobs.get(id);
   if (!job) return false;
-  
+
   if (job.state === JobState.QUEUED || job.state === JobState.RUNNING) {
     job.state = JobState.CANCELLED;
     job.finishedAt = new Date().toISOString();
     job.logs.push(`[${new Date().toISOString()}] Job cancelled`);
     return true;
   }
-  
+
   return false;
 }
 
-export function getJobStats() {
+export async function getJobStats() {
+  if (useRedis && store) {
+    return await store.getStats();
+  }
+
   const all = Array.from(jobs.values());
   return {
     total: all.length,

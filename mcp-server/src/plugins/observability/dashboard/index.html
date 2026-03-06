@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP-Hub Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="dashboard">
+    <header>
+      <h1>MCP-Hub Observability Dashboard</h1>
+      <div class="status-indicator" id="connection-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <main>
+      <!-- Overview Cards -->
+      <section class="overview-cards">
+        <div class="card">
+          <h3>Total Requests</h3>
+          <div class="metric" id="total-requests">-</div>
+          <div class="trend" id="request-trend">Loading...</div>
+        </div>
+        <div class="card">
+          <h3>Error Rate</h3>
+          <div class="metric" id="error-rate">-</div>
+          <div class="trend" id="error-trend">Loading...</div>
+        </div>
+        <div class="card">
+          <h3>Active Jobs</h3>
+          <div class="metric" id="active-jobs">-</div>
+          <div class="breakdown" id="jobs-breakdown">-</div>
+        </div>
+        <div class="card">
+          <h3>Uptime</h3>
+          <div class="metric" id="uptime">-</div>
+          <div class="memory" id="memory-usage">-</div>
+        </div>
+      </section>
+
+      <!-- Plugin Health -->
+      <section class="plugins-section">
+        <h2>Plugin Health</h2>
+        <div class="plugins-grid" id="plugins-grid">
+          <div class="loading">Loading plugins...</div>
+        </div>
+      </section>
+
+      <!-- Job Queue -->
+      <section class="jobs-section">
+        <h2>Job Queue</h2>
+        <div class="jobs-stats" id="jobs-stats">
+          <div class="job-stat">
+            <span class="label">Queued:</span>
+            <span class="value" id="jobs-queued">-</span>
+          </div>
+          <div class="job-stat">
+            <span class="label">Running:</span>
+            <span class="value" id="jobs-running">-</span>
+          </div>
+          <div class="job-stat">
+            <span class="label">Completed:</span>
+            <span class="value" id="jobs-completed">-</span>
+          </div>
+          <div class="job-stat">
+            <span class="label">Failed:</span>
+            <span class="value" id="jobs-failed">-</span>
+          </div>
+        </div>
+        <div class="recent-jobs" id="recent-jobs">
+          <div class="loading">Loading jobs...</div>
+        </div>
+      </section>
+
+      <!-- Recent Errors -->
+      <section class="errors-section">
+        <h2>Recent Errors</h2>
+        <div class="errors-controls">
+          <select id="error-plugin-filter">
+            <option value="">All plugins</option>
+          </select>
+          <button onclick="refreshErrors()">Refresh</button>
+        </div>
+        <div class="errors-list" id="errors-list">
+          <div class="loading">Loading errors...</div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Auto-refresh every 5 seconds • <span id="last-updated">Never</span></p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

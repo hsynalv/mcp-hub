@@ -1,7 +1,13 @@
+import { readFileSync, existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { Router } from "express";
 import { requireScope } from "../../core/auth.js";
 import { getLogs, getStats } from "../../core/audit.js";
 import { getPlugins } from "../../core/plugins.js";
+import { getJobStats } from "../../core/jobs.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const name = "observability";
 export const version = "1.0.0";
@@ -12,11 +18,15 @@ export const endpoints = [
   { method: "GET", path: "/observability/health",  description: "Aggregate health of all plugins", scope: "read" },
   { method: "GET", path: "/observability/metrics", description: "Prometheus-format metrics",        scope: "read" },
   { method: "GET", path: "/observability/errors",  description: "Recent errors from audit log",     scope: "read" },
+  { method: "GET", path: "/observability/dashboard", description: "Web dashboard for monitoring",    scope: "read" },
+  { method: "GET", path: "/observability/dashboard/app.js", description: "Dashboard JS (static)",       scope: "read" },
+  { method: "GET", path: "/observability/dashboard/styles.css", description: "Dashboard CSS (static)",  scope: "read" },
 ];
 export const examples = [
   "GET /observability/health",
   "GET /observability/metrics",
   "GET /observability/errors?limit=20",
+  "GET /observability/dashboard",
 ];
 
 // Optional Sentry integration
@@ -142,6 +152,36 @@ export function register(app) {
 
     res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
     res.send(lines.join("\n") + "\n");
+  });
+
+  /**
+   * GET /observability/dashboard
+   * Web-based monitoring dashboard
+   */
+  router.get("/dashboard", requireScope("read"), (_req, res) => {
+    const dashboardPath = join(__dirname, "dashboard", "index.html");
+    if (!existsSync(dashboardPath)) {
+      return res.status(404).json({ ok: false, error: "Dashboard not found" });
+    }
+    res.sendFile(dashboardPath);
+  });
+
+  router.get("/dashboard/styles.css", requireScope("read"), (_req, res) => {
+    const cssPath = join(__dirname, "dashboard", "styles.css");
+    if (!existsSync(cssPath)) {
+      return res.status(404).json({ ok: false, error: "CSS not found" });
+    }
+    res.setHeader("Content-Type", "text/css");
+    res.sendFile(cssPath);
+  });
+
+  router.get("/dashboard/app.js", requireScope("read"), (_req, res) => {
+    const jsPath = join(__dirname, "dashboard", "app.js");
+    if (!existsSync(jsPath)) {
+      return res.status(404).json({ ok: false, error: "JS not found" });
+    }
+    res.setHeader("Content-Type", "application/javascript");
+    res.sendFile(jsPath);
   });
 
   /**

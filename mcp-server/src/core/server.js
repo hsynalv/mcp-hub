@@ -6,7 +6,10 @@ import { AppError, NotFoundError } from "./errors.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
-import { createJob, getJob, listJobs } from "./jobs.js";
+import { createJob, getJob, listJobs, getJobStats } from "./jobs.js";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { readFileSync, existsSync } from "fs";
 import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.js";
 import { listApprovals, getApproval, updateApprovalStatus } from "../plugins/policy/policy.store.js";
 import { callTool } from "./tool-registry.js";
@@ -254,14 +257,19 @@ export async function createServer() {
     res.status(202).json({ job });
   });
 
-  app.get("/jobs", requireScope("read"), (req, res) => {
+  app.get("/jobs/stats", requireScope("read"), async (req, res) => {
+    const stats = await getJobStats();
+    res.json({ ok: true, stats });
+  });
+
+  app.get("/jobs", requireScope("read"), async (req, res) => {
     const { state, type, limit } = req.query;
-    const jobs = listJobs({ state, type, limit: Number(limit) || 50 });
+    const jobs = await listJobs({ state, type, limit: Number(limit) || 50 });
     res.json({ count: jobs.length, jobs });
   });
 
-  app.get("/jobs/:id", requireScope("read"), (req, res) => {
-    const job = getJob(req.params.id);
+  app.get("/jobs/:id", requireScope("read"), async (req, res) => {
+    const job = await getJob(req.params.id);
     if (!job) return res.status(404).json({ ok: false, error: { code: "job_not_found", message: "Job not found" } });
     res.json({ job });
   });
@@ -377,6 +385,44 @@ export async function createServer() {
   // ── MCP Gateway ──────────────────────────────────────────────────────────────
 
   app.all("/mcp", createMcpHttpMiddleware());
+
+  // ── Landing Page (Public) ─────────────────────────────────────────────────
+
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+
+  // Serve landing page static files
+  app.get("/landing/styles.css", (req, res) => {
+    const cssPath = join(__dirname, "..", "public", "landing", "styles.css");
+    if (!existsSync(cssPath)) {
+      return res.status(404).json({ ok: false, error: "CSS not found" });
+    }
+    res.setHeader("Content-Type", "text/css");
+    res.sendFile(cssPath);
+  });
+
+  app.get("/landing/app.js", (req, res) => {
+    const jsPath = join(__dirname, "..", "public", "landing", "app.js");
+    if (!existsSync(jsPath)) {
+      return res.status(404).json({ ok: false, error: "JS not found" });
+    }
+    res.setHeader("Content-Type", "application/javascript");
+    res.sendFile(jsPath);
+  });
+
+  // Root path - serve landing page
+  app.get("/", (req, res) => {
+    const indexPath = join(__dirname, "..", "public", "landing", "index.html");
+    if (!existsSync(indexPath)) {
+      return res.json({
+        ok: true,
+        message: "MCP-Hub is running",
+        version: "1.0.0",
+        docs: "/api-docs",
+        dashboard: "/observability/dashboard",
+      });
+    }
+    res.sendFile(indexPath);
+  });
 
   // ── Plugin loader ──────────────────────────────────────────────────────────
 
