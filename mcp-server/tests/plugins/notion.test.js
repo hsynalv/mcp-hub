@@ -284,4 +284,136 @@ describe("Notion Block Formatting", () => {
       expect(result[1].callout.icon.emoji).toBe("💡");
     });
   });
+
+  describe("Explanation Field", () => {
+    it("should require explanation for notion_create_page", () => {
+      const createPageWithExplanation = z.object({
+        title: z.string().min(1),
+        explanation: z.string().min(1),
+        parentPageId: z.string().optional(),
+        icon: z.string().optional(),
+      });
+
+      const valid = {
+        title: "Test Page",
+        explanation: "Creating test page",
+      };
+      expect(() => createPageWithExplanation.parse(valid)).not.toThrow();
+
+      const invalid = {
+        title: "Test Page",
+      };
+      expect(() => createPageWithExplanation.parse(invalid)).toThrow();
+    });
+
+    it("should require explanation for notion_update_page", () => {
+      const updatePageSchema = z.object({
+        pageId: z.string().min(1),
+        explanation: z.string().min(1),
+        title: z.string().optional(),
+        icon: z.string().optional(),
+        archived: z.boolean().optional(),
+      });
+
+      const valid = {
+        pageId: "abc-123",
+        explanation: "Updating page title",
+        title: "New Title",
+      };
+      expect(() => updatePageSchema.parse(valid)).not.toThrow();
+
+      const invalid = {
+        pageId: "abc-123",
+      };
+      expect(() => updatePageSchema.parse(invalid)).toThrow();
+    });
+
+    it("should require explanation for notion_append_block", () => {
+      const appendBlocksSchema = z.object({
+        pageId: z.string().min(1),
+        blocks: z.array(blockSchema).min(1),
+        explanation: z.string().min(1),
+      });
+
+      const valid = {
+        pageId: "abc-123",
+        blocks: [{ type: "paragraph", text: "New content" }],
+        explanation: "Appending content to page",
+      };
+      expect(() => appendBlocksSchema.parse(valid)).not.toThrow();
+
+      const invalid = {
+        pageId: "abc-123",
+        blocks: [{ type: "paragraph", text: "Content" }],
+      };
+      expect(() => appendBlocksSchema.parse(invalid)).toThrow();
+    });
+  });
+
+  describe("Update and Append Tools", () => {
+    it("should validate notion_update_page schema", () => {
+      const updatePageSchema = z.object({
+        pageId: z.string().min(1),
+        explanation: z.string().min(1),
+        title: z.string().optional(),
+        icon: z.string().optional(),
+        archived: z.boolean().optional(),
+      });
+
+      // Valid full update
+      expect(() =>
+        updatePageSchema.parse({
+          pageId: "page-123",
+          explanation: "Updating page",
+          title: "New Title",
+          icon: "📚",
+          archived: false,
+        })
+      ).not.toThrow();
+
+      // Valid partial update
+      expect(() =>
+        updatePageSchema.parse({
+          pageId: "page-123",
+          explanation: "Archiving page",
+          archived: true,
+        })
+      ).not.toThrow();
+    });
+
+    it("should validate notion_append_block schema", () => {
+      const appendBlocksSchema = z.object({
+        pageId: z.string().min(1),
+        blocks: z.array(blockSchema).min(1),
+        explanation: z.string().min(1),
+      });
+
+      const valid = {
+        pageId: "page-123",
+        blocks: [
+          { type: "heading_1", text: "Section" },
+          { type: "paragraph", text: "Content" },
+          { type: "to_do", text: "Task", checked: false },
+        ],
+        explanation: "Adding roadmap content",
+      };
+      expect(() => appendBlocksSchema.parse(valid)).not.toThrow();
+    });
+
+    it("should reject empty blocks array", () => {
+      const appendBlocksSchema = z.object({
+        pageId: z.string().min(1),
+        blocks: z.array(blockSchema).min(1),
+        explanation: z.string().min(1),
+      });
+
+      expect(() =>
+        appendBlocksSchema.parse({
+          pageId: "page-123",
+          blocks: [],
+          explanation: "Adding content",
+        })
+      ).toThrow();
+    });
+  });
 });
