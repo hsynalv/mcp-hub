@@ -9,7 +9,112 @@ import OpenAI from "openai";
 import { withResilience } from "../../core/resilience.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 
+// AbortController polyfill for Node.js < 18
+const _AbortController = typeof globalThis.AbortController !== "undefined" ? globalThis.AbortController : class AbortController {
+  constructor() {
+    this.signal = { aborted: false, addEventListener: () => {}, removeEventListener: () => {} };
+  }
+  abort() { this.signal.aborted = true; }
+};
+
 const pluginError = createPluginErrorHandler("llm-router");
+
+// Configuration
+const DEFAULT_LLM_TIMEOUT_MS = parseInt(process.env.LLM_TIMEOUT_MS, 10) || 60000; // 60s default
+const MAX_INPUT_TOKENS = parseInt(process.env.LLM_MAX_INPUT_TOKENS, 10) || 128000;
+const MAX_OUTPUT_TOKENS = parseInt(process.env.LLM_MAX_OUTPUT_TOKENS, 10) || 4096;
+const MAX_PROMPT_LENGTH = parseInt(process.env.LLM_MAX_PROMPT_LENGTH, 10) || 100000; // chars
+
+// In-memory audit log
+const auditLog = [];
+const MAX_AUDIT_LOG_SIZE = 1000;
+
+/**
+ * Generate correlation ID for tracing
+ */
+export function generateCorrelationId() {
+  return `llm-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
+/**
+ * Add audit entry for LLM operations (no prompt content logged)
+ */
+export function auditEntry(entry) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    operation: entry.operation,
+    provider: entry.provider,
+    model: entry.model,
+    task: entry.task,
+    inputTokens: entry.inputTokens,
+    outputTokens: entry.outputTokens,
+    promptLength: entry.promptLength,
+    responseLength: entry.responseLength,
+    durationMs: entry.durationMs,
+    actor: entry.actor,
+    workspaceId: entry.workspaceId,
+    projectId: entry.projectId,
+    correlationId: entry.correlationId,
+    success: entry.success,
+    error: entry.error,
+    fallback: entry.fallback,
+    retryCount: entry.retryCount,
+  };
+
+  auditLog.unshift(logEntry);
+  if (auditLog.length > MAX_AUDIT_LOG_SIZE) {
+    auditLog.pop();
+  }
+
+  const status = entry.success ? "SUCCESS" : "FAILED";
+  console.log(`[llm-audit] ${status} | ${entry.provider}/${entry.model} | ${entry.task} | ${entry.durationMs}ms | ${entry.correlationId}`);
+
+  return logEntry;
+}
+
+/**
+ * Get recent audit log entries
+ */
+export function getAuditLogEntries(limit = 100) {
+  return auditLog.slice(0, Math.min(limit, MAX_AUDIT_LOG_SIZE));
+}
+
+/**
+ * Extract context from request
+ */
+export function extractContext(req) {
+  return {
+    actor: req.user?.id || req.user?.email || "anonymous",
+    workspaceId: req.headers?.["x-workspace-id"] || null,
+    projectId: req.headers?.["x-project-id"] || null,
+  };
+}
+
+/**
+ * Validate prompt limits
+ */
+export function validatePromptLimits(prompt, maxTokens) {
+  const errors = [];
+
+  if (typeof prompt !== "string") {
+    errors.push("Prompt must be a string");
+    return { valid: false, errors };
+  }
+
+  if (prompt.length > MAX_PROMPT_LENGTH) {
+    errors.push(`Prompt exceeds max length of ${MAX_PROMPT_LENGTH} chars`);
+  }
+
+  if (maxTokens && maxTokens > MAX_OUTPUT_TOKENS) {
+    errors.push(`maxTokens exceeds limit of ${MAX_OUTPUT_TOKENS}`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    promptLength: prompt.length,
+  };
+}
 
 export const name = "llm-router";
 export const version = "1.0.0";
@@ -294,9 +399,33 @@ function getClient(provider) {
 }
 
 /**
- * Route a task to the appropriate LLM
+ * Route a task to the appropriate LLM with timeout governance and audit logging
  */
-export async function routeTask(task, prompt, options = {}) {
+export async function routeTask(task, prompt, options = {}, context = {}) {
+  const correlationId = generateCorrelationId();
+  const startTime = Date.now();
+  let retryCount = 0;
+
+  // Validate prompt limits
+  const validation = validatePromptLimits(prompt, options.maxTokens);
+  if (!validation.valid) {
+    auditEntry({
+      operation: "route",
+      provider: "(none)",
+      model: "(none)",
+      task,
+      promptLength: validation.promptLength,
+      durationMs: Date.now() - startTime,
+      actor: context.actor || "anonymous",
+      workspaceId: context.workspaceId || null,
+      projectId: context.projectId || null,
+      correlationId,
+      success: false,
+      error: validation.errors.join(", "),
+    });
+    throw pluginError.validation(validation.errors.join(", "), { code: "prompt_limit_exceeded" });
+  }
+
   // Find routing rule
   const rule = ROUTING_RULES.find(r => r.task === task) || ROUTING_RULES.find(r => r.task === "general");
 
@@ -311,19 +440,40 @@ export async function routeTask(task, prompt, options = {}) {
     // Try fallback if not already using it
     if (!useFallback && rule.fallback) {
       console.log(`[llm-router] Provider ${provider} unavailable (no API key), trying fallback...`);
-      return routeTask(task, prompt, { ...options, useFallback: true });
+      return routeTask(task, prompt, { ...options, useFallback: true }, context);
     }
-    throw pluginError.validation(`Provider ${provider} requires ${config.requiresKey}`);
+    auditEntry({
+      operation: "route",
+      provider,
+      model,
+      task,
+      promptLength: validation.promptLength,
+      durationMs: Date.now() - startTime,
+      actor: context.actor || "anonymous",
+      workspaceId: context.workspaceId || null,
+      projectId: context.projectId || null,
+      correlationId,
+      success: false,
+      error: `Provider ${provider} requires ${config.requiresKey}`,
+    });
+    throw pluginError.validation(`Provider ${provider} requires ${config.requiresKey}`, { code: "provider_unavailable" });
   }
 
   const client = getClient(provider);
 
+  // Setup timeout abort controller
+  const abortController = new _AbortController();
+  const timeoutId = setTimeout(() => {
+    abortController.abort();
+  }, options.timeoutMs || DEFAULT_LLM_TIMEOUT_MS);
+
   // Special handling for image generation
   if (task === "image_generation") {
     if (provider !== "openai") {
-      throw pluginError.validation("Image generation currently only supported with OpenAI provider");
+      clearTimeout(timeoutId);
+      throw pluginError.validation("Image generation currently only supported with OpenAI provider", { code: "invalid_provider" });
     }
-    
+
     try {
       const result = await withResilience(`llm-${provider}-image`, async () => {
         // Use OpenAI images API
@@ -334,7 +484,7 @@ export async function routeTask(task, prompt, options = {}) {
           size: options.size || "1024x1024",
           quality: options.quality || "standard",
         });
-        
+
         return {
           url: response.data?.[0]?.url,
           revised_prompt: response.data?.[0]?.revised_prompt,
@@ -342,6 +492,23 @@ export async function routeTask(task, prompt, options = {}) {
       }, {
         circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
         retry: { maxAttempts: 2, backoffMs: 1000 },
+      });
+
+      clearTimeout(timeoutId);
+      auditEntry({
+        operation: "image_generation",
+        provider,
+        model,
+        task,
+        promptLength: validation.promptLength,
+        durationMs: Date.now() - startTime,
+        actor: context.actor || "anonymous",
+        workspaceId: context.workspaceId || null,
+        projectId: context.projectId || null,
+        correlationId,
+        success: true,
+        fallback: useFallback,
+        retryCount,
       });
 
       return {
@@ -355,6 +522,22 @@ export async function routeTask(task, prompt, options = {}) {
         type: "image",
       };
     } catch (error) {
+      clearTimeout(timeoutId);
+      auditEntry({
+        operation: "image_generation",
+        provider,
+        model,
+        task,
+        promptLength: validation.promptLength,
+        durationMs: Date.now() - startTime,
+        actor: context.actor || "anonymous",
+        workspaceId: context.workspaceId || null,
+        projectId: context.projectId || null,
+        correlationId,
+        success: false,
+        error: error.message,
+        fallback: useFallback,
+      });
       throw error;
     }
   }
@@ -369,13 +552,33 @@ export async function routeTask(task, prompt, options = {}) {
           { role: "user", content: prompt },
         ],
         temperature: options.temperature ?? 0.7,
-        max_tokens: options.maxTokens ?? 4096,
-      });
+        max_tokens: Math.min(options.maxTokens ?? 4096, MAX_OUTPUT_TOKENS),
+      }, { signal: abortController.signal });
 
       return response.choices[0].message.content;
     }, {
       circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
       retry: { maxAttempts: 2, backoffMs: 1000 },
+    });
+
+    clearTimeout(timeoutId);
+    const durationMs = Date.now() - startTime;
+
+    auditEntry({
+      operation: "route",
+      provider,
+      model,
+      task,
+      promptLength: validation.promptLength,
+      responseLength: result?.length || 0,
+      durationMs,
+      actor: context.actor || "anonymous",
+      workspaceId: context.workspaceId || null,
+      projectId: context.projectId || null,
+      correlationId,
+      success: true,
+      fallback: useFallback,
+      retryCount,
     });
 
     return {
@@ -386,12 +589,49 @@ export async function routeTask(task, prompt, options = {}) {
       usedFallback: useFallback,
     };
   } catch (error) {
+    clearTimeout(timeoutId);
+    const durationMs = Date.now() - startTime;
+
     // If primary fails and fallback exists, try fallback
     if (!useFallback && rule.fallback) {
       console.log(`[llm-router] Provider ${provider} failed: ${error.message}, trying fallback...`);
-      return routeTask(task, prompt, { ...options, useFallback: true });
+      retryCount++;
+      auditEntry({
+        operation: "route",
+        provider,
+        model,
+        task,
+        promptLength: validation.promptLength,
+        durationMs,
+        actor: context.actor || "anonymous",
+        workspaceId: context.workspaceId || null,
+        projectId: context.projectId || null,
+        correlationId,
+        success: false,
+        error: error.message,
+        fallback: useFallback,
+        retryCount,
+      });
+      return routeTask(task, prompt, { ...options, useFallback: true }, context);
     }
-    // No fallback available, re-throw
+
+    // No fallback available, log and re-throw
+    auditEntry({
+      operation: "route",
+      provider,
+      model,
+      task,
+      promptLength: validation.promptLength,
+      durationMs,
+      actor: context.actor || "anonymous",
+      workspaceId: context.workspaceId || null,
+      projectId: context.projectId || null,
+      correlationId,
+      success: false,
+      error: error.message,
+      fallback: useFallback,
+      retryCount,
+    });
     throw error;
   }
 }
@@ -559,6 +799,104 @@ export const tools = [
     },
   },
   {
+    name: "llm_route_backend",
+    description: "Route backend API development tasks to optimal LLM provider",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "The backend development prompt to send to the LLM",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain why you need backend API development",
+        },
+        temperature: {
+          type: "number",
+          description: "Temperature (0-1)",
+          default: 0.7,
+        },
+        maxTokens: {
+          type: "number",
+          description: "Maximum tokens to generate",
+          default: 4096,
+        },
+      },
+      required: ["prompt", "explanation"],
+    },
+    handler: async ({ prompt, explanation, temperature, maxTokens }) => {
+      try {
+        const result = await routeTask("backend_api", prompt, { temperature, maxTokens });
+        return {
+          ok: true,
+          data: {
+            ...result,
+            explanation,
+            routing_reason: `Selected ${result.provider} (${result.model}) for backend API task`,
+          },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            code: "llm_error",
+            message: error.message,
+          },
+        };
+      }
+    },
+  },
+  {
+    name: "llm_route_frontend",
+    description: "Route frontend component tasks to optimal LLM provider",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "The frontend component prompt to send to the LLM",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain why you need frontend component development",
+        },
+        temperature: {
+          type: "number",
+          description: "Temperature (0-1)",
+          default: 0.7,
+        },
+        maxTokens: {
+          type: "number",
+          description: "Maximum tokens to generate",
+          default: 4096,
+        },
+      },
+      required: ["prompt", "explanation"],
+    },
+    handler: async ({ prompt, explanation, temperature, maxTokens }) => {
+      try {
+        const result = await routeTask("frontend_component", prompt, { temperature, maxTokens });
+        return {
+          ok: true,
+          data: {
+            ...result,
+            explanation,
+            routing_reason: `Selected ${result.provider} (${result.model}) for frontend component task`,
+          },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            code: "llm_error",
+            message: error.message,
+          },
+        };
+      }
+    },
+  },
+  {
     name: "llm_compare",
     description: "Compare responses from multiple LLM providers",
     inputSchema: {
@@ -669,10 +1007,12 @@ export const endpoints = [
     method: "POST",
     handler: async (req, res) => {
       try {
-        const result = await routeTask(req.body.task, req.body.prompt, req.body.options);
+        const context = extractContext(req);
+        const result = await routeTask(req.body.task, req.body.prompt, req.body.options, context);
         res.json({ ok: true, data: result });
       } catch (error) {
-        res.status(500).json({ ok: false, error: error.message });
+        const statusCode = error.code === "prompt_limit_exceeded" ? 400 : error.code === "provider_unavailable" ? 503 : 500;
+        res.status(statusCode).json({ ok: false, error: { code: error.code, message: error.message } });
       }
     },
   },
@@ -684,7 +1024,7 @@ export const endpoints = [
         const results = await compareLLMs(req.body.task, req.body.prompt, req.body.providers);
         res.json({ ok: true, data: results });
       } catch (error) {
-        res.status(500).json({ ok: false, error: error.message });
+        res.status(500).json({ ok: false, error: { code: error.code, message: error.message } });
       }
     },
   },
@@ -701,6 +1041,14 @@ export const endpoints = [
     handler: (req, res) => {
       const estimate = estimateCost(req.body.task, req.body.promptTokens, req.body.responseTokens);
       res.json({ ok: true, data: estimate });
+    },
+  },
+  {
+    path: "/llm/audit",
+    method: "GET",
+    handler: (req, res) => {
+      const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+      res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
     },
   },
 ];
