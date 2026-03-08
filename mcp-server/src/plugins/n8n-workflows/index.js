@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { fetchWorkflowList, fetchWorkflowById, createWorkflow, updateWorkflow, activateWorkflow } from "./workflows.client.js";
 import { fetchCredentials } from "../n8n-credentials/credentials.client.js";
+import { config } from "../../core/config.js";
 import {
   loadListFromDisk,
   saveListToDisk,
@@ -21,7 +22,7 @@ export const endpoints = [
   { method: "GET",  path: "/n8n/workflows",              description: "List all workflows",                    scope: "read" },
   { method: "GET",  path: "/n8n/workflows/:id",          description: "Get full workflow JSON",                 scope: "read" },
   { method: "POST", path: "/n8n/workflows/search",       description: "Search by name or node type",           scope: "read" },
-  { method: "POST", path: "/n8n/workflow/create",         description: "Create a new workflow",                 scope: "write" },
+  { method: "POST", path: "/n8n/workflows/create",        description: "Create a new workflow",                 scope: "write" },
   { method: "PUT",  path: "/n8n/workflows/:id",          description: "Update an existing workflow",           scope: "write" },
   { method: "POST", path: "/n8n/workflows/:id/activate",   description: "Activate a workflow",                   scope: "write" },
   { method: "POST", path: "/n8n/workflows/:id/deactivate", description: "Deactivate a workflow",                 scope: "write" },
@@ -165,9 +166,9 @@ export function register(app) {
     res.json(response);
   });
 
-  // ── POST /n8n/workflow/create ───────────────────────────────────────────────
+  // ── POST /n8n/workflows/create ─────────────────────────────────────────────
   // Create a new workflow with validation
-  router.post("/workflow/create", async (req, res) => {
+  router.post("/create", async (req, res) => {
     const { workflow_description, workflow_json, explanation } = req.body || {};
 
     if (!explanation) {
@@ -177,7 +178,7 @@ export function register(app) {
       });
     }
 
-    let workflowData = workflow_json;
+    const workflowData = workflow_json;
 
     // If workflow_json not provided, try to generate from description (placeholder)
     if (!workflowData && workflow_description) {
@@ -440,7 +441,7 @@ export const tools = [
       required: ["workflow_json", "explanation"],
     },
     tags: [ToolTags.WRITE],
-    handler: async ({ workflow_description, workflow_json, explanation }) => {
+    handler: async ({ workflow_json, explanation }) => {
       // Validate
       const validation = validateWorkflow(workflow_json);
       if (!validation.valid) {
