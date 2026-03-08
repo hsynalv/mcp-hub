@@ -15,9 +15,7 @@
  *   }
  */
 
-import { evaluate } from "../plugins/policy/policy.engine.js";
-import { createApproval, updateApprovalStatus, getApproval, listApprovals } from "../plugins/policy/policy.store.js";
-import { loadPolicyConfig } from "../plugins/policy/policy.config.js";
+import { getPolicyEvaluator, getApprovalStore, isPolicySystemAvailable } from "./policy-hooks.js";
 
 const tools = new Map();
 
@@ -220,39 +218,43 @@ export async function callTool(name, args, context = {}) {
     };
   }
 
-  // Policy check before executing tool
-  const path = `/tools/${name}`;
-  const method = context.method || "POST";
-  const policy = evaluate(method, path, args, context.user);
+  // Policy check before executing tool (if policy system is available)
+  const evaluate = getPolicyEvaluator();
+  if (evaluate) {
+    const path = `/tools/${name}`;
+    const method = context.method || "POST";
+    const policy = evaluate(method, path, args, context.user);
 
-  if (!policy.allowed) {
-    return {
-      ok: false,
-      error: {
-        code: policy.action || "policy_denied",
-        message: policy.explanation || "Request denied by policy",
-        ...(policy.approval ? { approval: policy.approval } : {}),
-        ...(policy.preview ? { preview: policy.preview } : {}),
-      },
-      meta: { requestId: context.requestId },
-    };
+    if (!policy.allowed) {
+      return {
+        ok: false,
+        error: {
+          code: policy.action || "policy_denied",
+          message: policy.explanation || "Request denied by policy",
+          ...(policy.approval ? { approval: policy.approval } : {}),
+          ...(policy.preview ? { preview: policy.preview } : {}),
+        },
+        meta: { requestId: context.requestId },
+      };
+    }
   }
 
-  // Tool tag-based policy checking
-  const policyConfig = loadPolicyConfig();
+  // Tool tag-based policy checking (if policy system is available)
+  const approvalStore = getApprovalStore();
+  const policyConfig = approvalStore?.loadPolicyConfig ? approvalStore.loadPolicyConfig() : {};
   const toolTags = tool.tags || [];
-  
+
   // Check if tool requires approval based on tags
   const needsApproval = toolTags.includes(ToolTags.NEEDS_APPROVAL) ||
     (toolTags.includes(ToolTags.DESTRUCTIVE) && policyConfig.destructive_requires_approval) ||
     (toolTags.includes(ToolTags.WRITE) && policyConfig.write_requires_approval);
 
   // If approval required and no pre-approved ID, create approval request
-  if (needsApproval && !context.approvalId) {
-    const approval = createApproval({
+  if (needsApproval && !context.approvalId && approvalStore?.createApproval) {
+    const approval = approvalStore.createApproval({
       ruleId: "tool_tag_policy",
-      path,
-      method,
+      path: `/tools/${name}`,
+      method: context.method || "POST",
       body: args,
       requestedBy: context.user || "agent",
       toolName: name,
@@ -275,8 +277,8 @@ export async function callTool(name, args, context = {}) {
   }
 
   // If pre-approved ID provided, verify it
-  if (context.approvalId) {
-    const approval = getApproval(context.approvalId);
+  if (context.approvalId && approvalStore?.getApproval) {
+    const approval = approvalStore.getApproval(context.approvalId);
     if (!approval) {
       return {
         ok: false,
@@ -364,7 +366,18 @@ export async function callTool(name, args, context = {}) {
  * @returns {Object} Approval result
  */
 export async function approveTool(approvalId, context = {}) {
-  const approval = getApproval(approvalId);
+  const approvalStore = getApprovalStore();
+  if (!approvalStore?.getApproval || !approvalStore?.updateApprovalStatus) {
+    return {
+      ok: false,
+      error: {
+        code: "policy_system_unavailable",
+        message: "Policy system is not available",
+      },
+    };
+  }
+
+  const approval = approvalStore.getApproval(approvalId);
   if (!approval) {
     return {
       ok: false,
@@ -390,7 +403,7 @@ export async function approveTool(approvalId, context = {}) {
   }
 
   // Update approval status
-  updateApprovalStatus(approvalId, "approved", context.user || "manual");
+  approvalStore.updateApprovalStatus(approvalId, "approved", context.user || "manual");
 
   // Re-execute the tool with the approval ID
   const toolName = approval.toolName || approval.path.replace("/tools/", "");

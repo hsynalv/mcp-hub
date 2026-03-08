@@ -1,4 +1,4 @@
-import { readdirSync } from "fs";
+import { readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { config } from "./config.js";
@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGINS_DIR = join(__dirname, "../plugins");
 
 const loaded = [];
+const failedPlugins = [];
 
 /**
  * Discover and load plugins from src/plugins/<name>/index.js.
@@ -26,6 +27,9 @@ const loaded = [];
  *   tools        { name, description, inputSchema?, handler }[]  — MCP tools
  */
 export async function loadPlugins(app) {
+  // Reset arrays to avoid duplication on reload
+  loaded.length = 0;
+  failedPlugins.length = 0;
   const dirs = readdirSync(PLUGINS_DIR, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => e.name);
@@ -53,21 +57,46 @@ export async function loadPlugins(app) {
       continue;
     }
 
-    const url = pathToFileURL(join(PLUGINS_DIR, dir, "index.js")).href;
+    // Validate plugin folder structure
+    const pluginIndexPath = join(PLUGINS_DIR, dir, "index.js");
+    if (!existsSync(pluginIndexPath)) {
+      const reason = "missing index.js";
+      console.warn(`[plugins] "${dir}" ${reason} — skipped`);
+      failedPlugins.push({ name: dir, reason });
+      stats.pluginsFailed++;
+      continue;
+    }
+
+    const url = pathToFileURL(pluginIndexPath).href;
     let plugin;
     try {
       plugin = await import(url);
     } catch (err) {
-      console.warn(`[plugins] failed to load "${dir}": ${err.message}`);
+      const reason = `failed to load: ${err.message}`;
+      console.warn(`[plugins] "${dir}" ${reason}`);
+      failedPlugins.push({ name: dir, reason });
+      stats.pluginsFailed++;
       continue;
     }
 
     if (typeof plugin.register !== "function") {
-      console.warn(`[plugins] "${dir}" has no register(app) export — skipped`);
+      const reason = "has no register(app) export";
+      console.warn(`[plugins] "${dir}" ${reason} — skipped`);
+      failedPlugins.push({ name: dir, reason });
+      stats.pluginsFailed++;
       continue;
     }
 
-    plugin.register(app);
+    // Support async plugin initialization
+    try {
+      await plugin.register(app);
+    } catch (err) {
+      const reason = `register() failed: ${err.message}`;
+      console.error(`[plugins] "${dir}" ${reason}`);
+      failedPlugins.push({ name: dir, reason });
+      stats.pluginsFailed++;
+      continue;
+    }
 
     // Register MCP tools from plugin
     let pluginToolsRegistered = 0;
@@ -109,13 +138,43 @@ export async function loadPlugins(app) {
     console.log(`[plugins] loaded ${manifest.name}@${manifest.version} (${pluginToolsRegistered} tools${pluginToolsFailed > 0 ? `, ${pluginToolsFailed} failed` : ""})`);
   }
 
-  // Print startup validation summary
+  // Print startup validation summary with diagnostics
+  printStartupSummary(stats);
+
+  // STRICT mode: fail startup if any plugin failed
+  if (config.plugins.strictLoading && failedPlugins.length > 0) {
+    throw new Error(`STRICT mode: ${failedPlugins.length} plugin(s) failed to load. Check logs above.`);
+  }
+}
+
+/**
+ * Print detailed startup summary with loaded and failed plugins
+ */
+function printStartupSummary(stats) {
   console.log("\n[plugins] ═══════════════════════════════════════");
-  console.log(`[plugins] Startup Validation Summary:`);
+  console.log("[plugins] Plugin Load Summary");
+  console.log("[plugins] ═══════════════════════════════════════");
+
+  if (loaded.length > 0) {
+    console.log("\n✅ Loaded Plugins:");
+    for (const p of loaded) {
+      console.log(`   • ${p.name}@${p.version}`);
+    }
+  }
+
+  if (failedPlugins.length > 0) {
+    console.log("\n❌ Failed Plugins:");
+    for (const f of failedPlugins) {
+      console.log(`   • ${f.name}: ${f.reason}`);
+    }
+  }
+
+  console.log("\n[plugins] Statistics:");
   console.log(`[plugins]   Plugins loaded: ${stats.pluginsLoaded}`);
   console.log(`[plugins]   Plugins failed: ${stats.pluginsFailed}`);
   console.log(`[plugins]   Tools registered: ${stats.toolsRegistered}`);
   console.log(`[plugins]   Tools failed: ${stats.toolsFailed}`);
+
   if (stats.toolsFailed === 0) {
     console.log(`[plugins]   ✅ All tools passed validation`);
   } else {
@@ -127,4 +186,9 @@ export async function loadPlugins(app) {
 /** Returns full manifest of all successfully loaded plugins. */
 export function getPlugins() {
   return loaded;
+}
+
+/** Returns list of plugins that failed to load. */
+export function getFailedPlugins() {
+  return [...failedPlugins];
 }

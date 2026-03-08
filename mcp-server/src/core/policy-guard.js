@@ -8,8 +8,7 @@
  * Actions: allow | block | require_approval | dry_run_first
  */
 
-import { evaluate } from "../plugins/policy/policy.engine.js";
-import { listRules, addRule } from "../plugins/policy/policy.store.js";
+import { getPolicyEvaluator, getApprovalStore } from "./policy-hooks.js";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -27,7 +26,13 @@ let presetsLoaded = false;
 export function loadPresetsAtStartup() {
   if (presetsLoaded) return;
 
-  const existingRules = listRules();
+  const approvalStore = getApprovalStore();
+  if (!approvalStore?.listRules || !approvalStore?.addRule) {
+    console.log("[policy] Policy system not yet registered, skipping preset load");
+    return;
+  }
+
+  const existingRules = approvalStore.listRules();
   if (existingRules.length > 0) {
     console.log("[policy] Rules already exist, skipping preset load");
     presetsLoaded = true;
@@ -40,7 +45,7 @@ export function loadPresetsAtStartup() {
 
     for (const preset of presets) {
       if (preset.enabled !== false) {
-        addRule({
+        approvalStore.addRule({
           pattern: preset.pattern,
           action: preset.action,
           description: preset.description ?? `Preset: ${preset.id}`,
@@ -92,6 +97,12 @@ export function policyGuardrailMiddleware(req, res, next) {
 
   // Skip if confirmed=true (dry-run bypass)
   if (req.query?.confirmed === "true") {
+    return next();
+  }
+
+  // Get policy evaluator (may not be available if policy plugin not loaded)
+  const evaluate = getPolicyEvaluator();
+  if (!evaluate) {
     return next();
   }
 

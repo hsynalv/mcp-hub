@@ -5,14 +5,18 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
 import { ToolTags } from "../../core/tool-registry.js";
+import { registerPolicyHooks } from "../../core/policy-hooks.js";
 import {
   listRules,
   addRule,
   removeRule,
   listApprovals,
   updateApprovalStatus,
+  createApproval,
+  getApproval,
 } from "./policy.store.js";
 import { evaluate } from "./policy.engine.js";
+import { loadPolicyConfig } from "./policy.config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -154,6 +158,16 @@ function validate(schema, body, res) {
 }
 
 export function register(app) {
+  // Register policy system hooks with core
+  registerPolicyHooks({
+    evaluate,
+    createApproval,
+    updateApprovalStatus,
+    getApproval,
+    listApprovals,
+    loadPolicyConfig,
+  });
+
   const router = Router();
 
   router.get("/health", requireScope("read"), (_req, res) => {

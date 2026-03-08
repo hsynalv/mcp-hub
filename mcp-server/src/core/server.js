@@ -11,12 +11,33 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, existsSync } from "fs";
 import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.js";
-import { listApprovals, getApproval, updateApprovalStatus } from "../plugins/policy/policy.store.js";
+import { getApprovalStore } from "./policy-hooks.js";
 import { callTool } from "./tool-registry.js";
 import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
 
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Extract path parameters from Express-style route paths
+ * e.g., "/workspace/:id/file/:name" → [{name: "id", in: "path", required: true, schema: {type: "string"}}, ...]
+ * @param {string} path - Express route path
+ * @returns {Object[]} OpenAPI parameter definitions
+ */
+function extractPathParams(path) {
+  const params = [];
+  const paramRegex = /:(\w+)/g;
+  let match;
+  while ((match = paramRegex.exec(path)) !== null) {
+    params.push({
+      name: match[1],
+      in: "path",
+      required: true,
+      schema: { type: "string" },
+    });
+  }
+  return params;
 }
 
 /**
@@ -71,10 +92,28 @@ function responseEnvelopeMiddleware(req, res, next) {
   next();
 }
 
-/** Reads x-project-id and x-env headers for projects-first config. */
+/** Reads x-project-id and x-env headers for projects-first config with development fallbacks. */
 function projectContextMiddleware(req, _res, next) {
-  req.projectId = req.headers["x-project-id"]?.trim() || null;
-  req.projectEnv = req.headers["x-env"]?.trim() || null;
+  const headerProjectId = req.headers["x-project-id"]?.trim();
+  const headerEnv = req.headers["x-env"]?.trim();
+
+  // Use headers if provided, otherwise fall back to defaults in development
+  if (headerProjectId) {
+    req.projectId = headerProjectId;
+    req.projectEnv = headerEnv || "default-env";
+  } else if (process.env.NODE_ENV === "development" || !process.env.NODE_ENV) {
+    // In development, use default values for local single-user usage
+    req.projectId = "default-project";
+    req.projectEnv = headerEnv || "default-env";
+    if (headerEnv) {
+      console.warn(`[server] Warning: Using default project context (default-project/${req.projectEnv}). Set x-project-id header for production.`);
+    }
+  } else {
+    // Production: headers are required
+    req.projectId = null;
+    req.projectEnv = null;
+  }
+
   next();
 }
 
@@ -87,7 +126,17 @@ function requiresProjectContext(req) {
 function enforceProjectContextMiddleware(req, res, next) {
   if (!requiresProjectContext(req)) return next();
 
+  // In development, allow fallback values with a warning
+  const isDev = process.env.NODE_ENV === "development" || !process.env.NODE_ENV;
+
   if (!req.projectId) {
+    if (isDev) {
+      console.warn("[server] Warning: x-project-id header missing for write operation. Using default values in development mode.");
+      req.projectId = "default-project";
+      req.projectEnv = req.projectEnv || "default-env";
+      return next();
+    }
+
     return res.status(400).json({
       ok: false,
       error: {
@@ -98,6 +147,12 @@ function enforceProjectContextMiddleware(req, res, next) {
   }
 
   if (!req.projectEnv) {
+    if (isDev) {
+      console.warn("[server] Warning: x-env header missing for write operation. Using default-env in development mode.");
+      req.projectEnv = "default-env";
+      return next();
+    }
+
     return res.status(400).json({
       ok: false,
       error: {
@@ -168,13 +223,15 @@ export async function createServer() {
         if (!paths[pathKey]) paths[pathKey] = {};
 
         const method = ep.method.toLowerCase();
+        const pathParams = extractPathParams(ep.path);
+
         paths[pathKey][method] = {
           summary: ep.description ?? `${ep.method} ${ep.path}`,
           operationId: `${plugin.name}_${method}_${ep.path.replace(/[^a-zA-Z0-9]/g, "_")}`,
           tags: ep.tags ?? [plugin.name],
           security: ep.scope ? [{ bearerAuth: [] }] : [],
           parameters: [
-            ...(ep.path.includes(":") ? [] : []), // Path params extracted from :pattern
+            ...pathParams,
             ...(ep.scope ? [{ name: "Authorization", in: "header", required: true, schema: { type: "string" } }] : []),
           ].filter(Boolean),
           requestBody: ep.requestSchema ? {
@@ -281,7 +338,14 @@ export async function createServer() {
    * Return all pending approval requests
    */
   app.get("/approvals/pending", requireScope("read"), (req, res) => {
-    const approvals = listApprovals({ status: "pending" });
+    const approvalStore = getApprovalStore();
+    if (!approvalStore?.listApprovals) {
+      return res.status(503).json({
+        ok: false,
+        error: { code: "policy_unavailable", message: "Policy system not available" }
+      });
+    }
+    const approvals = approvalStore.listApprovals({ status: "pending" });
     res.json({
       ok: true,
       data: {
@@ -308,8 +372,16 @@ export async function createServer() {
       });
     }
 
+    const approvalStore = getApprovalStore();
+    if (!approvalStore?.getApproval || !approvalStore?.updateApprovalStatus) {
+      return res.status(503).json({
+        ok: false,
+        error: { code: "policy_unavailable", message: "Policy system not available" }
+      });
+    }
+
     // Retrieve the approval request
-    const approval = getApproval(approval_id);
+    const approval = approvalStore.getApproval(approval_id);
     if (!approval) {
       return res.status(404).json({
         ok: false,
@@ -335,7 +407,7 @@ export async function createServer() {
     }
 
     // Update approval status
-    updateApprovalStatus(approval_id, "approved", req.user || "manual");
+    approvalStore.updateApprovalStatus(approval_id, "approved", req.user || "manual");
 
     // Execute the tool call
     const toolName = approval.toolName || approval.path?.replace("/tools/", "");

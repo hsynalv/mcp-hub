@@ -199,6 +199,75 @@ Clear all debug traces and metrics.
 | ERROR | Red | Errors |
 | SUCCESS | Green | Successful operations |
 
+## Core Architecture
+
+The core layer provides the foundation for the plugin system:
+
+### Core Modules
+
+| Module | Purpose |
+|--------|---------|
+| `server.js` | Express server, middleware chain, route registration |
+| `plugins.js` | Dynamic plugin discovery, loading, and lifecycle management |
+| `tool-registry.js` | MCP tool registration, validation, and execution |
+| `policy-hooks.js` | Extension points for policy system (breaks core→plugin dependency) |
+| `jobs/` | Job queue system: `index.js`, `queue.js`, `worker.js` |
+| `auth.js` | API key authentication and scope management |
+| `audit.js` | Request auditing and logging |
+| `config.js` | Centralized configuration from environment variables |
+| `errors.js` | Application error classes |
+| `validate.js` | Request validation utilities |
+
+### Plugin System
+
+Plugins are auto-discovered from `src/plugins/`:
+
+```
+src/plugins/
+├── github/           # GitHub integration
+├── notion/           # Notion workspace management
+├── policy/           # Rule engine and approval system
+├── llm-router/       # Multi-provider LLM routing
+├── database/         # MSSQL, PostgreSQL, MongoDB
+├── file-storage/     # S3, Google Drive, local storage
+├── jobs/             # Job queue handlers
+├── n8n*/            # n8n integration (optional)
+└── ...
+```
+
+Each plugin exports:
+- `name` - Plugin identifier
+- `version` - Semver version
+- `register(app)` - Route and tool registration (can be async)
+- Optional: `description`, `capabilities`, `endpoints`, `tools`, `requires`
+
+### Job Queue
+
+In-memory queue with Redis fallback:
+
+```javascript
+import { registerJobHandler } from './core/jobs/index.js';
+
+// Register a job handler
+registerJobHandler("rag.index", async (job, updateProgress, log) => {
+  await log("Starting indexing...");
+  await updateProgress(50);
+  // ... do work ...
+  await updateProgress(100);
+  return { indexed: 42 };
+});
+```
+
+Job states: `queued` → `running` → `completed` | `failed` | `cancelled`
+
+### Project Context
+
+Middleware provides project context via headers:
+- `x-project-id` - Project identifier
+- `x-env` - Environment (dev|staging|prod)
+
+Development fallbacks: If headers are missing in development mode, defaults to `default-project`/`default-env`.
+
 ## Best Practices
 
 1. **Production**: Always disable debug mode in production
