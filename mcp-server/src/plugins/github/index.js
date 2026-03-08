@@ -11,6 +11,9 @@ import {
 } from "./github.client.js";
 import { validateBody, validateQuery } from "../../core/validate.js";
 import { ToolTags } from "../../core/tool-registry.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("github");
 
 export const name = "github";
 export const version = "1.0.0";
@@ -126,7 +129,7 @@ async function analyzeRepo(owner, repo) {
   ]);
 
   if (!repoRes.ok) {
-    throw new Error(repoRes.error || "Failed to fetch repo");
+    throw pluginError.external("GitHub API", repoRes.error || "Failed to fetch repo");
   }
 
   const branch = repoRes.data.default_branch;
@@ -165,7 +168,7 @@ async function listUserRepos(type = "owner", sort = "pushed", limit = 30) {
     Math.min(limit, 100)
   );
   if (!result.ok) {
-    throw new Error(result.error || "Failed to list repos");
+    throw pluginError.external("GitHub API", result.error || "Failed to list repos");
   }
   return {
     count: result.data.length,

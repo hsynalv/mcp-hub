@@ -9,6 +9,9 @@ import { Router } from "express";
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
 import { ToolTags } from "../../core/tool-registry.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("shell");
 
 const execAsync = promisify(exec);
 
@@ -67,11 +70,11 @@ async function executeCommand(command, options = {}) {
 
   // Safety checks
   if (isBlocked(command)) {
-    throw new Error("Command blocked for security reasons");
+    throw pluginError.authorization("Command blocked for security reasons");
   }
 
   if (!validateWorkingDir(cwd)) {
-    throw new Error(`Working directory not allowed: ${cwd}`);
+    throw pluginError.validation(`Working directory not allowed: ${cwd}`);
   }
 
   const startTime = Date.now();
@@ -127,11 +130,11 @@ function executeCommandStream(command, options = {}) {
 
   // Safety checks
   if (isBlocked(command)) {
-    throw new Error("Command blocked for security reasons");
+    throw pluginError.authorization("Command blocked for security reasons");
   }
 
   if (!validateWorkingDir(cwd)) {
-    throw new Error(`Working directory not allowed: ${cwd}`);
+    throw pluginError.validation(`Working directory not allowed: ${cwd}`);
   }
 
   const parts = command.split(" ");

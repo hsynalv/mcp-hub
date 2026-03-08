@@ -3,6 +3,9 @@ import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
 import { validateBody } from "../../core/validate.js";
 import { getAdapter, isValidType } from "./db.adapter.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("database");
 
 export const name = "database";
 export const version = "1.0.0";
@@ -109,7 +112,7 @@ export function register(app) {
         }
         return adapter.rawQuery(sql, p);
       }
-      throw new Error("query_failed");
+      throw pluginError.validation("Invalid query type for database adapter");
     }, res);
   });
 

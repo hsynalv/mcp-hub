@@ -3,13 +3,16 @@
  */
 
 import { MongoClient } from "mongodb";
+import { createPluginErrorHandler } from "../../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("database");
 
 let client = null;
 let db = null;
 
 async function getDb() {
   const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error("connection_failed");
+  if (!uri) throw pluginError.validation("MONGODB_URI not configured");
   if (db) return db;
   client = new MongoClient(uri);
   await client.connect();
@@ -50,7 +53,7 @@ export default {
       const rows = await cursor.toArray();
       return { rows, rowCount: rows.length };
     }
-    throw new Error("query_failed");
+    throw pluginError.external("MongoDB", err.message);
   },
 
   async insert(table, data) {

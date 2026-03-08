@@ -7,6 +7,9 @@
 
 import OpenAI from "openai";
 import { withResilience } from "../core/resilience.js";
+import { createPluginErrorHandler } from "../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("llm-router");
 
 export const name = "llm-router";
 export const version = "1.0.0";
@@ -174,7 +177,7 @@ function getClient(provider) {
 
   const config = PROVIDERS[provider];
   if (!config) {
-    throw new Error(`Unknown provider: ${provider}`);
+    throw pluginError.validation(`Unknown provider: ${provider}`);
   }
 
   let client;
@@ -310,7 +313,7 @@ export async function routeTask(task, prompt, options = {}) {
       console.log(`[llm-router] Provider ${provider} unavailable (no API key), trying fallback...`);
       return routeTask(task, prompt, { ...options, useFallback: true });
     }
-    throw new Error(`Provider ${provider} requires ${config.requiresKey}`);
+    throw pluginError.validation(`Provider ${provider} requires ${config.requiresKey}`);
   }
 
   const client = getClient(provider);
@@ -318,7 +321,7 @@ export async function routeTask(task, prompt, options = {}) {
   // Special handling for image generation
   if (task === "image_generation") {
     if (provider !== "openai") {
-      throw new Error("Image generation currently only supported with OpenAI provider");
+      throw pluginError.validation("Image generation currently only supported with OpenAI provider");
     }
     
     try {

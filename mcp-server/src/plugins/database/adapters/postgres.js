@@ -3,6 +3,9 @@
  */
 
 import pg from "pg";
+import { createPluginErrorHandler } from "../../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("database");
 
 const { Pool } = pg;
 
@@ -14,7 +17,7 @@ function getPool() {
     || (process.env.PG_HOST && process.env.PG_USER && process.env.PG_DATABASE
       ? `postgresql://${process.env.PG_USER}:${process.env.PG_PASSWORD || ""}@${process.env.PG_HOST}:${process.env.PG_PORT || 5432}/${process.env.PG_DATABASE}`
       : null);
-  if (!connStr) throw new Error("connection_failed");
+  if (!connStr) throw pluginError.validation("PostgreSQL connection not configured - set PG_CONNECTION_STRING or PG_HOST/PG_USER/PG_DATABASE");
   pool = new Pool({ connectionString: connStr });
   return pool;
 }

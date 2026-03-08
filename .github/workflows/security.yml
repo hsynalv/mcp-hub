@@ -16,20 +16,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
-          cache-dependency-path: mcp-server/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: mcp-server/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: mcp-server
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      - name: Run npm audit
+      - name: Run pnpm audit
         working-directory: mcp-server
-        run: npm audit --audit-level=high
+        run: pnpm audit --audit-level=high
         continue-on-error: true
 
       - name: Check for known vulnerabilities

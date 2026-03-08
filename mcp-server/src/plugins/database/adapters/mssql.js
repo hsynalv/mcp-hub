@@ -3,6 +3,9 @@
  */
 
 import sql from "mssql";
+import { createPluginErrorHandler } from "../../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("database");
 
 let pool = null;
 
@@ -20,7 +23,7 @@ function getConfig() {
       options:  { encrypt: true, trustServerCertificate: true },
     };
   }
-  throw new Error("connection_failed");
+  throw pluginError.validation("MSSQL connection not configured - set MSSQL_CONNECTION_STRING or MSSQL_HOST/MSSQL_DATABASE");
 }
 
 async function getPool() {

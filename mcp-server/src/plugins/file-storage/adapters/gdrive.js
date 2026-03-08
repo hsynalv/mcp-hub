@@ -4,12 +4,15 @@
  */
 
 import { google } from "googleapis";
+import { createPluginErrorHandler } from "../../../core/error-standard.js";
+
+const pluginError = createPluginErrorHandler("file-storage");
 
 function getDrive() {
   const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
-  if (!clientId || !clientSecret || !refreshToken) throw new Error("connection_failed");
+  if (!clientId || !clientSecret || !refreshToken) throw pluginError.validation("Google Drive credentials not configured - set GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, and GOOGLE_DRIVE_REFRESH_TOKEN");
 
   const oauth2 = new google.auth.OAuth2(clientId, clientSecret, "urn:ietf:wg:oauth2:0:oob");
   oauth2.setCredentials({ refresh_token: refreshToken });
@@ -45,7 +48,7 @@ export default {
   async read(path) {
     const drive = getDrive();
     const fileId = pathToId(path);
-    if (fileId === "root") throw new Error("invalid_path");
+    if (fileId === "root") throw pluginError.validation("Cannot modify root directory");
     const res = await drive.files.get({ fileId, alt: "media" }, { responseType: "arraybuffer" });
     const buf = Buffer.from(res.data);
     return { content: buf.toString("base64"), size: buf.length };
@@ -66,7 +69,7 @@ export default {
   async delete(path) {
     const drive = getDrive();
     const fileId = pathToId(path);
-    if (fileId === "root") throw new Error("invalid_path");
+    if (fileId === "root") throw pluginError.validation("Cannot modify root directory");
     await drive.files.delete({ fileId });
     return { deleted: path };
   },
