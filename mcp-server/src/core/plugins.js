@@ -139,48 +139,40 @@ export async function loadPlugins(app) {
   }
 
   // Print startup validation summary with diagnostics
-  printStartupSummary(stats);
+  printStartupSummary();
 
   // STRICT mode: fail startup if any plugin failed
-  if (config.plugins.strictLoading && failedPlugins.length > 0) {
+  if (process.env.PLUGIN_STRICT_MODE === "true" && failedPlugins.length > 0) {
     throw new Error(`STRICT mode: ${failedPlugins.length} plugin(s) failed to load. Check logs above.`);
   }
 }
 
 /**
- * Print detailed startup summary with loaded and failed plugins
+ * Print clean startup diagnostics summary
  */
-function printStartupSummary(stats) {
-  console.log("\n[plugins] ═══════════════════════════════════════");
-  console.log("[plugins] Plugin Load Summary");
-  console.log("[plugins] ═══════════════════════════════════════");
+function printStartupSummary() {
+  console.log("");
 
+  // Loaded plugins
+  console.log("Loaded Plugins:");
   if (loaded.length > 0) {
-    console.log("\n✅ Loaded Plugins:");
     for (const p of loaded) {
-      console.log(`   • ${p.name}@${p.version}`);
+      console.log(`- ${p.name}`);
     }
   }
 
+  // Failed plugins
+  console.log("");
   if (failedPlugins.length > 0) {
-    console.log("\n❌ Failed Plugins:");
+    console.log("Failed Plugins:");
     for (const f of failedPlugins) {
-      console.log(`   • ${f.name}: ${f.reason}`);
+      console.log(`- ${f.name}: ${f.reason}`);
     }
-  }
-
-  console.log("\n[plugins] Statistics:");
-  console.log(`[plugins]   Plugins loaded: ${stats.pluginsLoaded}`);
-  console.log(`[plugins]   Plugins failed: ${stats.pluginsFailed}`);
-  console.log(`[plugins]   Tools registered: ${stats.toolsRegistered}`);
-  console.log(`[plugins]   Tools failed: ${stats.toolsFailed}`);
-
-  if (stats.toolsFailed === 0) {
-    console.log(`[plugins]   ✅ All tools passed validation`);
   } else {
-    console.log(`[plugins]   ⚠️  Some tools failed validation - check warnings above`);
+    console.log("Failed Plugins: none");
   }
-  console.log("[plugins] ═══════════════════════════════════════\n");
+
+  console.log("");
 }
 
 /** Returns full manifest of all successfully loaded plugins. */

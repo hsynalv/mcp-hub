@@ -103,29 +103,110 @@ Without a dedicated service, the agent has to guess — and gets it wrong. **mcp
 
 ## Plugins
 
-### Core Plugins
+### Core System Plugins
 
-| Plugin | Prefix | Description |
-|--------|--------|-------------|
-| [github](./src/plugins/github/README.md) | `/github` | Repos, PRs, branches, analysis |
-| [notion](./src/plugins/notion/README.md) | `/notion` | Pages, databases, tasks, templates |
-| [git](./src/plugins/git/README.md) | `/git` | Repository operations |
-| [tests](./src/plugins/tests/README.md) | `/tests` | Test runner (Vitest, Jest, Mocha) |
-| [brain](./src/plugins/brain/README.md) | `/brain` | LLM skills, chat, planning |
-| [rag](./src/plugins/rag/README.md) | `/rag` | Document indexing, semantic search |
-| [workspace](./src/plugins/workspace/README.md) | `/workspace` | File operations |
-| [policy](./src/plugins/policy/README.md) | `/policy` | Approval rules, rate limits |
+| Plugin | Prefix | Status | Description |
+|--------|--------|--------|-------------|
+| [policy](./src/plugins/policy/README.md) | `/policy` | ✅ | Rule-based approval system with extension hooks |
+| [jobs](./src/plugins/jobs/README.md) | `/jobs` | ✅ | Async task queue with progress tracking |
+| [workspace](./src/plugins/workspace/README.md) | `/workspace` | ✅ | File operations within workspace root |
 
-### Integration Plugins
+### J4RV1S System Plugins
 
-| Plugin | Prefix | Description |
-|--------|--------|-------------|
-| [n8n](./src/plugins/n8n/README.md) | `/n8n` | Node catalog, workflows |
-| [n8n-credentials](./src/plugins/n8n-credentials/README.md) | `/credentials` | Credential metadata |
-| [n8n-workflows](./src/plugins/n8n-workflows/README.md) | `/n8n/workflows` | Workflow management |
-| [database](./src/plugins/database/README.md) | `/database` | SQL/NoSQL queries |
-| [file-storage](./src/plugins/file-storage/README.md) | `/file-storage` | S3, GCS, local files |
-| [slack](./src/plugins/slack/README.md) | `/slack` | Slack integration |
+| Plugin | Prefix | Status | Description |
+|--------|--------|--------|-------------|
+| [brain](./src/plugins/brain/README.md) | `/brain` | ✅ | AI skills registry, memory, task orchestration |
+| [rag](./src/plugins/rag/README.md) | `/rag` | ✅ | Document indexing, semantic search (in-memory) |
+| [shell](./src/plugins/shell/README.md) | `/shell` | ✅ | Shell execution with safety controls |
+| [notifications](./src/plugins/notifications/README.md) | `/notifications` | ✅ | Cross-platform system notifications |
+
+### Development & Integration Plugins
+
+| Plugin | Prefix | Status | Description |
+|--------|--------|--------|-------------|
+| [github](./src/plugins/github/README.md) | `/github` | ✅ | Repos, PRs, branches, analysis |
+| [git](./src/plugins/git/README.md) | `/git` | ✅ | Repository operations (status, commit, push) |
+| [notion](./src/plugins/notion/README.md) | `/notion` | ✅ | Pages, databases, tasks, templates |
+| [llm-router](./src/plugins/llm-router/README.md) | `/llm` | ✅ | Multi-provider LLM routing |
+| [local-sidecar](./src/plugins/local-sidecar/README.md) | `/local` | ✅ | Safe local filesystem with whitelist |
+| [docker](./src/plugins/docker/README.md) | `/docker` | ✅ | Container lifecycle management |
+| [database](./src/plugins/database/README.md) | `/database` | ✅ | MSSQL, PostgreSQL, MongoDB queries |
+| [file-storage](./src/plugins/file-storage/README.md) | `/files` | ✅ | S3, Google Drive, local storage |
+| [file-watcher](./src/plugins/file-watcher/README.md) | `/file-watcher` | ✅ | Watch files for changes |
+| [http](./src/plugins/http/README.md) | `/http` | ✅ | Controlled HTTP proxy with rate limiting |
+| [slack](./src/plugins/slack/README.md) | `/slack` | ✅ | Slack messaging integration |
+| [email](./src/plugins/email/README.md) | `/email` | ✅ | SMTP email with templates |
+| [image-gen](./src/plugins/image-gen/README.md) | `/image` | ✅ | DALL-E/Stability AI image generation |
+| [openapi](./src/plugins/openapi/README.md) | `/openapi` | ✅ | API spec loading and analysis |
+| [secrets](./src/plugins/secrets/README.md) | `/secrets` | ✅ | Secure credential storage |
+| [observability](./src/plugins/observability/README.md) | `/observability` | ✅ | Health checks and metrics |
+| [projects](./src/plugins/projects/README.md) | `/projects` | ✅ | Multi-project configuration |
+| [repo-intelligence](./src/plugins/repo-intelligence/README.md) | `/repo` | ✅ | Repository analysis and AI summaries |
+| [project-orchestrator](./src/plugins/project-orchestrator/README.md) | `/project-orchestrator` | ✅ | AI-powered project scaffolding |
+| [prompt-registry](./src/plugins/prompt-registry/README.md) | `/prompts` | ✅ | System prompt management |
+| [tech-detector](./src/plugins/tech-detector/README.md) | `/tech` | ✅ | Technology stack detection |
+| [github-pattern-analyzer](./src/plugins/github-pattern-analyzer/README.md) | `/github-patterns` | ✅ | Pattern analysis for GitHub repos |
+| [marketplace](./src/plugins/marketplace/README.md) | `/marketplace` | ✅ | Plugin marketplace |
+| [code-review](./src/plugins/code-review/README.md) | `/code-review` | ✅ | Automated code review |
+| [video-gen](./src/plugins/video-gen/README.md) | `/video` | ✅ | Video generation |
+| [tests](./src/plugins/tests/README.md) | `/tests` | ✅ | Test execution runner |
+
+### Optional Plugins (n8n Integration)
+
+Disable with `ENABLE_N8N_PLUGIN=false` in `.env`:
+
+| Plugin | Prefix | Status | Description |
+|--------|--------|--------|-------------|
+| [n8n](./src/plugins/n8n/README.md) | `/n8n` | ⚠️ | Node catalog, workflows (optional) |
+| [n8n-credentials](./src/plugins/n8n-credentials/README.md) | `/credentials` | ⚠️ | Credential metadata (optional) |
+| [n8n-workflows](./src/plugins/n8n-workflows/README.md) | `/n8n/workflows` | ⚠️ | Workflow management (optional) |
+
+**Status Legend:**
+- ✅ **Production Ready**: Fully implemented with REST endpoints and MCP tools
+- ⚠️ **Optional**: Disabled by default, requires explicit configuration
+
+---
+
+## Core Architecture
+
+### Extension Hook Pattern
+
+The core uses extension hooks to avoid circular dependencies with plugins:
+
+```
+┌─────────────┐      imports      ┌─────────────┐
+│   core/     │ ─────────────────►│ policy-hooks│
+│             │   (extension API) │   (core)    │
+└─────────────┘                   └──────┬──────┘
+       ▲                                 │
+       │    registerPolicyHooks()       │
+       └─────────────────────────────────┘
+                    │
+            ┌───────┴────────┐
+            │ plugins/policy │ (registers itself)
+            └────────────────┘
+```
+
+**Benefits:**
+- Core never imports from plugins
+- Plugins register capabilities into core
+- Graceful degradation if plugin disabled
+- Testable without loading actual plugins
+
+### Plugin Loader Features
+
+- **Auto-discovery**: Scans `src/plugins/*` on startup
+- **Error tracking**: Failed plugins logged without crashing
+- **STRICT mode**: `PLUGIN_STRICT_MODE=true` fails on any error
+- **Async support**: `await plugin.register(app)` for async initialization
+- **Validation**: Requires `index.js` and `register()` function
+
+### Job System
+
+- **Registration**: `registerJobHandler(type, handler)`
+- **Execution**: Async with progress tracking and logging
+- **Storage**: Redis (if configured) or in-memory
+- **States**: `queued` → `running` → `completed` | `failed` | `cancelled`
 
 ---
 

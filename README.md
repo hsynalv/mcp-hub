@@ -38,7 +38,7 @@ AI-Hub operates as a multi-layer AI Operating System backend:
 ┌──────────────────────▼──────────────────────────────────────┐
 │  1. TOOL REGISTRY                                           │
 │     - Central MCP tool registration                         │
-│     - Schema validation & tagging                           │
+│     - Schema validation & tagging                             │
 │     - Policy enforcement hooks                              │
 ├───────────────────────────────────────────────────────────────┤
 │  2. POLICY & APPROVAL SYSTEM                                │
@@ -67,16 +67,110 @@ AI-Hub operates as a multi-layer AI Operating System backend:
 └───────────────────────────────────────────────────────────────┘
 ```
 
-### Key Components
+### Core Architecture
 
-| Layer | Purpose | Tags |
-|-------|---------|------|
-| **Tool Registry** | Central registration and validation of all MCP tools | `core` |
-| **Policy System** | Rule engine for approvals, rate limiting, access control | `security` |
-| **LLM Router** | Intelligent routing to 5+ providers with fallback | `ai` |
-| **Plugins** | 20+ integrations for external services | `integration` |
-| **Project Layer** | Context management for multi-project workflows | `context` |
-| **Job System** | Background task execution and queue management | `async` |
+The `mcp-server/src/core/` directory contains the foundational modules:
+
+| Module | Purpose | Key Exports |
+|--------|---------|-------------|
+| `server.js` | Express server, middleware chain, route registration | `createServer()` |
+| `plugins.js` | Dynamic plugin discovery and loading | `loadPlugins(app)`, `getPlugins()` |
+| `tool-registry.js` | MCP tool registration and execution | `registerTool()`, `callTool()` |
+| `policy-hooks.js` | Extension points for policy system | `registerPolicyHooks()`, `getPolicyEvaluator()` |
+| `jobs.js` | Job queue with Redis/memory storage | `submitJob()`, `registerJobRunner()` |
+| `jobs/` | Job system modules (queue, worker) | `registerJobHandler()` alias |
+| `auth.js` | API key authentication | `requireScope()` |
+| `audit.js` | Request auditing | `auditMiddleware` |
+| `config.js` | Environment configuration | `config` object |
+
+### Plugin System
+
+Plugins are auto-discovered from `src/plugins/`:
+
+```javascript
+// Example plugin: src/plugins/my-plugin/index.js
+export const name = "my-plugin";
+export const version = "1.0.0";
+export const description = "Does something useful";
+
+export const tools = [
+  {
+    name: "my_tool",
+    description: "A useful tool",
+    inputSchema: { type: "object", properties: { ... } },
+    handler: async (args, context) => { ... },
+    tags: ["read_only"]
+  }
+];
+
+export async function register(app) {
+  // Register routes
+  app.get("/my-plugin/status", (req, res) => { ... });
+}
+```
+
+**Plugin loading features:**
+- Automatic discovery from `src/plugins/*`
+- Async `register(app)` support
+- Error tracking for failed plugins
+- STRICT mode: `PLUGIN_STRICT_MODE=true` fails startup on any plugin error
+- Optional manifest: `description`, `capabilities`, `endpoints`, `requires`, `examples`
+
+### Job Queue System
+
+Plugins can register job handlers for background processing:
+
+```javascript
+import { registerJobHandler } from './core/jobs/index.js';
+
+registerJobHandler("rag.index", async (job, updateProgress, log) => {
+  await log("Starting indexing...");
+  await updateProgress(25);
+  
+  // Do work...
+  const result = await indexDocuments(job.payload);
+  
+  await updateProgress(100);
+  await log("Indexing complete");
+  return result;
+});
+```
+
+Submit jobs via HTTP API:
+```bash
+POST /jobs
+{ "type": "rag.index", "payload": { "docs": [...] } }
+```
+
+**Job states:** `queued` → `running` → `completed` | `failed` | `cancelled`
+
+### Policy System Integration
+
+Core provides extension hooks for the policy plugin (no direct imports):
+
+```
+┌─────────────┐      imports      ┌─────────────┐
+│   core/     │ ─────────────────►│ policy-hooks│
+│             │   (extension API) │   (core)    │
+└─────────────┘                   └──────┬──────┘
+       ▲                                 │
+       │    registerPolicyHooks()       │
+       └─────────────────────────────────┘
+                    │
+            ┌───────┴────────┐
+            │ plugins/policy │ (registers itself)
+            └────────────────┘
+```
+
+This architecture prevents circular dependencies and allows graceful degradation if the policy plugin is disabled.
+
+### Project Context
+
+All write operations include project context via headers:
+- `x-project-id` - Project identifier (default: "default-project")
+- `x-env` - Environment (default: "default-env")
+
+Headers are automatically applied as defaults for local development.
 
 ---
 
@@ -131,26 +225,108 @@ Flow:
 
 ## Plugins
 
-| Plugin | Endpoints | Description |
-|--------|-----------|-------------|
-| `github` | `/github/*` | Repository analysis, file tree, commits, issues |
-| `notion` | `/notion/*` | Pages, databases, projects and tasks |
-| `llm-router` | `/llm/*` | Multi-LLM routing (OpenAI, Anthropic, Google, Mistral, Ollama) |
-| `project-orchestrator` | `/project-orchestrator/*` | AI-powered project scaffolding and code generation |
-| `repo-intelligence` | `/repo/*` | Repository analysis, AI summaries, roadmap generation |
-| `local-sidecar` | `/local/*` | Safe local filesystem access with whitelist protection |
-| `prompt-registry` | `/prompts/*` | System prompt management with versioning |
-| `http` | `/http/*` | Controlled HTTP requests with rate limiting |
-| `database` | `/database/*` | MSSQL, PostgreSQL, MongoDB connections |
-| `file-storage` | `/files/*` | S3, Google Drive, local file operations |
-| `openapi` | `/openapi/*` | API specification loading and analysis |
-| `secrets` | `/secrets/*` | Secure credential reference system |
-| `policy` | `/policy/*` | Rule-based approval system |
-| `observability` | `/observability/*` | Health checks, metrics, error tracking |
-| `projects` | `/projects/*` | Multi-project configuration management |
-| `n8n` | `/n8n/*` | **Optional**: Node catalog, context, validation |
-| `n8n-credentials` | `/credentials/*` | **Optional**: Credential metadata from n8n |
-| `n8n-workflows` | `/n8n/workflows/*` | **Optional**: Workflow list, detail, search |
+| Plugin | Status | Endpoints | Description |
+|--------|--------|-----------|-------------|
+| `github` | ✅ | `/github/*` | Repository analysis, file tree, commits, issues |
+| `notion` | ✅ | `/notion/*` | Pages, databases, projects and tasks |
+| `llm-router` | ✅ | `/llm/*` | Multi-LLM routing (OpenAI, Anthropic, Google, Mistral, Ollama) |
+| `policy` | ✅ | `/policy/*` | Rule-based approval system with hooks |
+| `workspace` | ✅ | `/workspace/*` | File operations within configured workspace root |
+| `local-sidecar` | ✅ | `/local/*` | Safe local filesystem access with whitelist |
+| `shell` | ✅ | `/shell/*` | Shell command execution with safety controls |
+| `docker` | ✅ | `/docker/*` | Docker container and image management |
+| `notifications` | ✅ | `/notifications/*` | System notifications (macOS/Linux/Windows) |
+| `brain` | ✅ | `/brain/*` | AI skills registry and semantic kernel |
+| `rag` | ✅ | `/rag/*` | Document indexing and semantic search |
+| `email` | ✅ | `/email/*` | SMTP email sending with templates |
+| `image-gen` | ✅ | `/image/*` | DALL-E/Stability AI image generation |
+| `git` | ✅ | `/git/*` | Git operations (status, commit, push, etc.) |
+| `slack` | ✅ | `/slack/*` | Slack messaging integration |
+| `file-storage` | ✅ | `/files/*` | S3, Google Drive, local file operations |
+| `file-watcher` | ✅ | `/file-watcher/*` | Watch files for changes |
+| `database` | ✅ | `/database/*` | MSSQL, PostgreSQL, MongoDB connections |
+| `http` | ✅ | `/http/*` | Controlled HTTP requests with rate limiting |
+| `openapi` | ✅ | `/openapi/*` | API specification loading and analysis |
+| `secrets` | ✅ | `/secrets/*` | Secure credential reference system |
+| `observability` | ✅ | `/observability/*` | Health checks, metrics, error tracking |
+| `projects` | ✅ | `/projects/*` | Multi-project configuration management |
+| `repo-intelligence` | ✅ | `/repo/*` | Repository analysis, AI summaries |
+| `project-orchestrator` | ✅ | `/project-orchestrator/*` | AI-powered project scaffolding |
+| `prompt-registry` | ✅ | `/prompts/*` | System prompt management |
+| `tech-detector` | ✅ | `/tech/*` | Technology stack detection |
+| `github-pattern-analyzer` | ✅ | `/github-patterns/*` | Pattern analysis for GitHub repos |
+| `marketplace` | ✅ | `/marketplace/*` | Plugin marketplace |
+| `code-review` | ✅ | `/code-review/*` | Automated code review |
+| `video-gen` | ✅ | `/video/*` | Video generation |
+| `tests` | ✅ | `/tests/*` | Test execution |
+| `n8n` | ⚠️ Optional | `/n8n/*` | Node catalog, context, validation |
+| `n8n-credentials` | ⚠️ Optional | `/credentials/*` | Credential metadata from n8n |
+| `n8n-workflows` | ⚠️ Optional | `/n8n/workflows/*` | Workflow list, detail, search |
+
+**Status Legend:**
+- ✅ Production Ready: Fully implemented with REST endpoints and MCP tools
+- ⚠️ Optional: Disabled by default, requires explicit configuration
+
+### Implemented Plugins Detail
+
+**Core Integrations (Always Available):**
+- `github` - Full GitHub API integration with repo analysis, PR management, issue tracking
+- `notion` - Complete Notion workspace management (pages, databases, blocks)
+- `llm-router` - Multi-provider LLM routing with fallback
+- `policy` - Rule-based access control with approval workflows
+- `workspace` - Secure file operations within configured paths
+- `local-sidecar` - Local filesystem with whitelist protection
+- `shell` - Shell execution with blocked commands and working directory validation
+- `docker` - Container lifecycle management
+- `notifications` - Cross-platform system notifications
+- `brain` - AI skills registry with memory and task orchestration
+- `rag` - In-memory vector search with simple embeddings
+- `email` - SMTP integration with templated emails
+- `image-gen` - DALL-E 3 and Stability AI image generation
+- `git` - Git operations wrapper
+- `slack` - Slack bot integration
+- `file-storage` - Multi-provider storage (S3, GDrive, local)
+- `database` - Multi-database query interface (MSSQL, PostgreSQL, MongoDB)
+- `http` - Safe HTTP proxy with rate limiting
+- `openapi` - OpenAPI spec parsing and analysis
+- `secrets` - Encrypted credential storage
+- `observability` - Health checks and metrics
+
+**J4RV1S System Plugins:**
+- `brain` - Central AI skill registry for J4RV1S
+- `rag` - Document retrieval for J4RV1S knowledge
+- `shell` - Command execution for J4RV1S Vision
+- `notifications` - User alerts from J4RV1S
+
+**Optional Plugins (n8n Integration):**
+Disable with `ENABLE_N8N_PLUGIN=false` in `.env`:
+- `n8n` - Node catalog and context
+- `n8n-credentials` - Credential metadata
+- `n8n-workflows` - Workflow management
+
+---
+
+### Production Readiness Summary
+
+**✅ Production Ready (32 plugins):**
+- Core: policy, jobs, workspace
+- J4RV1S: brain, rag, shell, notifications
+- Git/Dev: github, git, repo-intelligence, github-pattern-analyzer
+- Productivity: notion, projects, project-orchestrator
+- Infrastructure: docker, database, file-storage, file-watcher, http
+- AI/LLM: llm-router, brain, rag, image-gen, video-gen, code-review
+- Comms: slack, email, notifications
+- Utils: secrets, observability, openapi, prompt-registry, tech-detector, marketplace, tests
+
+**⚠️ Optional/Disabled by default (3 plugins):**
+- n8n, n8n-credentials, n8n-workflows
+
+**Core System Status:**
+- Plugin loader: ✅ Production ready (error tracking, STRICT mode, async support)
+- Tool registry: ✅ Production ready (policy hooks integration)
+- Job queue: ✅ Production ready (Redis/memory storage, progress tracking)
+- Policy system: ✅ Production ready (extension hooks, approval workflows)
+- Project context: ✅ Production ready (header-based with defaults)
 
 ---
 

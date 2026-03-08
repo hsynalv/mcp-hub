@@ -6,7 +6,7 @@ import { AppError, NotFoundError } from "./errors.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
-import { createJob, getJob, listJobs, getJobStats } from "./jobs.js";
+import { submitJob, getJob, listJobs, getJobStats } from "./jobs.js";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, existsSync } from "fs";
@@ -92,26 +92,18 @@ function responseEnvelopeMiddleware(req, res, next) {
   next();
 }
 
-/** Reads x-project-id and x-env headers for projects-first config with development fallbacks. */
+/** Applies project context from headers with graceful fallbacks. */
 function projectContextMiddleware(req, _res, next) {
   const headerProjectId = req.headers["x-project-id"]?.trim();
   const headerEnv = req.headers["x-env"]?.trim();
 
-  // Use headers if provided, otherwise fall back to defaults in development
-  if (headerProjectId) {
-    req.projectId = headerProjectId;
-    req.projectEnv = headerEnv || "default-env";
-  } else if (process.env.NODE_ENV === "development" || !process.env.NODE_ENV) {
-    // In development, use default values for local single-user usage
-    req.projectId = "default-project";
-    req.projectEnv = headerEnv || "default-env";
-    if (headerEnv) {
-      console.warn(`[server] Warning: Using default project context (default-project/${req.projectEnv}). Set x-project-id header for production.`);
-    }
-  } else {
-    // Production: headers are required
-    req.projectId = null;
-    req.projectEnv = null;
+  // Use headers if provided, otherwise use defaults
+  req.projectId = headerProjectId || "default-project";
+  req.projectEnv = headerEnv || "default-env";
+
+  // Log when using defaults (helpful for debugging)
+  if (!headerProjectId || !headerEnv) {
+    console.warn(`[server] Using default project context (${req.projectId}/${req.projectEnv}). Set x-project-id and x-env headers to override.`);
   }
 
   next();
@@ -126,38 +118,14 @@ function requiresProjectContext(req) {
 function enforceProjectContextMiddleware(req, res, next) {
   if (!requiresProjectContext(req)) return next();
 
-  // In development, allow fallback values with a warning
-  const isDev = process.env.NODE_ENV === "development" || !process.env.NODE_ENV;
-
-  if (!req.projectId) {
-    if (isDev) {
-      console.warn("[server] Warning: x-project-id header missing for write operation. Using default values in development mode.");
-      req.projectId = "default-project";
-      req.projectEnv = req.projectEnv || "default-env";
-      return next();
-    }
-
+  // Values are already set by projectContextMiddleware with defaults
+  // This middleware just ensures they're present for write operations
+  if (!req.projectId || !req.projectEnv) {
     return res.status(400).json({
       ok: false,
       error: {
-        code: "missing_project_id",
-        message: "x-project-id header is required for write operations",
-      },
-    });
-  }
-
-  if (!req.projectEnv) {
-    if (isDev) {
-      console.warn("[server] Warning: x-env header missing for write operation. Using default-env in development mode.");
-      req.projectEnv = "default-env";
-      return next();
-    }
-
-    return res.status(400).json({
-      ok: false,
-      error: {
-        code: "missing_env",
-        message: "x-env header is required for write operations (dev|staging|prod)",
+        code: "missing_project_context",
+        message: "x-project-id and x-env headers are required for write operations",
       },
     });
   }
@@ -300,18 +268,57 @@ export async function createServer() {
 
   // ── Job queue routes ───────────────────────────────────────────────────────
 
-  app.post("/jobs", requireScope("write"), (req, res) => {
+  app.post("/jobs", requireScope("write"), async (req, res) => {
     const { type, payload } = req.body ?? {};
     if (!type) return res.status(400).json({ ok: false, error: { code: "missing_type", message: "Provide job type" } });
 
-    // Built-in job types can be added here; external callers use type="custom"
-    const job = createJob(type, payload ?? {}, async (j) => {
-      // Placeholder — real runners are registered by plugins
-      await new Promise((r) => setTimeout(r, 100));
-      j.succeed({ message: "Job runner not implemented for type: " + j.type });
-    });
+    try {
+      // Submit job to the real jobs system - requires a registered runner
+      const job = submitJob(type, payload ?? {}, {
+        projectId: req.projectId,
+        projectEnv: req.projectEnv,
+        user: req.user || req.actor?.id,
+      });
 
-    res.status(202).json({ job });
+      res.status(202).json({
+        ok: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            state: job.state,
+            context: job.context,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            startedAt: job.startedAt,
+            finishedAt: job.finishedAt,
+          },
+        },
+        meta: { requestId: req.requestId },
+      });
+    } catch (err) {
+      // No runner registered for this job type
+      if (err.message?.includes("No runner registered")) {
+        return res.status(400).json({
+          ok: false,
+          error: {
+            code: "job_type_not_supported",
+            message: `No job handler registered for type: "${type}". Available job types must be registered by plugins.`,
+          },
+          meta: { requestId: req.requestId },
+        });
+      }
+
+      // Other errors
+      return res.status(500).json({
+        ok: false,
+        error: {
+          code: "job_submission_failed",
+          message: err.message || "Failed to submit job",
+        },
+        meta: { requestId: req.requestId },
+      });
+    }
   });
 
   app.get("/jobs/stats", requireScope("read"), async (req, res) => {
