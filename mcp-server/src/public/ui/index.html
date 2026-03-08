@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Hub Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-slate-950 text-slate-100">
+    <div class="min-h-screen">
+      <header class="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+        <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-4">
+          <div class="flex items-center gap-3">
+            <div class="h-9 w-9 rounded-lg bg-slate-800 flex items-center justify-center">
+              <span class="text-sm font-semibold">MCP</span>
+            </div>
+            <div>
+              <div class="text-lg font-semibold leading-tight">MCP Hub</div>
+              <div id="subtitle" class="text-xs text-slate-400">Web panel</div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <div id="authPill" class="hidden rounded-full border border-slate-800 px-3 py-1 text-xs text-slate-300"></div>
+            <div class="hidden md:flex items-center gap-2">
+              <input id="apiKeyInput" type="password" placeholder="UI code / API key" class="w-56 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-700" />
+              <button id="saveKeyBtn" class="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm font-medium hover:bg-slate-900">Save</button>
+              <button id="requestTokenBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700">Request token</button>
+            </div>
+            <button id="refreshBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700">Refresh</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="mx-auto max-w-7xl px-4 py-6">
+        <div id="banner" class="hidden mb-6 rounded-xl border border-amber-700/50 bg-amber-500/10 p-4 text-amber-200"></div>
+
+        <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <div class="text-xs text-slate-400">Health</div>
+            <div id="healthValue" class="mt-1 text-2xl font-semibold">—</div>
+            <div id="healthMeta" class="mt-1 text-xs text-slate-400">—</div>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <div class="text-xs text-slate-400">Plugins</div>
+            <div id="pluginsValue" class="mt-1 text-2xl font-semibold">—</div>
+            <div id="pluginsMeta" class="mt-1 text-xs text-slate-400">loaded</div>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <div class="text-xs text-slate-400">Tools</div>
+            <div id="toolsValue" class="mt-1 text-2xl font-semibold">—</div>
+            <div id="toolsMeta" class="mt-1 text-xs text-slate-400">registered</div>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <div class="text-xs text-slate-400">Audit</div>
+            <div id="auditValue" class="mt-1 text-2xl font-semibold">—</div>
+            <div id="auditMeta" class="mt-1 text-xs text-slate-400">events (approx)</div>
+          </div>
+        </div>
+
+        <div class="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <nav class="flex flex-wrap gap-2">
+            <button data-tab="tools" class="tabBtn rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700">Tools</button>
+            <button data-tab="plugins" class="tabBtn rounded-lg bg-slate-900/40 px-3 py-2 text-sm font-medium hover:bg-slate-800">Plugins</button>
+            <button data-tab="logs" class="tabBtn rounded-lg bg-slate-900/40 px-3 py-2 text-sm font-medium hover:bg-slate-800">Logs</button>
+            <button data-tab="about" class="tabBtn rounded-lg bg-slate-900/40 px-3 py-2 text-sm font-medium hover:bg-slate-800">About</button>
+          </nav>
+
+          <div class="flex flex-col gap-2 md:flex-row md:items-center">
+            <div class="relative">
+              <input id="searchInput" type="text" placeholder="Search tools / plugins" class="w-full md:w-96 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-700" />
+            </div>
+            <select id="tagFilter" class="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-700">
+              <option value="">All tags</option>
+              <option value="read_only">read_only</option>
+              <option value="write">write</option>
+              <option value="destructive">destructive</option>
+              <option value="needs_approval">needs_approval</option>
+              <option value="NETWORK">NETWORK</option>
+              <option value="LOCAL_FS">LOCAL_FS</option>
+              <option value="GIT">GIT</option>
+              <option value="EXTERNAL_API">EXTERNAL_API</option>
+            </select>
+          </div>
+        </div>
+
+        <section id="tab-tools" class="tabSection">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/30">
+            <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <div>
+                <div class="text-sm font-semibold">Tool Registry</div>
+                <div id="toolsHint" class="text-xs text-slate-400">—</div>
+              </div>
+              <div class="text-xs text-slate-400">Tip: filter by tag to quickly find GitHub/Notion/n8n tools.</div>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-800">
+                <thead class="bg-slate-950/50">
+                  <tr>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Tool</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Plugin</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Mode</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Tags</th>
+                  </tr>
+                </thead>
+                <tbody id="toolsTbody" class="divide-y divide-slate-800"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <div id="toolModal" class="fixed inset-0 z-50 hidden">
+          <div id="toolModalBackdrop" class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"></div>
+          <div class="absolute inset-0 flex items-center justify-center p-4">
+            <div class="w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
+              <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                <div>
+                  <div class="text-sm font-semibold">Tool Details</div>
+                  <div id="toolModalSubtitle" class="text-xs text-slate-400">—</div>
+                </div>
+                <button id="toolModalClose" class="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm font-medium hover:bg-slate-900">Close</button>
+              </div>
+              <div class="max-h-[75vh] overflow-auto p-4">
+                <div id="toolDetails" class="text-sm text-slate-300">Select a tool from the list.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section id="tab-plugins" class="tabSection hidden">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/30">
+            <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <div>
+                <div class="text-sm font-semibold">Plugins</div>
+                <div class="text-xs text-slate-400">Manifests, endpoints and tool counts.</div>
+              </div>
+            </div>
+            <div id="pluginsGrid" class="grid grid-cols-1 gap-3 p-4 md:grid-cols-2"></div>
+          </div>
+        </section>
+
+        <section id="tab-logs" class="tabSection hidden">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/30">
+            <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+              <div>
+                <div class="text-sm font-semibold">Audit Logs</div>
+                <div class="text-xs text-slate-400">Latest tool executions (from /audit/logs).</div>
+              </div>
+              <div class="text-xs text-slate-400">Click a row to expand.</div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-800">
+                <thead class="bg-slate-950/50">
+                  <tr>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Time</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Tool</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Status</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-300">Duration</th>
+                  </tr>
+                </thead>
+                <tbody id="logsTbody" class="divide-y divide-slate-800"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-about" class="tabSection hidden">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+            <div class="text-sm font-semibold">About</div>
+            <div class="mt-2 text-sm text-slate-300">
+              <div class="text-slate-400 text-xs">Data sources</div>
+              <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div class="font-medium">/health</div>
+                  <div class="text-xs text-slate-400">Basic service health + auth status</div>
+                </div>
+                <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div class="font-medium">/whoami</div>
+                  <div class="text-xs text-slate-400">Auth scopes + project context (requires read scope)</div>
+                </div>
+                <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div class="font-medium">/plugins</div>
+                  <div class="text-xs text-slate-400">Plugin manifests (tools, endpoints)</div>
+                </div>
+                <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                  <div class="font-medium">/audit/logs</div>
+                  <div class="text-xs text-slate-400">Tool execution audit log</div>
+                </div>
+              </div>
+
+              <div class="mt-4 text-xs text-slate-500">
+                This panel is intentionally read-only for the MVP. Later we can add tool execution and policy approvals.
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const state = {
+        plugins: [],
+        tools: [],
+        logs: [],
+        stats: null,
+        health: null,
+        whoami: null,
+        selectedTool: null,
+        tab: 'tools',
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function setBanner(type, text) {
+        const el = $('banner');
+        if (!text) {
+          el.classList.add('hidden');
+          el.textContent = '';
+          return;
+        }
+        el.classList.remove('hidden');
+        el.textContent = text;
+        el.classList.toggle('border-amber-700/50', type === 'warn');
+      }
+
+      function openToolModal() {
+        const m = $('toolModal');
+        if (!m) return;
+        m.classList.remove('hidden');
+      }
+
+      function closeToolModal() {
+        const m = $('toolModal');
+        if (!m) return;
+        m.classList.add('hidden');
+      }
+
+      async function apiPost(path, body) {
+        const apiKey = localStorage.getItem('mcpHubApiKey') || '';
+        const headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body || {}) });
+        const text = await res.text();
+        let json;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = { ok: false, error: { code: 'invalid_json', message: text.slice(0, 200) } };
+        }
+        if (!res.ok) {
+          const msg = json?.error?.message || json?.message || json?.error || res.statusText;
+          const code = json?.error?.code || json?.error || String(res.status);
+          throw new Error(`${code}: ${msg}`);
+        }
+        if (json && typeof json === 'object' && json.ok === true && 'data' in json) {
+          return json.data;
+        }
+        return json;
+      }
+
+      async function apiGet(path) {
+        const apiKey = localStorage.getItem('mcpHubApiKey') || '';
+        const headers = { 'Accept': 'application/json' };
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+        const res = await fetch(path, { headers });
+        const text = await res.text();
+        let json;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = { ok: false, error: { code: 'invalid_json', message: text.slice(0, 200) } };
+        }
+        if (!res.ok) {
+          const msg = json?.error?.message || json?.message || json?.error || res.statusText;
+          const code = json?.error?.code || json?.error || String(res.status);
+          throw new Error(`${code}: ${msg}`);
+        }
+
+        // Server uses a response envelope: { ok:true, data:..., meta:{requestId} }
+        if (json && typeof json === 'object' && json.ok === true && 'data' in json) {
+          return json.data;
+        }
+        return json;
+      }
+
+      function toolModeFromTags(tags = []) {
+        const t = new Set(tags);
+        if (t.has('destructive')) return 'destructive';
+        if (t.has('write')) return 'active';
+        if (t.has('needs_approval')) return 'approval';
+        return 'passive';
+      }
+
+      function pill(text, variant) {
+        const base = 'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium';
+        const cls = {
+          passive: 'border-slate-700 text-slate-300 bg-slate-950/40',
+          active: 'border-emerald-700/60 text-emerald-200 bg-emerald-500/10',
+          approval: 'border-amber-700/60 text-amber-200 bg-amber-500/10',
+          destructive: 'border-rose-700/60 text-rose-200 bg-rose-500/10',
+          ok: 'border-emerald-700/60 text-emerald-200 bg-emerald-500/10',
+          fail: 'border-rose-700/60 text-rose-200 bg-rose-500/10',
+          tag: 'border-slate-800 text-slate-300 bg-slate-950/30',
+        }[variant] || 'border-slate-800 text-slate-300 bg-slate-950/30';
+
+        const span = document.createElement('span');
+        span.className = `${base} ${cls}`;
+        span.textContent = text;
+        return span;
+      }
+
+      function renderTop() {
+        $('healthValue').textContent = state.health?.status ?? '—';
+        $('healthMeta').textContent = `auth: ${state.health?.auth ?? '—'}`;
+
+        $('pluginsValue').textContent = String(state.plugins.length ?? 0);
+
+        $('toolsValue').textContent = String(state.tools.length ?? 0);
+
+        const approxEvents = state.stats?.stats?.totalExecutions ?? state.logs.length;
+        $('auditValue').textContent = String(approxEvents ?? 0);
+
+        const who = state.whoami;
+        const pillEl = $('authPill');
+        if (!who) {
+          pillEl.classList.add('hidden');
+        } else {
+          pillEl.classList.remove('hidden');
+          const scopes = (who?.auth?.scopes ?? []).join(', ') || 'none';
+          pillEl.textContent = `scopes: ${scopes}`;
+        }
+
+        $('toolsHint').textContent = `${state.tools.length} tools across ${state.plugins.length} plugins`;
+      }
+
+      function renderTools() {
+        const q = $('searchInput').value.trim().toLowerCase();
+        const tag = $('tagFilter').value;
+
+        const filtered = state.tools.filter((t) => {
+          const hay = `${t.name} ${t.description || ''} ${t.plugin || ''}`.toLowerCase();
+          if (q && !hay.includes(q)) return false;
+          if (tag && !(t.tags || []).includes(tag)) return false;
+          return true;
+        });
+
+        const tbody = $('toolsTbody');
+        tbody.innerHTML = '';
+
+        for (const t of filtered) {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-slate-950/40 cursor-pointer';
+          tr.addEventListener('click', () => {
+            state.selectedTool = t;
+            renderToolDetails();
+            openToolModal();
+          });
+
+          const tdName = document.createElement('td');
+          tdName.className = 'px-4 py-3 align-top';
+          tdName.innerHTML = `<div class="text-sm font-semibold">${escapeHtml(t.name)}</div><div class="text-xs text-slate-400 mt-0.5">${escapeHtml((t.description || '').slice(0, 120))}</div>`;
+
+          const tdPlugin = document.createElement('td');
+          tdPlugin.className = 'px-4 py-3 align-top text-sm text-slate-300';
+          tdPlugin.textContent = t.plugin || '—';
+
+          const tdMode = document.createElement('td');
+          tdMode.className = 'px-4 py-3 align-top';
+          tdMode.appendChild(pill(toolModeFromTags(t.tags), toolModeFromTags(t.tags)));
+
+          const tdTags = document.createElement('td');
+          tdTags.className = 'px-4 py-3 align-top';
+          const wrap = document.createElement('div');
+          wrap.className = 'flex flex-wrap gap-1';
+          for (const tagName of (t.tags || [])) wrap.appendChild(pill(tagName, 'tag'));
+          tdTags.appendChild(wrap);
+
+          tr.appendChild(tdName);
+          tr.appendChild(tdPlugin);
+          tr.appendChild(tdMode);
+          tr.appendChild(tdTags);
+          tbody.appendChild(tr);
+        }
+      }
+
+      function renderToolDetails() {
+        const t = state.selectedTool;
+        const el = $('toolDetails');
+        if (!t) {
+          el.textContent = 'Select a tool from the list.';
+          const st = $('toolModalSubtitle');
+          if (st) st.textContent = '—';
+          return;
+        }
+
+        const st = $('toolModalSubtitle');
+        if (st) st.textContent = `${t.plugin || '—'} · ${toolModeFromTags(t.tags)}`;
+
+        const schema = t.inputSchema ? JSON.stringify(t.inputSchema, null, 2) : '{}';
+        el.innerHTML = `
+          <div class="flex flex-col gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="text-base font-semibold">${escapeHtml(t.name)}</div>
+              ${pill(t.plugin || '—', 'tag').outerHTML}
+              ${pill(toolModeFromTags(t.tags), toolModeFromTags(t.tags)).outerHTML}
+            </div>
+            <div class="text-sm text-slate-300">${escapeHtml(t.description || '')}</div>
+            <div class="mt-2">
+              <div class="text-xs text-slate-400">inputSchema</div>
+              <pre class="mt-1 overflow-auto rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-200">${escapeHtml(schema)}</pre>
+            </div>
+          </div>
+        `;
+      }
+
+      function renderPlugins() {
+        const q = $('searchInput').value.trim().toLowerCase();
+        const tag = $('tagFilter').value;
+
+        const grid = $('pluginsGrid');
+        grid.innerHTML = '';
+
+        const filtered = state.plugins.filter((p) => {
+          const hay = `${p.name} ${p.description || ''}`.toLowerCase();
+          if (q && !hay.includes(q)) return false;
+          if (!tag) return true;
+          const toolTags = new Set((p.tools || []).flatMap((t) => t.tags || []));
+          return toolTags.has(tag);
+        });
+
+        for (const p of filtered) {
+          const card = document.createElement('div');
+          card.className = 'rounded-xl border border-slate-800 bg-slate-950/30 p-4';
+
+          const toolsCount = (p.tools || []).length;
+          const endpointsCount = (p.endpoints || []).length;
+          card.innerHTML = `
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">${escapeHtml(p.name)} <span class="text-xs text-slate-500 font-normal">${escapeHtml(p.version || '')}</span></div>
+                <div class="mt-1 text-xs text-slate-400">${escapeHtml(p.description || '')}</div>
+              </div>
+              <div class="flex flex-col items-end gap-1">
+                <div class="text-xs text-slate-300">${toolsCount} tools</div>
+                <div class="text-xs text-slate-500">${endpointsCount} endpoints</div>
+              </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-1">
+              ${(p.tools || []).slice(0, 6).map((t) => `<span class="inline-flex items-center rounded-full border border-slate-800 bg-slate-950/40 px-2 py-0.5 text-[11px] text-slate-300">${escapeHtml(t.name)}</span>`).join('')}
+              ${toolsCount > 6 ? `<span class="text-xs text-slate-500">+${toolsCount - 6} more</span>` : ''}
+            </div>
+          `;
+
+          grid.appendChild(card);
+        }
+      }
+
+      function renderLogs() {
+        const q = $('searchInput').value.trim().toLowerCase();
+        const tag = $('tagFilter').value;
+
+        const tbody = $('logsTbody');
+        tbody.innerHTML = '';
+
+        const rows = state.logs.filter((l) => {
+          const toolName = l.toolName || '';
+          if (q && !toolName.toLowerCase().includes(q)) return false;
+          if (!tag) return true;
+          const tool = state.tools.find((t) => t.name === toolName);
+          return tool ? (tool.tags || []).includes(tag) : false;
+        });
+
+        for (const l of rows) {
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-slate-950/40 cursor-pointer';
+
+          const statusOk = !l.failed;
+          const time = l.timestamp ? new Date(l.timestamp).toLocaleString() : '—';
+
+          const tdTime = document.createElement('td');
+          tdTime.className = 'px-4 py-3 text-sm text-slate-300';
+          tdTime.textContent = time;
+
+          const tdTool = document.createElement('td');
+          tdTool.className = 'px-4 py-3 text-sm font-semibold';
+          tdTool.textContent = l.toolName || '—';
+
+          const tdStatus = document.createElement('td');
+          tdStatus.className = 'px-4 py-3';
+          tdStatus.appendChild(pill(statusOk ? 'ok' : 'failed', statusOk ? 'ok' : 'fail'));
+
+          const tdDur = document.createElement('td');
+          tdDur.className = 'px-4 py-3 text-sm text-slate-300';
+          tdDur.textContent = `${l.duration ?? '—'}ms`;
+
+          tr.appendChild(tdTime);
+          tr.appendChild(tdTool);
+          tr.appendChild(tdStatus);
+          tr.appendChild(tdDur);
+
+          tr.addEventListener('click', () => {
+            const next = tr.nextSibling;
+            if (next && next.dataset && next.dataset.kind === 'details') {
+              next.remove();
+              return;
+            }
+
+            const details = document.createElement('tr');
+            details.dataset.kind = 'details';
+            const td = document.createElement('td');
+            td.colSpan = 4;
+            td.className = 'px-4 pb-4';
+
+            const payload = {
+              toolName: l.toolName,
+              projectId: l.projectId,
+              user: l.user,
+              approvalId: l.approvalId,
+              parameters: l.parameters,
+              result: l.result,
+              duration: l.duration,
+            };
+
+            td.innerHTML = `<pre class="overflow-auto rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-200">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+            details.appendChild(td);
+            tr.after(details);
+          });
+
+          tbody.appendChild(tr);
+        }
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;');
+      }
+
+      function setTab(tabName) {
+        state.tab = tabName;
+        const sections = ['tools', 'plugins', 'logs', 'about'];
+        for (const s of sections) {
+          const el = $('tab-' + s);
+          if (!el) continue;
+          el.classList.toggle('hidden', s !== tabName);
+        }
+        for (const btn of document.querySelectorAll('.tabBtn')) {
+          const active = btn.dataset.tab === tabName;
+          btn.classList.toggle('bg-slate-800', active);
+          btn.classList.toggle('bg-slate-900/40', !active);
+        }
+      }
+
+      function buildToolsFromPlugins(plugins) {
+        const out = [];
+        for (const p of plugins) {
+          for (const t of (p.tools || [])) {
+            out.push({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              plugin: p.name,
+              tags: t.tags || [],
+            });
+          }
+        }
+        out.sort((a, b) => a.name.localeCompare(b.name));
+        return out;
+      }
+
+      async function refreshAll() {
+        setBanner(null, null);
+        $('subtitle').textContent = 'Loading…';
+
+        const results = await Promise.allSettled([
+          apiGet('/health'),
+          apiGet('/whoami'),
+          apiGet('/plugins'),
+          apiGet('/audit/stats'),
+          apiGet('/audit/logs?limit=200'),
+        ]);
+
+        const [health, whoami, plugins, stats, logs] = results;
+
+        if (health.status === 'fulfilled') state.health = health.value;
+        if (whoami.status === 'fulfilled') state.whoami = whoami.value;
+        if (plugins.status === 'fulfilled') state.plugins = plugins.value;
+        if (stats.status === 'fulfilled') state.stats = stats.value;
+        if (logs.status === 'fulfilled') state.logs = logs.value?.logs || [];
+
+        const errs = results
+          .filter((r) => r.status === 'rejected')
+          .map((r) => r.reason?.message || String(r.reason));
+
+        if (errs.length) {
+          setBanner('warn', `Some endpoints failed: ${errs.join(' | ')}`);
+        }
+
+        state.tools = buildToolsFromPlugins(state.plugins);
+
+        $('subtitle').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+        renderTop();
+        renderTools();
+        renderToolDetails();
+        renderPlugins();
+        renderLogs();
+      }
+
+      document.querySelectorAll('.tabBtn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          setTab(btn.dataset.tab);
+        });
+      });
+
+      $('searchInput').addEventListener('input', () => {
+        renderTools();
+        renderPlugins();
+        renderLogs();
+      });
+
+      $('tagFilter').addEventListener('change', () => {
+        renderTools();
+        renderPlugins();
+        renderLogs();
+      });
+
+      $('refreshBtn').addEventListener('click', refreshAll);
+
+      const modalClose = $('toolModalClose');
+      if (modalClose) modalClose.addEventListener('click', closeToolModal);
+      const modalBackdrop = $('toolModalBackdrop');
+      if (modalBackdrop) modalBackdrop.addEventListener('click', closeToolModal);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeToolModal();
+      });
+
+      const keyInput = $('apiKeyInput');
+      const savedKey = localStorage.getItem('mcpHubApiKey') || '';
+      if (keyInput) keyInput.value = savedKey;
+
+      const saveBtn = $('saveKeyBtn');
+      if (saveBtn && keyInput) {
+        saveBtn.addEventListener('click', () => {
+          const v = keyInput.value.trim();
+          if (v) localStorage.setItem('mcpHubApiKey', v);
+          else localStorage.removeItem('mcpHubApiKey');
+          refreshAll();
+        });
+      }
+
+      const reqBtn = $('requestTokenBtn');
+      if (reqBtn) {
+        reqBtn.addEventListener('click', async () => {
+          try {
+            reqBtn.disabled = true;
+            reqBtn.textContent = 'Requesting…';
+            const data = await apiPost('/ui/token');
+            const exp = data?.expiresAt ? new Date(data.expiresAt).toLocaleTimeString() : 'soon';
+            if (keyInput && data?.token) keyInput.value = String(data.token);
+            setBanner('warn', `UI code generated. Click Save to use it. Expires around: ${exp}`);
+          } catch (e) {
+            setBanner('warn', `Token request failed: ${e.message}`);
+          } finally {
+            reqBtn.disabled = false;
+            reqBtn.textContent = 'Request token';
+          }
+        });
+      }
+
+      // Auto-request a UI code on first load if none is saved
+      (async () => {
+        try {
+          const existing = localStorage.getItem('mcpHubApiKey') || '';
+          if (existing) return;
+          const data = await apiPost('/ui/token');
+          if (keyInput && data?.token) {
+            keyInput.value = String(data.token);
+            setBanner('warn', 'A short-lived UI code was generated. Click Save to use it.');
+          }
+        } catch {
+          // ignore
+        }
+      })();
+
+      setTab('tools');
+      refreshAll();
+    </script>
+  </body>
+</html>

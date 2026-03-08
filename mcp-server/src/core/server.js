@@ -16,6 +16,7 @@ import { loadPresetsAtStartup, policyGuardrailMiddleware } from "./policy-guard.
 import { getApprovalStore } from "./policy-hooks.js";
 import { callTool } from "./tool-registry.js";
 import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
+import { issueUiTokenWithNotification } from "./ui-tokens.js";
 
 import { workspaceContextMiddleware } from "./workspace.js";
 
@@ -134,7 +135,11 @@ function projectContextMiddleware(req, res, next) {
   const headerEnv = req.headers["x-env"]?.trim();
 
   // Check if headers are required (production multi-tenant mode)
-  if (config.projectContext.requireHeaders) {
+  const requireHeaders =
+    process.env.REQUIRE_PROJECT_HEADERS === "true" ||
+    config?.projectContext?.requireHeaders === true;
+
+  if (requireHeaders) {
     if (!headerProjectId || !headerEnv) {
       return res.status(400).json({
         ok: false,
@@ -150,8 +155,14 @@ function projectContextMiddleware(req, res, next) {
   }
 
   // Development/local mode: use defaults if headers missing
-  const defaultProjectId = config.projectContext.defaults.projectId;
-  const defaultEnv = config.projectContext.defaults.env;
+  const defaultProjectId =
+    config?.projectContext?.defaults?.projectId ||
+    process.env.DEFAULT_PROJECT_ID ||
+    "default-project";
+  const defaultEnv =
+    config?.projectContext?.defaults?.env ||
+    process.env.DEFAULT_ENV ||
+    "default-env";
 
   req.projectId = headerProjectId || defaultProjectId;
   req.projectEnv = headerEnv || defaultEnv;
@@ -503,6 +514,51 @@ export async function createServer() {
   // ── Landing Page (Public) ─────────────────────────────────────────────────
 
   const __dirname = dirname(fileURLToPath(import.meta.url));
+
+  // ── Web UI Panel ──────────────────────────────────────────────────────────
+
+  app.get(["/ui", "/ui/"], (req, res) => {
+    const uiIndexPath = join(__dirname, "..", "public", "ui", "index.html");
+    if (!existsSync(uiIndexPath)) {
+      return res.status(404).json({ ok: false, error: "UI not found" });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(uiIndexPath);
+  });
+
+  app.post("/ui/token", (req, res) => {
+    const ip = req.ip || "";
+    const isLocal = ip === "127.0.0.1" || ip === "::1" || ip.endsWith("::ffff:127.0.0.1");
+    if (!isLocal) {
+      return res.status(403).json({
+        ok: false,
+        error: { code: "forbidden", message: "UI token issuance is only allowed from localhost" },
+        meta: { requestId: req.requestId },
+      });
+    }
+
+    const ttlMs = Number(process.env.UI_TOKEN_TTL_MS) || 5 * 60 * 1000;
+    issueUiTokenWithNotification({ ttlMs })
+      .then(({ token, expiresAt }) => {
+        res.json({
+          ok: true,
+          data: {
+            token,
+            expiresAt,
+            ttlMs,
+            delivery: "notification",
+          },
+          meta: { requestId: req.requestId },
+        });
+      })
+      .catch((err) => {
+        res.status(500).json({
+          ok: false,
+          error: { code: "token_issue_failed", message: err.message },
+          meta: { requestId: req.requestId },
+        });
+      });
+  });
 
   // Serve landing page static files
   app.get("/landing/styles.css", (req, res) => {

@@ -26,6 +26,8 @@ npm start       # Production
 | `/health` | GET | Sağlık kontrolü |
 | `/plugins` | GET | Yüklenen plugin'leri listele |
 | `/whoami` | GET | Auth bilgisi |
+| `/ui` | GET | Web panel (dashboard) |
+| `/ui/token` | POST | Kısa ömürlü UI kodu üret (yalnızca localhost) |
 
 ### Jobs
 
@@ -70,6 +72,26 @@ export const register = (app) => { ... };
 | `REQUIRE_PROJECT_HEADERS` | false | Proje context header zorunluluğu |
 | `DEFAULT_PROJECT_ID` | default-project | Varsayılan proje ID |
 | `DEFAULT_ENV` | default-env | Varsayılan ortam |
+| `UI_TOKEN_TTL_MS` | 300000 | UI kod geçerlilik süresi (ms) |
+
+## Web Panel (/ui)
+
+Sunucu çalışırken şu adresten web paneli açabilirsiniz:
+
+`http://localhost:8787/ui`
+
+### UI Auth (Kısa ömürlü kod)
+
+Auth etkinse (HUB_* key'leri set ise) panelin API çağrıları `read` scope gerektirir. Panel için uzun ömürlü HUB key'lerini tarayıcıya koymak yerine kısa ömürlü bir UI kodu kullanabilirsiniz:
+
+1. `/ui` sayfasını açın.
+2. Panel otomatik olarak `POST /ui/token` çağırıp 6 haneli UI kodu üretir (yalnızca localhost).
+3. Üretilen kodu üstteki alana kaydedin (Save). Panel bundan sonra API çağrılarında `Authorization: Bearer <kod>` kullanır.
+
+Notlar:
+
+- UI kodları sadece `read` scope verir.
+- Kodlar TTL sonunda geçersiz olur. Süreyi `UI_TOKEN_TTL_MS` ile değiştirebilirsiniz.
 
 ## Test
 

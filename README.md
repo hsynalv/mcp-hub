@@ -20,6 +20,14 @@ cp .env.example .env
 npm run dev
 ```
 
+## Web Panel (/ui)
+
+Sunucu çalışırken web panel:
+
+`http://localhost:8787/ui`
+
+Auth etkinse panel, 6 haneli kısa ömürlü bir UI kodu ile `read` scope yetkisi alabilir (localhost üzerinden `POST /ui/token`). Detaylar: `mcp-server/README.md`.
+
 ## Plugin Maturity Matrix
 
 | Plugin | Owner | Status | Auth | Tests | Docs | Production Ready |

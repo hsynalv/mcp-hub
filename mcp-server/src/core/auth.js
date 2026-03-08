@@ -13,6 +13,8 @@
  * If no keys are configured the server runs in open mode (dev-friendly).
  */
 
+import { validateUiToken } from "./ui-tokens.js";
+
 const SCOPE_HIERARCHY = ["read", "write", "admin"];
 
 function normalizeScope(scope) {
@@ -69,6 +71,33 @@ export function requireScope(scope = "read") {
           message: "Authorization header required. Use: Authorization: Bearer <HUB_API_KEY>",
         },
       });
+    }
+
+    // Allow short-lived UI session tokens (read-only)
+    const uiToken = validateUiToken(key);
+    if (uiToken.ok) {
+      const scopes = ["read"];
+      const requiredIndex = SCOPE_HIERARCHY.indexOf(requiredScope);
+      const hasScope = scopes.some(
+        (s) => SCOPE_HIERARCHY.indexOf(normalizeScope(s)) >= requiredIndex
+      );
+
+      if (!hasScope) {
+        return res.status(403).json({
+          ok: false,
+          error: {
+            code: "forbidden",
+            message: `This endpoint requires '${scope}' scope. UI tokens are read-only.`,
+          },
+        });
+      }
+
+      req.authScopes = scopes;
+      req.actor = {
+        type: "ui_token",
+        scopes: req.authScopes,
+      };
+      return next();
     }
 
     const keyMap = getKeyMap();
