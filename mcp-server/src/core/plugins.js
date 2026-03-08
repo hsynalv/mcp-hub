@@ -3,6 +3,7 @@ import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { config } from "./config.js";
 import { registerTool } from "./tool-registry.js";
+import { validatePluginMeta, getQualitySummary } from "./plugin-meta.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGINS_DIR = join(__dirname, "../plugins");
@@ -67,7 +68,25 @@ export async function loadPlugins(app) {
       continue;
     }
 
+    const pluginDir = join(PLUGINS_DIR, dir);
     const url = pathToFileURL(pluginIndexPath).href;
+
+    // Validate plugin metadata
+    const metaValidation = validatePluginMeta(pluginDir, dir);
+    if (!metaValidation.valid) {
+      const reason = `invalid metadata: ${metaValidation.errors.join("; ")}`;
+      console.warn(`[plugins] "${dir}" ${reason}`);
+      failedPlugins.push({ name: dir, reason, errors: metaValidation.errors });
+      stats.pluginsFailed++;
+      continue;
+    }
+
+    // Log warnings if any
+    for (const warning of metaValidation.warnings) {
+      console.warn(`[plugins] "${dir}" warning: ${warning}`);
+    }
+
+    const pluginMeta = metaValidation.meta;
     let plugin;
     try {
       plugin = await import(url);
@@ -131,6 +150,15 @@ export async function loadPlugins(app) {
       })) ?? [],
       requires:     plugin.requires     ?? [],
       examples:     plugin.examples     ?? [],
+      // Include metadata from plugin.meta.json
+      status:       pluginMeta.status,
+      owner:        pluginMeta.owner,
+      testLevel:    pluginMeta.testLevel,
+      requiresAuth: pluginMeta.requiresAuth,
+      supportsJobs: pluginMeta.supportsJobs,
+      resilience:   pluginMeta.resilience,
+      security:     pluginMeta.security,
+      documentation: pluginMeta.documentation,
     };
 
     loaded.push(manifest);
@@ -140,6 +168,10 @@ export async function loadPlugins(app) {
 
   // Print startup validation summary with diagnostics
   printStartupSummary();
+
+  // Print quality summary
+  const qualitySummary = getQualitySummary(loaded);
+  printQualitySummary(qualitySummary);
 
   // STRICT mode: fail startup if any plugin failed
   if (process.env.PLUGIN_STRICT_MODE === "true" && failedPlugins.length > 0) {
@@ -172,6 +204,26 @@ function printStartupSummary() {
     console.log("Failed Plugins: none");
   }
 
+  console.log("");
+}
+
+/**
+ * Print plugin quality summary
+ */
+function printQualitySummary(summary) {
+  console.log("Plugin Quality Summary:");
+  console.log(`  Total: ${summary.total}`);
+  console.log(`  By Status: stable=${summary.byStatus.stable}, beta=${summary.byStatus.beta}, experimental=${summary.byStatus.experimental}`);
+  console.log(`  By Test Level: none=${summary.byTestLevel.none}, unit=${summary.byTestLevel.unit}, integration=${summary.byTestLevel.integration}, e2e=${summary.byTestLevel.e2e}`);
+  console.log(`  Features: auth=${summary.authRequired}, jobs=${summary.supportsJobs}, resilience=${summary.withResilience}`);
+  
+  if (summary.issues.length > 0) {
+    console.log("  Issues:");
+    for (const issue of summary.issues) {
+      console.log(`    - [${issue.severity}] ${issue.plugin}: ${issue.message}`);
+    }
+  }
+  
   console.log("");
 }
 

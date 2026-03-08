@@ -1,0 +1,53 @@
+{
+  "name": "notion",
+  "version": "1.0.0",
+  "status": "stable",
+  "owner": "hsynalv",
+  "description": "Notion API integration for pages, databases, projects and tasks",
+  "requiresAuth": true,
+  "supportsJobs": false,
+  "supportsStreaming": false,
+  "testLevel": "unit",
+  "resilience": {
+    "retry": true,
+    "timeout": 30000,
+    "circuitBreaker": false
+  },
+  "security": {
+    "scope": "write",
+    "dangerousCombinations": ["shell"],
+    "requiresApproval": false
+  },
+  "performance": {
+    "avgResponseTimeMs": 2000,
+    "maxConcurrent": 10
+  },
+  "documentation": {
+    "readme": true,
+    "examples": true,
+    "apiReference": true
+  },
+  "dependencies": [],
+  "envVars": [
+    {
+      "name": "NOTION_API_KEY",
+      "required": true,
+      "description": "Notion integration token"
+    },
+    {
+      "name": "NOTION_ROOT_PAGE_ID",
+      "required": false,
+      "description": "Default parent page ID for new pages"
+    },
+    {
+      "name": "NOTION_PROJECTS_DB_ID",
+      "required": false,
+      "description": "Projects database ID"
+    },
+    {
+      "name": "NOTION_TASKS_DB_ID",
+      "required": false,
+      "description": "Tasks database ID"
+    }
+  ]
+}

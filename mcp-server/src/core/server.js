@@ -17,6 +17,8 @@ import { getApprovalStore } from "./policy-hooks.js";
 import { callTool } from "./tool-registry.js";
 import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
 
+import { workspaceContextMiddleware } from "./workspace.js";
+
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -95,6 +97,21 @@ function responseEnvelopeMiddleware(req, res, next) {
 }
 
 /**
+ * Correlation ID Middleware
+ * Generates or extracts correlation ID for request tracing
+ */
+function correlationIdMiddleware(req, res, next) {
+  // Use provided correlation ID or generate new one
+  req.correlationId = req.headers["x-correlation-id"] || `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  req.requestId = req.correlationId; // Compatibility with existing code
+  
+  // Expose correlation ID in response
+  res.setHeader("x-correlation-id", req.correlationId);
+  
+  next();
+}
+
+/**
  * Project Context Middleware
  *
  * Behavior:
@@ -157,7 +174,9 @@ export async function createServer() {
   app.use(morgan("dev"));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use(correlationIdMiddleware);
   app.use(projectContextMiddleware);
+  app.use(workspaceContextMiddleware);
   app.use(auditMiddleware);
   app.use(responseEnvelopeMiddleware);
   app.use(policyGuardrailMiddleware);

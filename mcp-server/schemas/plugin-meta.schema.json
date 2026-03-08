@@ -1,0 +1,144 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP-Hub Plugin Metadata",
+  "description": "Schema for plugin quality and maturity metadata",
+  "type": "object",
+  "required": ["name", "version", "status", "owner"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Plugin identifier (must match folder name)"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semver version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["stable", "beta", "experimental"],
+      "description": "Plugin maturity level"
+    },
+    "owner": {
+      "type": "string",
+      "description": "GitHub username or team responsible for plugin"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of plugin purpose"
+    },
+    "requiresAuth": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether plugin requires authentication"
+    },
+    "supportsJobs": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether plugin supports async job execution"
+    },
+    "supportsStreaming": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether plugin supports streaming responses"
+    },
+    "testLevel": {
+      "type": "string",
+      "enum": ["none", "unit", "integration", "e2e"],
+      "default": "none",
+      "description": "Current test coverage level"
+    },
+    "resilience": {
+      "type": "object",
+      "properties": {
+        "retry": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether plugin implements retry logic"
+        },
+        "timeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Default timeout in milliseconds"
+        },
+        "circuitBreaker": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether plugin uses circuit breaker"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": ["read", "write", "admin"],
+          "default": "read",
+          "description": "Minimum required auth scope"
+        },
+        "dangerousCombinations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tool names that should not be chained with this plugin"
+        },
+        "requiresApproval": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether plugin requires human approval"
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "properties": {
+        "avgResponseTimeMs": {
+          "type": "number",
+          "description": "Average response time in milliseconds"
+        },
+        "maxConcurrent": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum concurrent requests"
+        }
+      }
+    },
+    "documentation": {
+      "type": "object",
+      "properties": {
+        "readme": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether README.md exists"
+        },
+        "examples": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether usage examples are documented"
+        },
+        "apiReference": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether API reference is documented"
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Other plugins this plugin depends on"
+    },
+    "envVars": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "required": { "type": "boolean", "default": true },
+          "description": { "type": "string" }
+        }
+      },
+      "description": "Environment variables required by plugin"
+    }
+  }
+}

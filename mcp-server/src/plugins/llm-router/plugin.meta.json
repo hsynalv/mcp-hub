@@ -1,0 +1,58 @@
+{
+  "name": "llm-router",
+  "version": "1.0.0",
+  "status": "stable",
+  "owner": "hsynalv",
+  "description": "Multi-LLM routing with cost optimization, fallback chains, and provider selection",
+  "requiresAuth": false,
+  "supportsJobs": true,
+  "supportsStreaming": false,
+  "testLevel": "unit",
+  "resilience": {
+    "retry": true,
+    "timeout": 60000,
+    "circuitBreaker": true
+  },
+  "security": {
+    "scope": "read",
+    "dangerousCombinations": [],
+    "requiresApproval": false
+  },
+  "performance": {
+    "avgResponseTimeMs": 5000,
+    "maxConcurrent": 50
+  },
+  "documentation": {
+    "readme": true,
+    "examples": true,
+    "apiReference": true
+  },
+  "dependencies": [],
+  "envVars": [
+    {
+      "name": "OPENAI_API_KEY",
+      "required": false,
+      "description": "OpenAI API key for GPT models"
+    },
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "required": false,
+      "description": "Anthropic API key for Claude models"
+    },
+    {
+      "name": "GOOGLE_API_KEY",
+      "required": false,
+      "description": "Google API key for Gemini models"
+    },
+    {
+      "name": "MISTRAL_API_KEY",
+      "required": false,
+      "description": "Mistral API key"
+    },
+    {
+      "name": "OLLAMA_BASE_URL",
+      "required": false,
+      "description": "Ollama local server URL"
+    }
+  ]
+}

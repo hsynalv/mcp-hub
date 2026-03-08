@@ -14,6 +14,22 @@ export default defineConfig({
         "cache/",
         "**/*.config.{js,ts}",
       ],
+      thresholds: {
+        // Core modules - strict requirements
+        "src/core/**/*.js": {
+          branches: 85,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
+        // Plugin entry points - moderate requirements
+        "src/plugins/*/index.js": {
+          branches: 60,
+          functions: 70,
+          lines: 75,
+          statements: 75,
+        },
+      },
     },
     pool: "forks",
   },
