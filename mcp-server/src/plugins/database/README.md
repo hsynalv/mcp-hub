@@ -1,32 +1,32 @@
 # Database Plugin
 
-MSSQL, PostgreSQL ve MongoDB için birleşik veritabanı API'si.
+Veritabanı sorgu desteği.
 
-## Bağlantı
+## Desteklenen Veritabanları
 
-| Type | Env |
-|------|-----|
-| `postgres` | `PG_CONNECTION_STRING` veya `PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE` |
-| `mssql` | `MSSQL_CONNECTION_STRING` veya `MSSQL_HOST`, `MSSQL_USER`, `MSSQL_PASSWORD`, `MSSQL_DATABASE` |
-| `mongodb` | `MONGODB_URI` |
+- PostgreSQL
+- Microsoft SQL Server
+- MongoDB
 
-## Endpoint'ler
+## Endpoints
 
-- `GET /database/tables?type=` — Tablo/collection listesi
-- `GET /database/tables/:name/schema?type=` — Şema (sütunlar, primary key)
-- `POST /database/query` — Raw SQL (pg: $1,$2; mssql: @p0,@p1) veya MongoDB aggregation
-- `POST /database/crud/insert` — `{ type, table, data }`
-- `POST /database/crud/select` — `{ type, table, where?, limit? }`
-- `POST /database/crud/update` — `{ type, table, where, data }`
-- `POST /database/crud/delete` — `{ type, table, where }`
-- `GET /database/health`
+| Endpoint | Method | Açıklama |
+|----------|--------|----------|
+| `/database/query` | POST | SQL/NoSQL sorgu çalıştır |
+| `/database/connections` | GET | Bağlantı durumu |
 
-## MongoDB Query
+## MCP Araçları
 
-```json
-{ "type": "mongodb", "query": { "collection": "users", "pipeline": [{ "$limit": 10 }] } }
-```
-veya
-```json
-{ "type": "mongodb", "query": { "collection": "users", "filter": { "active": true }, "options": { "limit": 10 } } }
+| Araç | Açıklama |
+|------|----------|
+| `database_query` | SQL/NoSQL sorgu çalıştır |
+| `database_list_tables` | Tabloları listele |
+| `database_describe_table` | Tablo şemasını al |
+
+## Konfigürasyon
+
+```env
+PG_CONNECTION_STRING=postgresql://...
+MSSQL_CONNECTION_STRING=Server=...;Database=...;...
+MONGODB_URI=mongodb://...
 ```

@@ -1,276 +1,49 @@
-# Debug Module
+# Core Module
 
-Enhanced debugging utilities for MCP Hub development.
+Core modülleri plugin sistemi için temel altyapı sağlar.
 
-## Overview
+## Modüller
 
-The Debug Module provides comprehensive debugging capabilities:
-- **Request Tracing**: Log all HTTP requests with timing
-- **Tool Tracing**: Track MCP tool execution
-- **Performance Profiling**: Measure function execution time
-- **Colorized Output**: Easy-to-read terminal output
-- **Assertion Helpers**: Debug-only assertions
+| Modül | Açıklama |
+|-------|----------|
+| `auth.js` | API key auth ve scope yönetimi |
+| `config.js` | Çevre değişkenleri ve config |
+| `errors.js` | Hata sınıfları (AppError, NotFoundError) |
+| `jobs.js` | Job kuyruğu ve runner yönetimi |
+| `plugins.js` | Plugin loader ve discovery |
+| `server.js` | Express server ve middleware |
+| `tool-registry.js` | MCP tool kayıt ve yönetimi |
+| `tool-hooks.js` | Hook registration sistemi |
+| `audit.js` | Audit log ve istatistikler |
 
-## Features
+## Auth Scopes
 
-| Feature | Description |
-|---------|-------------|
-| Request Tracing | Log HTTP method, path, status, duration |
-| Tool Tracing | Track plugin tool calls with params and results |
-| Performance Profiler | Measure execution time with checkpoints |
-| Colorized Logs | Terminal-friendly colored output |
-| Debug Assertions | Assertions that only run in debug mode |
+- `read` - Okuma operasyonları
+- `write` - Yazma/değişiklik operasyonları  
+- `admin` - Yönetim operasyonları
 
-## Usage
-
-### Enable Debug Mode
-
-```bash
-# Environment variable
-DEBUG=true npm start
-
-# Or in code
-import { setDebug } from './debug.js';
-setDebug(true, { traceRequests: true, traceTools: true });
-```
-
-### Request Tracing Middleware
+## Tool Registration
 
 ```javascript
-import { requestTracer } from './debug.js';
+import { registerTool } from "./tool-registry.js";
 
-app.use(requestTracer());
-```
-
-**Output:**
-```
-[14:32:15.123] [DEBUG] → GET /health
-[14:32:15.146] [INFO]  ← GET /health 200 23ms
-```
-
-### Tool Execution Tracing
-
-```javascript
-import { traceToolExecution } from './debug.js';
-
-const wrappedHandler = traceToolExecution('github', 'analyze_repo', handler);
-const result = await wrappedHandler(params);
-```
-
-**Output:**
-```
-[14:32:20.456] [DEBUG] ▶ github.analyze_repo()
-[14:32:25.789] [SUCCESS] ✓ github.analyze_repo() 5231ms
-```
-
-### Performance Profiler
-
-```javascript
-import { Profiler } from './debug.js';
-
-const profiler = new Profiler('Database Query').start();
-
-// ... do work ...
-profiler.checkpoint('connected');
-
-// ... more work ...
-profiler.checkpoint('queried');
-
-const total = profiler.end();
-// Output: ⏹ Database Query completed 2450ms
-```
-
-### Measure Function Execution
-
-```javascript
-import { measure } from './debug.js';
-
-const measuredFn = measure('expensiveOperation', async (data) => {
-  // Your code here
-  return result;
-});
-
-const result = await measuredFn(data);
-```
-
-### Debug Assertions
-
-```javascript
-import { assert } from './debug.js';
-
-assert(user !== null, 'User must be authenticated');
-assert(result.length > 0, 'Result must not be empty');
-```
-
-## Configuration Options
-
-```javascript
-setDebug(true, {
-  traceRequests: true,      // Log HTTP requests
-  traceTools: true,         // Log tool calls
-  profilePerformance: true, // Enable profiling
-  logLevel: 'debug',        // debug, info, warn, error
-  output: process.stdout    // Output stream
+registerTool({
+  name: "my_tool",
+  description: "Tool açıklaması",
+  tags: ["READ"],
+  handler: async (args) => {
+    return { result: "ok" };
+  }
 });
 ```
 
-## Debug Information Endpoint
+## Hook Sistemi
 
 ```javascript
-import { getDebugInfo } from './debug.js';
+import { registerBeforeExecutionHook } from "./tool-hooks.js";
 
-app.get('/debug/info', (req, res) => {
-  res.json(getDebugInfo());
+registerBeforeExecutionHook("my-hook", (toolName, args) => {
+  // Tool çalışmadan önce
+  return { allowed: true };
 });
 ```
-
-**Returns:**
-```json
-{
-  "state": {
-    "enabled": true,
-    "traceRequests": true,
-    "traceTools": true
-  },
-  "requestCount": 42,
-  "toolCallCount": 15,
-  "recentRequests": [...],
-  "recentTools": [...],
-  "performanceMetrics": [...]
-}
-```
-
-## CLI Integration
-
-Use via the MCP CLI:
-
-```bash
-node bin/mcp-cli.js
-
-mcp> debug on
-✓ Debug mode enabled
-
-mcp> debug off
-✓ Debug mode disabled
-```
-
-## API Reference
-
-### `setDebug(enabled, options)`
-Enable or disable debug mode.
-
-### `isDebug()`
-Check if debug mode is enabled.
-
-### `requestTracer()`
-Express middleware for request tracing.
-
-### `traceToolExecution(plugin, tool, handler)`
-Wrap a tool handler with tracing.
-
-### `Profiler`
-Class for performance profiling.
-- `start()` - Start profiling
-- `checkpoint(label)` - Add checkpoint
-- `end()` - End profiling and return total time
-
-### `measure(name, fn)`
-Wrap a function with performance measurement.
-
-### `assert(condition, message)`
-Debug-only assertion.
-
-### `inspect(obj, depth)`
-Pretty print object for debugging.
-
-### `getDebugInfo()`
-Get comprehensive debug information.
-
-### `clearDebugData()`
-Clear all debug traces and metrics.
-
-## Color Scheme
-
-| Level | Color | Usage |
-|-------|-------|-------|
-| DEBUG | Gray | Detailed tracing |
-| INFO | Blue | General information |
-| WARN | Yellow | Warnings |
-| ERROR | Red | Errors |
-| SUCCESS | Green | Successful operations |
-
-## Core Architecture
-
-The core layer provides the foundation for the plugin system:
-
-### Core Modules
-
-| Module | Purpose |
-|--------|---------|
-| `server.js` | Express server, middleware chain, route registration |
-| `plugins.js` | Dynamic plugin discovery, loading, and lifecycle management |
-| `tool-registry.js` | MCP tool registration, validation, and execution |
-| `policy-hooks.js` | Extension points for policy system (breaks core→plugin dependency) |
-| `jobs/` | Job queue system: `index.js`, `queue.js`, `worker.js` |
-| `auth.js` | API key authentication and scope management |
-| `audit.js` | Request auditing and logging |
-| `config.js` | Centralized configuration from environment variables |
-| `errors.js` | Application error classes |
-| `validate.js` | Request validation utilities |
-
-### Plugin System
-
-Plugins are auto-discovered from `src/plugins/`:
-
-```
-src/plugins/
-├── github/           # GitHub integration
-├── notion/           # Notion workspace management
-├── policy/           # Rule engine and approval system
-├── llm-router/       # Multi-provider LLM routing
-├── database/         # MSSQL, PostgreSQL, MongoDB
-├── file-storage/     # S3, Google Drive, local storage
-├── jobs/             # Job queue handlers
-├── n8n*/            # n8n integration (optional)
-└── ...
-```
-
-Each plugin exports:
-- `name` - Plugin identifier
-- `version` - Semver version
-- `register(app)` - Route and tool registration (can be async)
-- Optional: `description`, `capabilities`, `endpoints`, `tools`, `requires`
-
-### Job Queue
-
-In-memory queue with Redis fallback:
-
-```javascript
-import { registerJobHandler } from './core/jobs/index.js';
-
-// Register a job handler
-registerJobHandler("rag.index", async (job, updateProgress, log) => {
-  await log("Starting indexing...");
-  await updateProgress(50);
-  // ... do work ...
-  await updateProgress(100);
-  return { indexed: 42 };
-});
-```
-
-Job states: `queued` → `running` → `completed` | `failed` | `cancelled`
-
-### Project Context
-
-Middleware provides project context via headers:
-- `x-project-id` - Project identifier
-- `x-env` - Environment (dev|staging|prod)
-
-Development fallbacks: If headers are missing in development mode, defaults to `default-project`/`default-env`.
-
-## Best Practices
-
-1. **Production**: Always disable debug mode in production
-2. **Sensitive Data**: Don't log sensitive information (use maskBody)
-3. **Performance**: Profiling adds overhead, use sparingly in production
-4. **Logs**: Redirect logs to files for long-running processes
