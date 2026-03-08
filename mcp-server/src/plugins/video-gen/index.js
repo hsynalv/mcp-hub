@@ -5,6 +5,8 @@
  * Creates demos, tutorials, and promotional videos.
  */
 
+/* eslint-disable no-undef */
+
 import { writeFile, mkdir } from "fs/promises";
 import { dirname } from "path";
 

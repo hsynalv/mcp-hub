@@ -7,6 +7,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import crypto from "crypto";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createJob } from "../../core/jobs.js";
 import { setDraft, getDraft, deleteDraft } from "../../core/redis.js";

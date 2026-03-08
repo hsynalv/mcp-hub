@@ -1,5 +1,3 @@
-import { config } from "../../core/config.js";
-
 // Slack Bot Token - should start with "xoxb-"
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
 
@@ -22,7 +20,7 @@ export async function slackRequest(method, endpoint, params = {}, isFileUpload =
       };
     }
 
-    const url = `https://slack.com/api/${endpoint}`;
+    let url = `https://slack.com/api/${endpoint}`;
     
     // Prepare request options
     const options = {

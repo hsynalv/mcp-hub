@@ -13,7 +13,7 @@ const compat = new FlatCompat({
 
 export default [
   {
-    ignores: ["node_modules/", "cache/", "dist/", "*.log"],
+    ignores: ["node_modules/", "cache/", "dist/", "*.log", "src/public/"],
   },
   ...compat.extends("eslint:recommended", "prettier"),
   {
@@ -21,6 +21,7 @@ export default [
       ecmaVersion: 2022,
       sourceType: "module",
       globals: {
+        // Node.js
         console: "readonly",
         process: "readonly",
         Buffer: "readonly",
@@ -31,14 +32,41 @@ export default [
         global: "readonly",
         __dirname: "readonly",
         __filename: "readonly",
+        // Node.js 18+ globals
+        fetch: "readonly",
+        FormData: "readonly",
+        URLSearchParams: "readonly",
+        Headers: "readonly",
+        Request: "readonly",
+        Response: "readonly",
+        AbortSignal: "readonly",
+        crypto: "readonly",
+        // Testing globals
+        describe: "readonly",
+        it: "readonly",
+        expect: "readonly",
+        beforeAll: "readonly",
+        afterAll: "readonly",
+        beforeEach: "readonly",
+        afterEach: "readonly",
+        jest: "readonly",
       },
     },
     rules: {
-      "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      "no-unused-vars": ["warn", { argsIgnorePattern: "^_,^", varsIgnorePattern: "^_,^" }],
       "no-console": "off",
       "no-undef": "error",
       "prefer-const": "warn",
       "no-var": "error",
+      "no-useless-escape": "warn",
+      "no-case-declarations": "off",
+    },
+  },
+  // Shell plugin - allow require for dynamic imports
+  {
+    files: ["src/plugins/shell/index.js"],
+    rules: {
+      "no-undef": "off",
     },
   },
 ];

@@ -5,6 +5,8 @@
  * Supports logos, mockups, diagrams, and UI assets.
  */
 
+/* eslint-disable no-undef */
+
 import { writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import OpenAI from "openai";

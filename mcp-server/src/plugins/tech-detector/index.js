@@ -357,7 +357,7 @@ export async function detectStack(projectPath) {
   try {
     const reqContent = await readFile(join(projectPath, "requirements.txt"), "utf-8");
     pythonDeps = reqContent.split("\n").filter(l => l.trim() && !l.startsWith("#"));
-  } catch {}
+  } catch { /* ignore */ }
 
   // Read pyproject.toml if exists
   let pyprojectDeps = [];
@@ -366,7 +366,7 @@ export async function detectStack(projectPath) {
     if (pyproject?.tool?.poetry?.dependencies) {
       pyprojectDeps = Object.keys(pyproject.tool.poetry.dependencies);
     }
-  } catch {}
+  } catch { /* ignore */ }
 
   // Check each detection pattern
   for (const [tech, pattern] of Object.entries(DETECTION_PATTERNS)) {

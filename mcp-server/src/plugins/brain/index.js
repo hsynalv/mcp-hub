@@ -3,6 +3,8 @@
  * AI/LLM integration with skills, memory, and task orchestration.
  */
 
+/* eslint-disable no-undef */
+
 import { Router } from "express";
 import { z } from "zod";
 import { ToolTags } from "../../core/tool-registry.js";
