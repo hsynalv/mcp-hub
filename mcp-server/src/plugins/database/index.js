@@ -362,11 +362,13 @@ export function register(app) {
       // MongoDB object queries
       if (typeof query === "object" && type === "mongodb") {
         // Check if MongoDB query contains write operations
+        // Only $merge and $out are true write stages (write to new collection)
+        // $set and $unset are transformation/projection stages (read-only pipeline transforms)
         const hasWriteStages = query.pipeline && Array.isArray(query.pipeline) &&
           query.pipeline.some(stage => {
             const stageKeys = Object.keys(stage || {});
-            return stageKeys.includes("$merge") || stageKeys.includes("$out") ||
-              stageKeys.includes("$set") || stageKeys.includes("$unset");
+            // $merge and $out write to collections - these are destructive
+            return stageKeys.includes("$merge") || stageKeys.includes("$out");
           });
 
         const isWriteOp = hasWriteStages || query.operation &&

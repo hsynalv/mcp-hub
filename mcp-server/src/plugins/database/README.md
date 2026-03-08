@@ -173,10 +173,12 @@ DATABASE_MAX_DOCUMENT_COUNT=1000            # Default: 1000 - Max documents per 
 ### MongoDB
 - Uses MongoDB native driver with connection pool
 - Query timeout via `maxTimeMS` per operation
-- **Write Stage Detection**: Aggregation pipelines with `$merge`, `$out`, `$set`, `$unset` are treated as write operations
+- **Write Stage Detection**: Only `$merge` and `$out` are treated as write operations (write to new collections)
+- **Transformation Stages**: `$set` and `$unset` are read-only pipeline transformations (like computed columns / projection)
 - **Server Selection Timeout**: Time to select a server from the replica set
 - **Socket Timeout**: Time to wait for socket operations
 - **Wait Queue Timeout**: Time to wait for a connection from the pool
+- **Byte-Size Limit**: Results limited by both document count (1000) and payload size (10MB)
 
 ## Error Reference
 

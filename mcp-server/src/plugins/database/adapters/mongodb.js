@@ -27,6 +27,49 @@ const SOCKET_TIMEOUT_MS = dbConfig.socketTimeoutMs || 30000;
 
 // Result size limits
 const MAX_DOCUMENT_COUNT = dbConfig.maxDocumentCount || 1000;
+const MAX_RESULT_SIZE_BYTES = dbConfig.maxResultSizeBytes || 10 * 1024 * 1024; // 10MB default
+const MAX_RESULT_SIZE_MB = MAX_RESULT_SIZE_BYTES / (1024 * 1024);
+
+/**
+ * Calculate BSON byte size of documents
+ * Rough estimation: JSON.stringify + BSON overhead
+ */
+function calculateByteSize(docs) {
+  if (!Array.isArray(docs)) docs = [docs];
+  if (docs.length === 0) return 0;
+
+  const jsonStr = JSON.stringify(docs);
+  // Add ~20% overhead for BSON type markers and field names
+  return Math.ceil(Buffer.byteLength(jsonStr, "utf8") * 1.2);
+}
+
+/**
+ * Apply byte size limit to result array
+ * Returns truncated result with metadata if limit exceeded
+ */
+function applyByteSizeLimit(rows) {
+  const sizeBytes = calculateByteSize(rows);
+
+  if (sizeBytes > MAX_RESULT_SIZE_BYTES) {
+    // Calculate how many documents to keep (rough estimate)
+    const avgDocSize = sizeBytes / rows.length;
+    const keepCount = Math.floor(MAX_RESULT_SIZE_BYTES / avgDocSize * 0.9); // 90% safety margin
+    const truncatedRows = rows.slice(0, Math.max(1, keepCount));
+
+    return {
+      rows: truncatedRows,
+      rowCount: truncatedRows.length,
+      _truncated: true,
+      _sizeLimitBytes: MAX_RESULT_SIZE_BYTES,
+      _sizeLimitMb: MAX_RESULT_SIZE_MB,
+      _actualSizeBytes: sizeBytes,
+      _actualSizeMb: (sizeBytes / (1024 * 1024)).toFixed(2),
+      _originalRowCount: rows.length,
+    };
+  }
+
+  return { rows, rowCount: rows.length, _truncated: false, sizeBytes };
+}
 
 /**
  * Get MongoDB client with production-safe options
@@ -82,13 +125,6 @@ function applyQueryTimeout(cursorOrOperation) {
   return cursorOrOperation;
 }
 
-/**
- * Limit result set for safety
- */
-function limitResultSet(cursor, limit = MAX_DOCUMENT_COUNT) {
-  return cursor.limit(limit);
-}
-
 export default {
   // Connection and pool info for monitoring
   getConnectionInfo() {
@@ -141,9 +177,21 @@ export default {
     if (spec.collection && spec.pipeline) {
       const col = d.collection(spec.collection);
       const cursor = col.aggregate(spec.pipeline, { maxTimeMS });
-      limitResultSet(cursor, limit);
+      cursor.limit(limit);
       const rows = await cursor.toArray();
-      return { rows, rowCount: rows.length };
+      const result = applyByteSizeLimit(rows);
+      return {
+        rows: result.rows,
+        rowCount: result.rowCount,
+        ...(result._truncated && {
+          _truncated: true,
+          _sizeLimitBytes: result._sizeLimitBytes,
+          _sizeLimitMb: result._sizeLimitMb,
+          _actualSizeBytes: result._actualSizeBytes,
+          _actualSizeMb: result._actualSizeMb,
+          _originalRowCount: result._originalRowCount,
+        }),
+      };
     }
 
     // Handle find query
@@ -151,9 +199,21 @@ export default {
       const col = d.collection(spec.collection);
       const findOptions = { ...spec.options, maxTimeMS };
       const cursor = col.find(spec.filter || {}, findOptions);
-      limitResultSet(cursor, limit);
+      cursor.limit(limit);
       const rows = await cursor.toArray();
-      return { rows, rowCount: rows.length };
+      const result = applyByteSizeLimit(rows);
+      return {
+        rows: result.rows,
+        rowCount: result.rowCount,
+        ...(result._truncated && {
+          _truncated: true,
+          _sizeLimitBytes: result._sizeLimitBytes,
+          _sizeLimitMb: result._sizeLimitMb,
+          _actualSizeBytes: result._actualSizeBytes,
+          _actualSizeMb: result._actualSizeMb,
+          _originalRowCount: result._originalRowCount,
+        }),
+      };
     }
 
     throw pluginError.validation("Invalid MongoDB query specification");
@@ -181,7 +241,19 @@ export default {
       const cursor = col.find(where, { maxTimeMS: QUERY_TIMEOUT_MS });
       cursor.limit(maxLimit);
       const rows = await cursor.toArray();
-      return { rows, rowCount: rows.length };
+      const result = applyByteSizeLimit(rows);
+      return {
+        rows: result.rows,
+        rowCount: result.rowCount,
+        ...(result._truncated && {
+          _truncated: true,
+          _sizeLimitBytes: result._sizeLimitBytes,
+          _sizeLimitMb: result._sizeLimitMb,
+          _actualSizeBytes: result._actualSizeBytes,
+          _actualSizeMb: result._actualSizeMb,
+          _originalRowCount: result._originalRowCount,
+        }),
+      };
     } catch (err) {
       throw pluginError.external("MongoDB", `Select failed: ${err.message}`, "query_failed");
     }
@@ -214,4 +286,7 @@ export default {
   // Export constants for use in index.js
   MAX_DOCUMENT_COUNT,
   QUERY_TIMEOUT_MS,
+  MAX_RESULT_SIZE_BYTES,
+  calculateByteSize,
+  applyByteSizeLimit,
 };

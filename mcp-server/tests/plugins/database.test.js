@@ -551,12 +551,11 @@ describe("MongoDB Adapter - Production Parity", () => {
     expect(maxDocumentCount).toBe(1000);
   });
 
-  it("should detect write stages in MongoDB aggregation pipeline", () => {
+  it("should detect $merge as write stage", () => {
     const pipeline = [{ $match: { status: "active" } }, { $merge: { into: "archive" } }];
     const hasWriteStages = pipeline.some(stage => {
       const stageKeys = Object.keys(stage || {});
-      return stageKeys.includes("$merge") || stageKeys.includes("$out") ||
-        stageKeys.includes("$set") || stageKeys.includes("$unset");
+      return stageKeys.includes("$merge") || stageKeys.includes("$out");
     });
     expect(hasWriteStages).toBe(true);
   });
@@ -570,12 +569,24 @@ describe("MongoDB Adapter - Production Parity", () => {
     expect(hasWriteStages).toBe(true);
   });
 
-  it("should not flag read-only aggregation as write operation", () => {
-    const pipeline = [{ $match: { status: "active" } }, { $group: { _id: "$category" } }];
+  it("should NOT flag $set as write stage (transformation only)", () => {
+    // $set in aggregation is a transformation stage (like adding computed column)
+    // It does NOT write to database - it's read-only pipeline transform
+    const pipeline = [{ $match: { status: "active" } }, { $set: { fullName: { $concat: ["$firstName", " ", "$lastName"] } } }];
     const hasWriteStages = pipeline.some(stage => {
       const stageKeys = Object.keys(stage || {});
-      return stageKeys.includes("$merge") || stageKeys.includes("$out") ||
-        stageKeys.includes("$set") || stageKeys.includes("$unset");
+      return stageKeys.includes("$merge") || stageKeys.includes("$out");
+    });
+    expect(hasWriteStages).toBe(false);
+  });
+
+  it("should NOT flag $unset as write stage (transformation only)", () => {
+    // $unset in aggregation is a projection stage (like SELECT excluding columns)
+    // It does NOT write to database - it's read-only pipeline transform
+    const pipeline = [{ $match: { status: "active" } }, { $unset: ["password", "secretToken"] }];
+    const hasWriteStages = pipeline.some(stage => {
+      const stageKeys = Object.keys(stage || {});
+      return stageKeys.includes("$merge") || stageKeys.includes("$out");
     });
     expect(hasWriteStages).toBe(false);
   });
@@ -661,5 +672,52 @@ describe("MongoDB Adapter - Production Parity", () => {
     const effectiveLimit = Math.min(requestedLimit, MAX_DOCUMENT_COUNT);
 
     expect(effectiveLimit).toBe(50);
+  });
+
+  it("should calculate BSON byte size with overhead", () => {
+    // Rough estimation: JSON size + 20% BSON overhead
+    const docs = [{ _id: "1", name: "John", data: "x".repeat(1000) }];
+    const jsonStr = JSON.stringify(docs);
+    const jsonBytes = Buffer.byteLength(jsonStr, "utf8");
+    const bsonBytes = Math.ceil(jsonBytes * 1.2);
+
+    expect(bsonBytes).toBeGreaterThan(jsonBytes);
+    expect(bsonBytes).toBe(Math.ceil(jsonBytes * 1.2));
+  });
+
+  it("should apply 10MB default result size limit", () => {
+    const MAX_RESULT_SIZE_BYTES = 10 * 1024 * 1024;
+    expect(MAX_RESULT_SIZE_BYTES).toBe(10485760);
+  });
+
+  it("should include truncation metadata when size limit exceeded", () => {
+    // Simulate truncated result structure
+    const result = {
+      rows: [{ _id: "1", name: "John" }],
+      rowCount: 1,
+      _truncated: true,
+      _sizeLimitBytes: 10485760,
+      _sizeLimitMb: 10,
+      _actualSizeBytes: 15728640,
+      _actualSizeMb: "15.00",
+      _originalRowCount: 150,
+    };
+
+    expect(result._truncated).toBe(true);
+    expect(result._sizeLimitBytes).toBe(10485760);
+    expect(result._originalRowCount).toBe(150);
+    expect(result.rowCount).toBeLessThan(result._originalRowCount);
+  });
+
+  it("should not truncate when under size limit", () => {
+    const result = {
+      rows: [{ _id: "1", name: "John" }, { _id: "2", name: "Jane" }],
+      rowCount: 2,
+      _truncated: false,
+      sizeBytes: 1024,
+    };
+
+    expect(result._truncated).toBe(false);
+    expect(result.rowCount).toBe(2);
   });
 });

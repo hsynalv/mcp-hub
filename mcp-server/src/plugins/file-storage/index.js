@@ -1,7 +1,20 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
-import { getAdapter, isValidBackend, sanitizePath } from "./storage.adapter.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+import {
+  getAdapter,
+  isValidBackend,
+  sanitizePath,
+  validateFileSize,
+  checkFilePolicy,
+  auditEntry,
+  generateCorrelationId,
+  getAuditLogEntries,
+  MAX_FILE_SIZE_MB,
+} from "./storage.adapter.js";
+
+const pluginError = createPluginErrorHandler("file-storage");
 
 export const name = "file-storage";
 export const version = "1.0.0";
@@ -40,30 +53,123 @@ const copyMoveSchema = z.object({
 function validate(schema, data, res) {
   const result = schema.safeParse(data);
   if (!result.success) {
-    res.status(400).json({ ok: false, error: "invalid_request", details: result.error.flatten() });
+    const err = pluginError.validation("Invalid request", result.error.flatten());
+    res.status(400).json({ ok: false, error: err.code, message: err.message, details: err.details });
     return null;
   }
   return result.data;
 }
 
-async function runAdapter(backend, fn, res) {
+function extractContext(req) {
+  return {
+    actor: req.user?.id || req.user?.email || "anonymous",
+    workspaceId: req.headers["x-workspace-id"] || null,
+    projectId: req.headers["x-project-id"] || null,
+  };
+}
+
+async function runAdapter(backend, fn, res, req, options = {}) {
+  const { operation, path, checkPolicy = true } = options;
+  const startTime = Date.now();
+  const correlationId = generateCorrelationId();
+  const { actor, workspaceId, projectId } = extractContext(req);
+
   if (!isValidBackend(backend)) {
-    return res.status(400).json({ ok: false, error: "invalid_backend", message: `Backend must be one of: s3, gdrive, local` });
+    const err = pluginError.validation("Invalid backend", { validBackends: ["s3", "gdrive", "local"] });
+    auditEntry({
+      operation: operation || "unknown",
+      path: path || "unknown",
+      backend,
+      allowed: false,
+      reason: "invalid_backend",
+      actor,
+      workspaceId,
+      projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+    });
+    return res.status(400).json({ ok: false, error: err.code, message: err.message });
   }
+
+  // Policy check before execution
+  if (checkPolicy && path && operation) {
+    const policyCheck = checkFilePolicy(operation, path, { actor, workspaceId, projectId });
+    if (!policyCheck.allowed) {
+      auditEntry({
+        operation,
+        path,
+        backend,
+        allowed: false,
+        reason: policyCheck.reason,
+        actor,
+        workspaceId,
+        projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+      });
+      const err = pluginError.authorization(policyCheck.message);
+      return res.status(403).json({ ok: false, error: err.code, message: err.message, reason: policyCheck.reason });
+    }
+  }
+
   try {
     const adapter = await getAdapter(backend);
     const result = await fn(adapter);
+
+    auditEntry({
+      operation: operation || "unknown",
+      path: path || "unknown",
+      backend,
+      allowed: true,
+      actor,
+      workspaceId,
+      projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      sizeBytes: result?.size || null,
+    });
+
     res.json({ ok: true, ...result });
   } catch (err) {
     const msg = err.message || "Unknown error";
-    if (msg === "invalid_path") {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path traversal or invalid path" });
+    let statusCode = 500;
+    let errorCode = "internal_error";
+    let errorMessage = msg;
+
+    if (msg === "invalid_path" || msg.includes("path traversal")) {
+      statusCode = 400;
+      errorCode = "path_traversal";
+      errorMessage = "Path traversal or invalid path";
+    } else if (msg === "connection_failed") {
+      statusCode = 502;
+      errorCode = "connection_failed";
+      errorMessage = "Storage connection failed";
+    } else if (msg.includes("not found") || msg.includes("No such file")) {
+      statusCode = 404;
+      errorCode = "file_not_found";
+      errorMessage = "File not found";
+    } else if (msg.includes("size limit") || msg.includes("exceeds")) {
+      statusCode = 413;
+      errorCode = "file_too_large";
+      errorMessage = msg;
     }
-    if (msg === "connection_failed") {
-      return res.status(502).json({ ok: false, error: "connection_failed", message: "Storage connection failed" });
-    }
-    console.error("[file-storage]", err);
-    res.status(500).json({ ok: false, error: "internal_error", message: msg });
+
+    auditEntry({
+      operation: operation || "unknown",
+      path: path || "unknown",
+      backend,
+      allowed: false,
+      reason: errorCode,
+      actor,
+      workspaceId,
+      projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      error: msg,
+    });
+
+    const stdErr = pluginError.external(backend.toUpperCase(), errorMessage, errorCode);
+    res.status(statusCode).json({ ok: false, error: stdErr.code, message: stdErr.message });
   }
 }
 
@@ -78,37 +184,58 @@ export function register(app) {
     const backend = req.query.backend;
     const path = sanitizePath(req.query.path || ".");
     if (path === null) {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path traversal or invalid path" });
+      const err = pluginError.validation("Path traversal or invalid path");
+      return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
-    await runAdapter(backend, (adapter) => adapter.list(path), res);
+    const context = extractContext(req);
+    await runAdapter(backend, (adapter) => adapter.list(path, context), res, req, { operation: "list", path });
   });
 
   router.get("/read", requireScope("read"), async (req, res) => {
     const backend = req.query.backend;
     const path = sanitizePath(req.query.path);
     if (!path || path === null) {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path required and must be valid" });
+      const err = pluginError.validation("Path required and must be valid");
+      return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
-    await runAdapter(backend, (adapter) => adapter.read(path), res);
+    const context = extractContext(req);
+    await runAdapter(backend, (adapter) => adapter.read(path, context), res, req, { operation: "read", path });
   });
 
   router.post("/write", requireScope("write"), async (req, res) => {
     const data = validate(writeSchema, req.body, res);
     if (!data) return;
+
+    // Validate file size before processing
+    const sizeCheck = validateFileSize(data.content);
+    if (!sizeCheck.valid) {
+      const err = pluginError.validation(sizeCheck.reason);
+      return res.status(413).json({
+        ok: false,
+        error: err.code,
+        message: err.message,
+        sizeLimitMb: sizeCheck.maxMb,
+      });
+    }
+
     const path = sanitizePath(data.path);
     if (path === null) {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path traversal or invalid path" });
+      const err = pluginError.validation("Path traversal or invalid path");
+      return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
-    await runAdapter(data.backend, (adapter) => adapter.write(path, data.content, data.contentType), res);
+    const context = extractContext(req);
+    await runAdapter(data.backend, (adapter) => adapter.write(path, data.content, data.contentType, context), res, req, { operation: "write", path });
   });
 
   router.delete("/delete", requireScope("write"), async (req, res) => {
     const backend = req.query.backend;
     const path = sanitizePath(req.query.path);
     if (!path || path === null) {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path required and must be valid" });
+      const err = pluginError.validation("Path required and must be valid");
+      return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
-    await runAdapter(backend, (adapter) => adapter.delete(path), res);
+    const context = extractContext(req);
+    await runAdapter(backend, (adapter) => adapter.delete(path, context), res, req, { operation: "delete", path });
   });
 
   router.post("/copy", requireScope("write"), async (req, res) => {
@@ -117,9 +244,11 @@ export function register(app) {
     const src = sanitizePath(data.sourcePath);
     const dst = sanitizePath(data.destPath);
     if (src === null || dst === null) {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path traversal or invalid path" });
+      const err = pluginError.validation("Path traversal or invalid path");
+      return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
-    await runAdapter(data.backend, (adapter) => adapter.copy(src, dst), res);
+    const context = extractContext(req);
+    await runAdapter(data.backend, (adapter) => adapter.copy(src, dst, context), res, req, { operation: "copy", path: `${src} -> ${dst}` });
   });
 
   router.post("/move", requireScope("write"), async (req, res) => {
@@ -128,9 +257,20 @@ export function register(app) {
     const src = sanitizePath(data.sourcePath);
     const dst = sanitizePath(data.destPath);
     if (src === null || dst === null) {
-      return res.status(400).json({ ok: false, error: "invalid_path", message: "Path traversal or invalid path" });
+      const err = pluginError.validation("Path traversal or invalid path");
+      return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
-    await runAdapter(data.backend, (adapter) => adapter.move(src, dst), res);
+    const context = extractContext(req);
+    await runAdapter(data.backend, (adapter) => adapter.move(src, dst, context), res, req, { operation: "move", path: `${src} -> ${dst}` });
+  });
+
+  /**
+   * GET /file-storage/audit
+   * Returns file operation audit log.
+   */
+  router.get("/audit", requireScope("read"), (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
   });
 
   app.use("/file-storage", router);
