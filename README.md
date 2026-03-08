@@ -20,6 +20,22 @@ cp .env.example .env
 npm run dev
 ```
 
+## Plugin Maturity Matrix
+
+| Plugin | Owner | Status | Auth | Tests | Docs | Production Ready |
+|--------|-------|--------|------|-------|------|------------------|
+| github | @hsynalv | 🟢 stable | ✅ | unit | ✅ | Yes |
+| notion | @hsynalv | 🟢 stable | ✅ | unit | ✅ | Yes |
+| llm-router | @hsynalv | 🟢 stable | ❌ | unit | ✅ | Yes |
+| policy | @hsynalv | 🟢 stable | ✅ | unit | ✅ | Yes |
+| rag | @hsynalv | 🟡 beta | ❌ | unit | ✅ | No |
+| database | @hsynalv | 🟡 beta | ✅ | unit | ✅ | No |
+| shell | @hsynalv | 🔴 experimental | ✅ | none | ✅ | No |
+| file-storage | @hsynalv | 🟡 beta | ✅ | unit | ✅ | No |
+| workspace | @hsynalv | 🟡 beta | ❌ | unit | ✅ | No |
+
+**Legend:** 🟢 Stable | 🟡 Beta | 🔴 Experimental
+
 ## Dökümantasyon
 
 - [Server Detayları](mcp-server/README.md)
