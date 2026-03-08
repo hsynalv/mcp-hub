@@ -3,7 +3,9 @@ import "express-async-errors";
 import cors from "cors";
 import morgan from "morgan";
 import { AppError, NotFoundError } from "./errors.js";
+import { config } from "./config.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
+import { initializeToolHooks } from "./tool-registry.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
 import { submitJob, getJob, listJobs, getJobStats } from "./jobs.js";
@@ -92,42 +94,57 @@ function responseEnvelopeMiddleware(req, res, next) {
   next();
 }
 
-/** Applies project context from headers with graceful fallbacks. */
-function projectContextMiddleware(req, _res, next) {
+/**
+ * Project Context Middleware
+ *
+ * Behavior:
+ * - In development/local (default): Missing headers resolve to configurable defaults
+ * - In production (REQUIRE_PROJECT_HEADERS=true): Missing headers return 400 error
+ *
+ * Resolution order:
+ * 1. x-project-id header → req.projectId
+ * 2. x-env header → req.projectEnv
+ * 3. If headers missing and requireHeaders=false: use defaults
+ * 4. If headers missing and requireHeaders=true: return 400 error
+ *
+ * Environment variables:
+ * - REQUIRE_PROJECT_HEADERS: Set to "true" to enforce header requirements
+ * - DEFAULT_PROJECT_ID: Override default project (default: "default-project")
+ * - DEFAULT_ENV: Override default environment (default: "default-env")
+ */
+function projectContextMiddleware(req, res, next) {
   const headerProjectId = req.headers["x-project-id"]?.trim();
   const headerEnv = req.headers["x-env"]?.trim();
 
-  // Use headers if provided, otherwise use defaults
-  req.projectId = headerProjectId || "default-project";
-  req.projectEnv = headerEnv || "default-env";
+  // Check if headers are required (production multi-tenant mode)
+  if (config.projectContext.requireHeaders) {
+    if (!headerProjectId || !headerEnv) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "missing_project_context",
+          message: "x-project-id and x-env headers are required",
+        },
+      });
+    }
+    req.projectId = headerProjectId;
+    req.projectEnv = headerEnv;
+    return next();
+  }
+
+  // Development/local mode: use defaults if headers missing
+  const defaultProjectId = config.projectContext.defaults.projectId;
+  const defaultEnv = config.projectContext.defaults.env;
+
+  req.projectId = headerProjectId || defaultProjectId;
+  req.projectEnv = headerEnv || defaultEnv;
 
   // Log when using defaults (helpful for debugging)
   if (!headerProjectId || !headerEnv) {
-    console.warn(`[server] Using default project context (${req.projectId}/${req.projectEnv}). Set x-project-id and x-env headers to override.`);
-  }
-
-  next();
-}
-
-function requiresProjectContext(req) {
-  const method = (req.method ?? "GET").toUpperCase();
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) return true;
-  return false;
-}
-
-function enforceProjectContextMiddleware(req, res, next) {
-  if (!requiresProjectContext(req)) return next();
-
-  // Values are already set by projectContextMiddleware with defaults
-  // This middleware just ensures they're present for write operations
-  if (!req.projectId || !req.projectEnv) {
-    return res.status(400).json({
-      ok: false,
-      error: {
-        code: "missing_project_context",
-        message: "x-project-id and x-env headers are required for write operations",
-      },
-    });
+    console.warn(
+      `[server] Using default project context (${req.projectId}/${req.projectEnv}). ` +
+      `Set x-project-id and x-env headers to override, or set REQUIRE_PROJECT_HEADERS=true to enforce headers.`
+    );
   }
 
   next();
@@ -143,7 +160,6 @@ export async function createServer() {
   app.use(projectContextMiddleware);
   app.use(auditMiddleware);
   app.use(responseEnvelopeMiddleware);
-  app.use(enforceProjectContextMiddleware);
   app.use(policyGuardrailMiddleware);
 
   // ── Core routes ────────────────────────────────────────────────────────────
@@ -494,7 +510,7 @@ export async function createServer() {
     if (!existsSync(indexPath)) {
       return res.json({
         ok: true,
-        message: "MCP-Hub is running",
+        message: "mcp-hub is running",
         version: "1.0.0",
         docs: "/api-docs",
         dashboard: "/observability/dashboard",
@@ -507,6 +523,9 @@ export async function createServer() {
 
   // Load policy presets at startup
   loadPresetsAtStartup();
+
+  // Initialize tool registry hooks (policy, auditing, etc.)
+  initializeToolHooks();
 
   await loadPlugins(app);
 

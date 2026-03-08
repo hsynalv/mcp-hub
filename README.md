@@ -1,10 +1,10 @@
-# AI-Hub
+# mcp-hub
 
 > A plugin-based HTTP knowledge service for AI agents — universal tool and service bridge for Cursor, Claude Desktop, n8n and custom LLM applications.
 
-**AI-Hub** is an AI Operating System backend that bridges AI agents with real-world tools and services. It provides a multi-LLM routing layer, policy-based approval system, and 20+ integrations for building autonomous AI workflows.
+**mcp-hub** (also referred to as AI-Hub) is an AI Operating System backend that bridges AI agents with real-world tools and services. It provides a multi-LLM routing layer, policy-based approval system, and 20+ integrations for building autonomous AI workflows.
 
-From simple API calls to complex multi-step automations, AI-Hub serves as the execution backbone for AI agents running in Cursor, Claude Desktop, n8n, or custom LLM applications.
+From simple API calls to complex multi-step automations, mcp-hub serves as the execution backbone for AI agents running in Cursor, Claude Desktop, n8n, or custom LLM applications.
 
 ---
 

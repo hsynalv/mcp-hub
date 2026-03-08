@@ -16,6 +16,11 @@
  */
 
 import { getPolicyEvaluator, getApprovalStore, isPolicySystemAvailable } from "./policy-hooks.js";
+import {
+  registerBeforeExecutionHook,
+  executeBeforeHooks,
+  executeAfterHooks,
+} from "./tool-hooks.js";
 
 const tools = new Map();
 
@@ -192,18 +197,10 @@ export function clearTools() {
 }
 
 /**
- * Call a tool with the given arguments.
- * Performs policy check before executing the handler.
- * Supports approval flow for tools with needs_approval tag.
- *
+ * Call a registered tool with hook support.
  * @param {string} name - Tool name
  * @param {Object} args - Tool arguments
  * @param {Object} context - Execution context
- * @param {string} context.user - Requesting user identifier
- * @param {string} context.method - HTTP method or "MCP"
- * @param {string} context.projectId - Project ID (optional)
- * @param {string} context.projectEnv - Project environment (optional)
- * @param {string} context.approvalId - Pre-approved ID (optional)
  * @returns {Promise<Object>} Tool result
  */
 export async function callTool(name, args, context = {}) {
@@ -218,136 +215,38 @@ export async function callTool(name, args, context = {}) {
     };
   }
 
-  // Policy check before executing tool (if policy system is available)
-  const evaluate = getPolicyEvaluator();
-  if (evaluate) {
-    const path = `/tools/${name}`;
-    const method = context.method || "POST";
-    const policy = evaluate(method, path, args, context.user);
-
-    if (!policy.allowed) {
-      return {
-        ok: false,
-        error: {
-          code: policy.action || "policy_denied",
-          message: policy.explanation || "Request denied by policy",
-          ...(policy.approval ? { approval: policy.approval } : {}),
-          ...(policy.preview ? { preview: policy.preview } : {}),
-        },
-        meta: { requestId: context.requestId },
-      };
-    }
-  }
-
-  // Tool tag-based policy checking (if policy system is available)
-  const approvalStore = getApprovalStore();
-  const policyConfig = approvalStore?.loadPolicyConfig ? approvalStore.loadPolicyConfig() : {};
-  const toolTags = tool.tags || [];
-
-  // Check if tool requires approval based on tags
-  const needsApproval = toolTags.includes(ToolTags.NEEDS_APPROVAL) ||
-    (toolTags.includes(ToolTags.DESTRUCTIVE) && policyConfig.destructive_requires_approval) ||
-    (toolTags.includes(ToolTags.WRITE) && policyConfig.write_requires_approval);
-
-  // If approval required and no pre-approved ID, create approval request
-  if (needsApproval && !context.approvalId && approvalStore?.createApproval) {
-    const approval = approvalStore.createApproval({
-      ruleId: "tool_tag_policy",
-      path: `/tools/${name}`,
-      method: context.method || "POST",
-      body: args,
-      requestedBy: context.user || "agent",
-      toolName: name,
-      explanation: args.explanation || "No explanation provided",
-    });
-
-    return {
-      ok: false,
-      status: "approval_required",
-      tool: name,
-      explanation: args.explanation || "Tool requires manual approval",
-      parameters: args,
-      approval: {
-        id: approval.id,
-        status: "pending",
-        createdAt: approval.createdAt,
-      },
-      message: `Tool '${name}' requires approval. Use POST /approve with id '${approval.id}' to confirm.`,
-    };
-  }
-
-  // If pre-approved ID provided, verify it
-  if (context.approvalId && approvalStore?.getApproval) {
-    const approval = approvalStore.getApproval(context.approvalId);
-    if (!approval) {
-      return {
-        ok: false,
-        error: {
-          code: "approval_not_found",
-          message: `Approval ID not found: ${context.approvalId}`,
-        },
-      };
-    }
-    if (approval.status !== "approved") {
-      return {
-        ok: false,
-        error: {
-          code: "approval_pending",
-          message: `Approval not granted for ID: ${context.approvalId}`,
-          approval: {
-            id: approval.id,
-            status: approval.status,
-          },
-        },
-      };
-    }
+  // Execute before-hooks (policy checks, validation, etc.)
+  const hookResult = await executeBeforeHooks(name, args, context);
+  if (hookResult) {
+    return hookResult; // Hook blocked execution
   }
 
   // Execute the tool
   const startTime = Date.now();
+  let result;
   try {
-    const result = await tool.handler(args, context);
-
-    // Audit logging
-    logToolExecution({
-      toolName: name,
-      timestamp: new Date().toISOString(),
-      projectId: context.projectId,
-      parameters: args,
-      result: result,
-      duration: Date.now() - startTime,
-      user: context.user,
-      approvalId: context.approvalId,
-    });
+    result = await tool.handler(args, context);
 
     // Normalize result to standard envelope if not already
     if (result && typeof result === "object") {
       if (result.ok === true || result.ok === false) {
-        return result;
+        // Already normalized
+      } else {
+        result = {
+          ok: true,
+          data: result,
+          meta: { requestId: context.requestId },
+        };
       }
+    } else {
+      result = {
+        ok: true,
+        data: result,
+        meta: { requestId: context.requestId },
+      };
     }
-
-    // Wrap in success envelope
-    return {
-      ok: true,
-      data: result,
-      meta: { requestId: context.requestId },
-    };
   } catch (err) {
-    // Audit logging for failures
-    logToolExecution({
-      toolName: name,
-      timestamp: new Date().toISOString(),
-      projectId: context.projectId,
-      parameters: args,
-      error: err.message,
-      duration: Date.now() - startTime,
-      user: context.user,
-      approvalId: context.approvalId,
-      failed: true,
-    });
-
-    return {
+    result = {
       ok: false,
       error: {
         code: err.code || "tool_execution_error",
@@ -357,6 +256,24 @@ export async function callTool(name, args, context = {}) {
       meta: { requestId: context.requestId },
     };
   }
+
+  // Audit logging
+  logToolExecution({
+    toolName: name,
+    timestamp: new Date().toISOString(),
+    projectId: context.projectId,
+    parameters: args,
+    result: result,
+    duration: Date.now() - startTime,
+    user: context.user,
+    approvalId: context.approvalId,
+    failed: !result.ok,
+  });
+
+  // Execute after-hooks (auditing, metrics, etc.)
+  await executeAfterHooks(name, args, context, result);
+
+  return result;
 }
 
 /**
@@ -403,10 +320,15 @@ export async function approveTool(approvalId, context = {}) {
   }
 
   // Update approval status
-  approvalStore.updateApprovalStatus(approvalId, "approved", context.user || "manual");
+  approvalStore.updateApprovalStatus(
+    approvalId,
+    "approved",
+    context.user || "manual"
+  );
 
   // Re-execute the tool with the approval ID
-  const toolName = approval.toolName || approval.path.replace("/tools/", "");
+  const toolName =
+    approval.toolName || approval.path.replace("/tools/", "");
   const result = await callTool(toolName, approval.body, {
     ...context,
     approvalId,
@@ -424,6 +346,17 @@ export async function approveTool(approvalId, context = {}) {
       result,
     },
   };
+}
+
+/**
+ * Initialize tool registry hooks.
+ * Called once during server startup.
+ * Note: Hooks are now registered by plugins themselves (e.g., policy plugin).
+ * This function is kept for backward compatibility but is currently a no-op.
+ */
+export function initializeToolHooks() {
+  // Plugins register their own hooks via registerBeforeExecutionHook()
+  // and registerAfterExecutionHook() from tool-hooks.js
 }
 
 /**

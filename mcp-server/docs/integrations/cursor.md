@@ -1,13 +1,13 @@
 # Cursor Integration Guide
 
-AI-Hub'ı Cursor ile entegre ederek AI agent'larınıza güçlü yetenekler kazandırın.
+mcp-hub'ı Cursor ile entegre ederek AI agent'larınıza güçlü yetenekler kazandırın.
 
 ## Kurulum
 
-### 1. AI-Hub'ı Başlatın
+### 1. mcp-hub'ı Başlatın
 
 ```bash
-cd ai-hub/mcp-server
+cd mcp-hub/mcp-server
 npm install
 cp .env.example .env
 # .env dosyasını düzenleyin (API keys)

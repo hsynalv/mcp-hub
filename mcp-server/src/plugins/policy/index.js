@@ -6,6 +6,8 @@ import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { registerPolicyHooks } from "../../core/policy-hooks.js";
+import { registerBeforeExecutionHook } from "../../core/tool-hooks.js";
+import { getPolicyEvaluator, getApprovalStore } from "../../core/policy-hooks.js";
 import {
   listRules,
   addRule,
@@ -166,6 +168,105 @@ export function register(app) {
     getApproval,
     listApprovals,
     loadPolicyConfig,
+  });
+
+  // Register tool execution hook for policy enforcement
+  registerBeforeExecutionHook(async (toolName, args, context) => {
+    // Policy check before executing tool
+    const policyEvaluator = getPolicyEvaluator();
+    if (policyEvaluator) {
+      const path = `/tools/${toolName}`;
+      const method = context.method || "POST";
+      const policy = policyEvaluator(method, path, args, context.user);
+
+      if (!policy.allowed) {
+        return {
+          ok: false,
+          error: {
+            code: policy.action || "policy_denied",
+            message: policy.explanation || "Request denied by policy",
+            ...(policy.approval ? { approval: policy.approval } : {}),
+            ...(policy.preview ? { preview: policy.preview } : {}),
+          },
+          meta: { requestId: context.requestId },
+        };
+      }
+    }
+
+    // Tag-based approval workflow
+    const approvalStore = getApprovalStore();
+    const policyConfig = approvalStore?.loadPolicyConfig
+      ? approvalStore.loadPolicyConfig()
+      : {};
+
+    // Get tool tags (we need to check the tool registry)
+    // Note: This import is dynamic to avoid circular dependency
+    const { listTools } = await import("../../core/tool-registry.js");
+    const allTools = listTools();
+    const tool = allTools.find(t => t.name === toolName);
+    const toolTags = tool?.tags || [];
+
+    const needsApproval =
+      toolTags.includes(ToolTags.NEEDS_APPROVAL) ||
+      (toolTags.includes(ToolTags.DESTRUCTIVE) &&
+        policyConfig.destructive_requires_approval) ||
+      (toolTags.includes(ToolTags.WRITE) &&
+        policyConfig.write_requires_approval);
+
+    if (needsApproval && !context.approvalId && approvalStore?.createApproval) {
+      const approval = approvalStore.createApproval({
+        ruleId: "tool_tag_policy",
+        path: `/tools/${toolName}`,
+        method: context.method || "POST",
+        body: args,
+        requestedBy: context.user || "agent",
+        toolName: toolName,
+        explanation: args.explanation || "No explanation provided",
+      });
+
+      return {
+        ok: false,
+        status: "approval_required",
+        tool: toolName,
+        explanation: args.explanation || "Tool requires manual approval",
+        parameters: args,
+        approval: {
+          id: approval.id,
+          status: "pending",
+          createdAt: approval.createdAt,
+        },
+        message: `Tool '${toolName}' requires approval. Use POST /approve with id '${approval.id}' to confirm.`,
+      };
+    }
+
+    // Verify pre-approved ID
+    if (context.approvalId && approvalStore?.getApproval) {
+      const approval = approvalStore.getApproval(context.approvalId);
+      if (!approval) {
+        return {
+          ok: false,
+          error: {
+            code: "approval_not_found",
+            message: `Approval ID not found: ${context.approvalId}`,
+          },
+        };
+      }
+      if (approval.status !== "approved") {
+        return {
+          ok: false,
+          error: {
+            code: "approval_pending",
+            message: `Approval not granted for ID: ${context.approvalId}`,
+            approval: {
+              id: approval.id,
+              status: approval.status,
+            },
+          },
+        };
+      }
+    }
+
+    return null; // Continue to tool execution
   });
 
   const router = Router();

@@ -1,6 +1,6 @@
-# AI-Hub Use Cases
+# mcp-hub Use Cases
 
-AI-Hub'ın farklı senaryolardaki kullanım örnekleri ve workflow'ları.
+mcp-hub'ın farklı senaryolardaki kullanım örnekleri ve workflow'ları.
 
 ## 1. Development Workflow Automation
 

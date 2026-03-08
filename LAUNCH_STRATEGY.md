@@ -1,6 +1,6 @@
-# AI-Hub Launch Strategy
+# mcp-hub Launch Strategy
 
-Comprehensive launch plan for AI-Hub v1.0.0
+Comprehensive launch plan for mcp-hub v1.0.0
 
 ## 🎯 Launch Goals
 
@@ -69,7 +69,7 @@ Comprehensive launch plan for AI-Hub v1.0.0
 ### 2. Hacker News
 **Strategy:**
 - Submit at 8:00 AM PST (optimal timing)
-- Title: "Show: AI-Hub - Universal Bridge for AI Agents"
+- Title: "Show: mcp-hub Standard AI Bridge for AI Agents"
 - URL: https://github.com/your-org/ai-hub
 - Engage authentically in comments
 
@@ -91,7 +91,7 @@ Comprehensive launch plan for AI-Hub v1.0.0
 ### 4. Twitter/X
 **Content Plan:**
 - **Launch Thread**: Feature showcase with GIFs
-- **Daily Tips**: AI-Hub use cases
+- **Daily Tips**: mcp-hub Use Cases
 - **Integration Spotlights**: Feature user integrations
 - **Community Engagement**: Respond to all mentions
 
@@ -158,8 +158,8 @@ Comprehensive launch plan for AI-Hub v1.0.0
 **Week 1: Launch Week**
 - Day 1: Launch announcement
 - Day 2: Getting started tutorial
-- Day 3: Cursor integration guide
-- Day 4: Claude Desktop integration
+- Day 3: mcp-hub — Cursor Integration guide
+- Day 4: mcp-hub — Claude Desktop Integration
 - Day 5: Community showcase
 
 **Week 2-4: Growth Content**

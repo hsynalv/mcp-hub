@@ -1,13 +1,13 @@
 # Claude Desktop Integration Guide
 
-AI-Hub'ı Claude Desktop ile MCP (Model Context Protocol) üzerinden entegre edin.
+mcp-hub'ı Claude Desktop ile MCP (Model Context Protocol) üzerinden entegre edin.
 
 ## Kurulum
 
-### 1. AI-Hub'ı MCP Server Olarak Çalıştırın
+### 1. mcp-hub'ı MCP Server Olarak Çalıştırın
 
 ```bash
-cd ai-hub/mcp-server
+cd mcp-hub/mcp-server
 npm install
 cp .env.example .env
 # .env dosyasını düzenleyin

@@ -1,4 +1,4 @@
-# AI-Hub Platform Standartları
+# mcp-hub Platform Standartları
 
 Bu doküman tüm plugin ve core endpoint’leri için geçerli platform kurallarını tanımlar.
 
