@@ -1,0 +1,40 @@
+{
+  "name": "shell",
+  "version": "1.0.0",
+  "status": "stable",
+  "owner": "core-team",
+  "description": "Production-hardened shell command execution with strict allowlist, dangerous pattern blocking, timeout enforcement, policy integration, and pluggable audit persistence",
+  "requiresAuth": true,
+  "supportsJobs": false,
+  "supportsStreaming": true,
+  "testLevel": "integration",
+  "resilience": {
+    "retry": false,
+    "timeout": 30000,
+    "circuitBreaker": false
+  },
+  "security": {
+    "scope": "write",
+    "dangerousCombinations": ["write"],
+    "requiresApproval": true
+  },
+  "performance": {
+    "avgResponseTimeMs": 500,
+    "maxConcurrent": 5
+  },
+  "documentation": {
+    "readme": true,
+    "examples": true,
+    "apiReference": true
+  },
+  "dependencies": [],
+  "envVars": [
+    "SHELL_ALLOWLIST",
+    "SHELL_DEFAULT_TIMEOUT_MS",
+    "SHELL_MAX_TIMEOUT_MS",
+    "ALLOWED_WORKING_DIRS",
+    "SHELL_AUDIT_TYPE",
+    "SHELL_AUDIT_FILE_PATH",
+    "SHELL_AUDIT_MAX_ENTRIES"
+  ]
+}
