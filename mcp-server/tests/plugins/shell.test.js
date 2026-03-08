@@ -24,7 +24,7 @@ describe("Shell Plugin", () => {
     it("should define required endpoints", () => {
       const paths = shell.endpoints.map(e => e.path);
       expect(paths).toContain("/shell/execute");
-      expect(paths).toContain("/shell/history");
+      expect(paths).toContain("/shell/audit");
       expect(paths).toContain("/shell/safety");
     });
   });
@@ -36,8 +36,8 @@ describe("Shell Plugin", () => {
       expect(tool.handler).toBeDefined();
     });
 
-    it("should have shell_history tool", () => {
-      const tool = shell.tools.find(t => t.name === "shell_history");
+    it("should have shell_audit tool", async () => {
+      const tool = shell.tools.find(t => t.name === "shell_audit");
       expect(tool).toBeDefined();
     });
 
@@ -54,7 +54,7 @@ describe("Shell Plugin", () => {
 
       expect(result.ok).toBe(true);
       expect(result.data.allowed).toBe(true);
-      expect(result.data.blocked).toBe(false);
+      expect(result.data.allowedCommand).toBe(true);
     });
 
     it("should block dangerous commands", async () => {
@@ -63,7 +63,7 @@ describe("Shell Plugin", () => {
 
       expect(result.ok).toBe(true);
       expect(result.data.allowed).toBe(false);
-      expect(result.data.blocked).toBe(true);
+      expect(result.data.allowedCommand).toBe(false);
     });
 
     it("should validate working directory", async () => {
@@ -77,32 +77,30 @@ describe("Shell Plugin", () => {
       expect(result.data).toHaveProperty("cwdAllowed");
     });
 
-    it("should return blocked patterns list", async () => {
+    it("should return allowlist patterns", async () => {
       const tool = shell.tools.find(t => t.name === "shell_safety_check");
       const result = await tool.handler({ command: "ls" });
 
       expect(result.ok).toBe(true);
-      expect(result.data.blockedPatterns).toBeDefined();
-      expect(Array.isArray(result.data.blockedPatterns)).toBe(true);
+      expect(result.data.allowlist).toBeDefined();
+      expect(Array.isArray(result.data.allowlist)).toBe(true);
     });
   });
 
-  describe("shell_history", () => {
-    it("should return command history", async () => {
-      const tool = shell.tools.find(t => t.name === "shell_history");
+  describe("shell_audit", () => {
+    it("should return audit log", async () => {
+      const tool = shell.tools.find(t => t.name === "shell_audit");
       const result = await tool.handler({ limit: 10 });
 
       expect(result.ok).toBe(true);
-      expect(result.data).toHaveProperty("history");
-      expect(Array.isArray(result.data.history)).toBe(true);
+      expect(result.data).toHaveProperty("audit");
+      expect(Array.isArray(result.data.audit)).toBe(true);
     });
 
     it("should respect limit parameter", async () => {
-      const tool = shell.tools.find(t => t.name === "shell_history");
+      const tool = shell.tools.find(t => t.name === "shell_audit");
       const result = await tool.handler({ limit: 5 });
-
-      expect(result.ok).toBe(true);
-      expect(result.data.history.length).toBeLessThanOrEqual(5);
+      expect(result.data.audit.length).toBeLessThanOrEqual(5);
     });
   });
 });
