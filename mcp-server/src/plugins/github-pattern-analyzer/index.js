@@ -6,6 +6,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { ToolTags } from "../../core/tool-registry.js";
+import { callTool } from "../../core/tool-registry.js";
 import {
   getCachedPatterns,
   setCachedPatterns,
@@ -17,7 +18,6 @@ import {
 const LLM_API_KEY = process.env.OPENAI_API_KEY || null;
 const LLM_BASE_URL = process.env.BRAIN_LLM_URL || "https://api.openai.com/v1";
 const DEFAULT_MODEL = process.env.BRAIN_LLM_MODEL || "gpt-4o";
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || "http://localhost:8787";
 const GITHUB_ANALYZE_REPO_COUNT = parseInt(process.env.GITHUB_ANALYZE_REPO_COUNT || "5", 10);
 
 // ── LLM Helper ─────────────────────────────────────────────────────────────────
@@ -28,12 +28,16 @@ async function callLLM(messages, options = {}) {
   }
 
   try {
+    const controller = new globalThis.AbortController();
+    const timeoutMs = options.timeoutMs ?? 60000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${LLM_API_KEY}`,
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: options.model || DEFAULT_MODEL,
         messages,
@@ -42,6 +46,7 @@ async function callLLM(messages, options = {}) {
         response_format: options.jsonMode ? { type: "json_object" } : undefined,
       }),
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const err = await response.text();
@@ -58,21 +63,16 @@ async function callLLM(messages, options = {}) {
 // ── GitHub API Helpers ─────────────────────────────────────────────────────────
 
 async function fetchGitHubRepos(limit = GITHUB_ANALYZE_REPO_COUNT) {
-  const url = `${MCP_SERVER_URL}/github/repos?sort=pushed&limit=${limit}`;
-  const response = await fetch(url);
-  return response.json();
+  const res = await callTool("github_list_repos", { sort: "pushed", limit });
+  if (!res?.ok) return res;
+  const repos = res.data?.repos ?? [];
+  return { ok: true, data: repos };
 }
 
 async function analyzeRepo(fullName) {
-  const url = `${MCP_SERVER_URL}/github/analyze?repo=${encodeURIComponent(fullName)}`;
-  const response = await fetch(url);
-  return response.json();
-}
-
-async function fetchFileContent(owner, repo, path) {
-  const url = `${MCP_SERVER_URL}/github/repo/${owner}/${repo}/file?path=${encodeURIComponent(path)}`;
-  const response = await fetch(url);
-  return response.json();
+  const res = await callTool("github_analyze_repo", { repo: fullName });
+  if (!res?.ok) return res;
+  return { ok: true, data: res.data };
 }
 
 // ── Pattern Extraction ─────────────────────────────────────────────────────────
@@ -82,13 +82,12 @@ async function extractPatterns(repoAnalyses) {
 
 REPOSITORIES:
 ${JSON.stringify(repoAnalyses.map(r => ({
-  name: r.fullName,
-  language: r.language,
-  description: r.description,
-  tree: r.tree?.slice(0, 20), // First 20 files
-  readme: r.readme?.slice(0, 1000), // First 1000 chars
-  packageJson: r.packageJson,
-  recentCommits: r.commits?.slice(0, 5),
+  name: r?.repo?.fullName ?? r?.fullName,
+  language: r?.repo?.language ?? r?.language,
+  description: r?.repo?.description ?? r?.description,
+  tree: (Array.isArray(r?.tree) ? r.tree : r?.tree?.items)?.slice(0, 20),
+  readme: (r?.readme ?? "")?.slice(0, 1000),
+  recentCommits: (Array.isArray(r?.commits) ? r.commits : r?.commits?.items)?.slice(0, 5),
 })), null, 2)}
 
 Extract the following patterns and return as JSON:
@@ -265,7 +264,7 @@ router.get("/analyze", async (req, res) => {
 
   // 4. Cache in Redis
   const username = reposResult.data[0]?.owner?.login || "unknown";
-  const cached = await setCachedPatterns(username, patternsResult.patterns);
+  await setCachedPatterns(username, patternsResult.patterns);
 
   res.json({
     ok: true,

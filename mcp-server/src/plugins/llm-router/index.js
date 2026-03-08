@@ -6,8 +6,8 @@
  */
 
 import OpenAI from "openai";
-import { withResilience } from "../core/resilience.js";
-import { createPluginErrorHandler } from "../core/error-standard.js";
+import { withResilience } from "../../core/resilience.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
 
 const pluginError = createPluginErrorHandler("llm-router");
 

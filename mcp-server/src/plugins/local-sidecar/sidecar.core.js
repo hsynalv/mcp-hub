@@ -4,7 +4,8 @@
  * Safe filesystem operations with whitelist enforcement.
  */
 
-import { readdir, readFile, writeFile, stat, createHash } from "fs/promises";
+import { readdir, readFile, writeFile, stat } from "fs/promises";
+import { createHash } from "crypto";
 import { join, resolve, relative, isAbsolute, normalize } from "path";
 import { loadWhitelistConfig } from "./whitelist.config.js";
 

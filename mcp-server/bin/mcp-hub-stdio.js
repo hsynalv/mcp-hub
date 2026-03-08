@@ -12,14 +12,34 @@
  *   --env <env>          Default environment
  */
 
-import { createMcpServer } from "../src/mcp/gateway.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { config } from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { existsSync } from "fs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+// Cursor/STDIO expects ONLY JSON-RPC frames on stdout.
+// Send all logs to stderr to avoid breaking JSON parsing.
+console.log = (...args) => process.stderr.write(args.join(" ") + "\n");
+console.info = (...args) => process.stderr.write(args.join(" ") + "\n");
+console.warn = (...args) => process.stderr.write(args.join(" ") + "\n");
+// keep console.error as-is (already stderr)
 
-// Parse CLI arguments
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const envCandidates = [
+  process.env.ENV_FILE,
+  join(__dirname, "..", ".env"),
+  join(process.cwd(), ".env"),
+].filter(Boolean);
+
+for (const p of envCandidates) {
+  if (existsSync(p)) {
+    config({ path: p });
+    break;
+  }
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
@@ -73,6 +93,15 @@ Examples:
 async function main() {
   const options = parseArgs();
 
+   const [{ createMcpServer }, { StdioServerTransport }, { loadPlugins }, { initializeToolHooks }] = await Promise.all([
+     import("../src/mcp/gateway.js"),
+     import("@modelcontextprotocol/sdk/server/stdio.js"),
+     import("../src/core/plugins.js"),
+     import("../src/core/tool-registry.js"),
+   ]);
+
+  const { default: express } = await import("express");
+
   // Validate API key if auth is enabled
   if (process.env.HUB_AUTH_ENABLED === "true" && !options.apiKey) {
     console.error("Error: API key required. Provide --api-key or set HUB_API_KEY");
@@ -83,6 +112,13 @@ async function main() {
   process.env.HUB_SCOPE = options.scope;
   if (options.projectId) process.env.HUB_PROJECT_ID = options.projectId;
   if (options.env) process.env.HUB_ENV = options.env;
+
+  // Load plugins before starting MCP server
+  console.error("[mcp-hub-stdio] Loading plugins...");
+  initializeToolHooks();
+  const app = express();
+  await loadPlugins(app);
+  console.error("[mcp-hub-stdio] Plugins loaded");
 
   // Create and start MCP server with STDIO transport
   const server = createMcpServer();
