@@ -2,7 +2,7 @@
  * Workspace Plugin
  *
  * File operations within a configured allowlist root directory.
- * Security: path traversal protection, symlink checks, size limits.
+ * Security: path traversal protection, symlink checks, size limits, audit logging.
  */
 
 import { promises as fs, constants as fsConstants } from "fs";
@@ -16,6 +16,66 @@ const ALLOWED_EXTENSIONS = process.env.WORKSPACE_ALLOWED_EXTENSIONS?.split(",") 
   ".js", ".ts", ".jsx", ".tsx", ".json", ".md", ".txt", ".yml", ".yaml",
   ".html", ".css", ".scss", ".less", ".xml", ".svg", ".csv"
 ];
+
+// In-memory audit log for workspace operations
+const auditLog = [];
+const MAX_AUDIT_LOG_SIZE = 1000;
+
+/**
+ * Generate correlation ID for tracing
+ */
+export function generateCorrelationId() {
+  return `ws-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
+/**
+ * Extract context from request
+ */
+export function extractContext(req) {
+  return {
+    actor: req.user?.id || req.user?.email || "anonymous",
+    workspaceId: req.headers["x-workspace-id"] || null,
+    projectId: req.headers["x-project-id"] || null,
+  };
+}
+
+/**
+ * Add audit entry
+ */
+export function auditEntry(entry) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    operation: entry.operation,
+    path: entry.path,
+    actor: entry.actor || null,
+    workspaceId: entry.workspaceId || null,
+    projectId: entry.projectId || null,
+    correlationId: entry.correlationId || null,
+    durationMs: entry.durationMs || null,
+    allowed: entry.allowed,
+    reason: entry.reason || null,
+    error: entry.error || null,
+    metadata: entry.metadata || null, // Size, bytes written, etc (no content)
+  };
+
+  auditLog.unshift(logEntry);
+  if (auditLog.length > MAX_AUDIT_LOG_SIZE) {
+    auditLog.pop();
+  }
+
+  // Console log for visibility
+  const status = entry.allowed ? "ALLOWED" : "DENIED";
+  console.log(`[workspace-audit] ${status} | ${entry.operation} | ${entry.path} | ${entry.reason || "ok"}`);
+
+  return logEntry;
+}
+
+/**
+ * Get recent audit log entries
+ */
+export function getAuditLogEntries(limit = 100) {
+  return auditLog.slice(0, Math.min(limit, MAX_AUDIT_LOG_SIZE));
+}
 
 /**
  * Validate and sanitize workspace path

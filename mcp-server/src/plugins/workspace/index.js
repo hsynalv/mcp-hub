@@ -1,10 +1,11 @@
 /**
  * Workspace Plugin
  *
- * File operations within configured workspace root.
+ * File operations within configured workspace root with audit logging.
  */
 
 import { Router } from "express";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
 import {
   readFile,
   writeFile,
@@ -12,8 +13,14 @@ import {
   searchFiles,
   patchFile,
   validateWorkspacePath,
+  extractContext,
+  auditEntry,
+  generateCorrelationId,
+  getAuditLogEntries,
 } from "./workspace.core.js";
 import { ToolTags } from "../../core/tool-registry.js";
+
+const pluginError = createPluginErrorHandler("workspace");
 
 export const name = "workspace";
 export const version = "1.0.0";
@@ -27,6 +34,7 @@ export const endpoints = [
   { method: "GET", path: "/workspace/list", description: "List directory contents", scope: "read" },
   { method: "GET", path: "/workspace/search", description: "Search files by pattern", scope: "read" },
   { method: "POST", path: "/workspace/patch", description: "Apply patch to file", scope: "write" },
+  { method: "GET", path: "/workspace/audit", description: "View audit log", scope: "read" },
 ];
 
 // ── MCP Tools ────────────────────────────────────────────────────────────────
@@ -115,52 +123,205 @@ export function register(app) {
   // GET /workspace/read?path=...
   router.get("/read", async (req, res) => {
     const path = req.query.path;
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
     if (!path) {
-      return res.status(400).json({ ok: false, error: { code: "missing_path", message: "path query parameter required" } });
+      const err = pluginError.validation("path query parameter required", { code: "missing_path" });
+      auditEntry({
+        operation: "read",
+        path: "(missing)",
+        allowed: false,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+        reason: "missing_path",
+      });
+      return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
     const result = await readFile(path, { maxSize: parseInt(req.query.maxSize, 10) || undefined });
-    res.status(result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400).json(result);
+
+    auditEntry({
+      operation: "read",
+      path,
+      allowed: result.ok,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      reason: result.ok ? null : result.error?.code,
+      error: result.ok ? null : result.error?.message,
+      metadata: result.ok ? { size: result.data?.size, truncated: result.data?.truncated } : null,
+    });
+
+    const statusCode = result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400;
+    res.status(statusCode).json(result);
   });
 
   // POST /workspace/write
   router.post("/write", async (req, res) => {
     const { path, content, createDirs } = req.body;
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
     if (!path || content === undefined) {
-      return res.status(400).json({ ok: false, error: { code: "missing_fields", message: "path and content required" } });
+      const err = pluginError.validation("path and content required", { code: "missing_fields" });
+      auditEntry({
+        operation: "write",
+        path: path || "(missing)",
+        allowed: false,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+        reason: "missing_fields",
+      });
+      return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
     const result = await writeFile(path, content, { createDirs: createDirs !== false });
+
+    auditEntry({
+      operation: "write",
+      path,
+      allowed: result.ok,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      reason: result.ok ? null : result.error?.code,
+      error: result.ok ? null : result.error?.message,
+      metadata: result.ok ? { bytesWritten: result.data?.bytesWritten, created: result.data?.created } : null,
+    });
+
     res.status(result.ok ? 200 : 400).json(result);
   });
 
   // GET /workspace/list?path=...
   router.get("/list", async (req, res) => {
-    const result = await listDirectory(req.query.path || ".");
-    res.status(result.ok ? 200 : result.error?.code === "directory_not_found" ? 404 : 400).json(result);
+    const path = req.query.path || ".";
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
+    const result = await listDirectory(path);
+
+    auditEntry({
+      operation: "list",
+      path,
+      allowed: result.ok,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      reason: result.ok ? null : result.error?.code,
+      error: result.ok ? null : result.error?.message,
+      metadata: result.ok ? { count: result.data?.count } : null,
+    });
+
+    const statusCode = result.ok ? 200 : result.error?.code === "directory_not_found" ? 404 : 400;
+    res.status(statusCode).json(result);
   });
 
   // GET /workspace/search?pattern=...&root=...
   router.get("/search", async (req, res) => {
     const pattern = req.query.pattern;
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
     if (!pattern) {
-      return res.status(400).json({ ok: false, error: { code: "missing_pattern", message: "pattern query parameter required" } });
+      const err = pluginError.validation("pattern query parameter required", { code: "missing_pattern" });
+      auditEntry({
+        operation: "search",
+        path: req.query.root || ".",
+        allowed: false,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+        reason: "missing_pattern",
+      });
+      return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
     const result = await searchFiles(pattern, { root: req.query.root });
+
+    auditEntry({
+      operation: "search",
+      path: req.query.root || ".",
+      allowed: result.ok,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      reason: result.ok ? null : result.error?.code,
+      error: result.ok ? null : result.error?.message,
+      metadata: result.ok ? { total: result.data?.total, truncated: result.data?.truncated } : null,
+    });
+
     res.status(result.ok ? 200 : 400).json(result);
   });
 
   // POST /workspace/patch
   router.post("/patch", async (req, res) => {
     const { path, search, replace } = req.body;
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
     if (!path || !search || replace === undefined) {
-      return res.status(400).json({ ok: false, error: { code: "missing_fields", message: "path, search, and replace required" } });
+      const err = pluginError.validation("path, search, and replace required", { code: "missing_fields" });
+      auditEntry({
+        operation: "patch",
+        path: path || "(missing)",
+        allowed: false,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+        reason: "missing_fields",
+      });
+      return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
     const patch = `${search}===REPLACE===${replace}`;
     const result = await patchFile(path, patch, { mode: "search-replace" });
-    res.status(result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400).json(result);
+
+    auditEntry({
+      operation: "patch",
+      path,
+      allowed: result.ok,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      reason: result.ok ? null : result.error?.code,
+      error: result.ok ? null : result.error?.message,
+      metadata: result.ok ? { originalSize: result.data?.originalSize, newSize: result.data?.newSize, changed: result.data?.changed } : null,
+    });
+
+    const statusCode = result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400;
+    res.status(statusCode).json(result);
+  });
+
+  // GET /workspace/audit
+  router.get("/audit", async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
   });
 
   app.use("/workspace", router);
