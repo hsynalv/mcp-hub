@@ -4,14 +4,36 @@
 
 import sql from "mssql";
 import { createPluginErrorHandler } from "../../../core/error-standard.js";
+import { config } from "../../../core/config.js";
 
 const pluginError = createPluginErrorHandler("database");
 
 let pool = null;
 
+// Database configuration
+const dbConfig = config.database || {};
+const CONNECTION_TIMEOUT_MS = dbConfig.connectionTimeoutMs || 10000;
+const QUERY_TIMEOUT_MS = dbConfig.queryTimeoutMs || 30000;
+
 function getConfig() {
   if (process.env.MSSQL_CONNECTION_STRING) {
-    return { connectionString: process.env.MSSQL_CONNECTION_STRING };
+    return {
+      connectionString: process.env.MSSQL_CONNECTION_STRING,
+      // Connection timeout
+      connectionTimeout: CONNECTION_TIMEOUT_MS,
+      // Request timeout (query timeout)
+      requestTimeout: QUERY_TIMEOUT_MS,
+      // Pool configuration
+      pool: {
+        max: dbConfig.maxPoolSize || 10,
+        min: 0,
+        idleTimeoutMillis: dbConfig.idleTimeoutMs || 30000,
+      },
+      options: {
+        encrypt: true,
+        trustServerCertificate: true,
+      },
+    };
   }
   if (process.env.MSSQL_HOST && process.env.MSSQL_DATABASE) {
     return {
@@ -20,6 +42,16 @@ function getConfig() {
       user:     process.env.MSSQL_USER,
       password: process.env.MSSQL_PASSWORD,
       database: process.env.MSSQL_DATABASE,
+      // Connection timeout
+      connectionTimeout: CONNECTION_TIMEOUT_MS,
+      // Request timeout (query timeout)
+      requestTimeout: QUERY_TIMEOUT_MS,
+      // Pool configuration
+      pool: {
+        max: dbConfig.maxPoolSize || 10,
+        min: 0,
+        idleTimeoutMillis: dbConfig.idleTimeoutMs || 30000,
+      },
       options:  { encrypt: true, trustServerCertificate: true },
     };
   }

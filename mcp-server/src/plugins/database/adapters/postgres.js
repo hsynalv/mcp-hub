@@ -4,12 +4,19 @@
 
 import pg from "pg";
 import { createPluginErrorHandler } from "../../../core/error-standard.js";
+import { config } from "../../../core/config.js";
 
 const pluginError = createPluginErrorHandler("database");
 
 const { Pool } = pg;
 
 let pool = null;
+
+// Database configuration
+const dbConfig = config.database || {};
+const CONNECTION_TIMEOUT_MS = dbConfig.connectionTimeoutMs || 10000;
+const MAX_POOL_SIZE = dbConfig.maxPoolSize || 10;
+const IDLE_TIMEOUT_MS = dbConfig.idleTimeoutMs || 30000;
 
 function getPool() {
   if (pool) return pool;
@@ -18,7 +25,22 @@ function getPool() {
       ? `postgresql://${process.env.PG_USER}:${process.env.PG_PASSWORD || ""}@${process.env.PG_HOST}:${process.env.PG_PORT || 5432}/${process.env.PG_DATABASE}`
       : null);
   if (!connStr) throw pluginError.validation("PostgreSQL connection not configured - set PG_CONNECTION_STRING or PG_HOST/PG_USER/PG_DATABASE");
-  pool = new Pool({ connectionString: connStr });
+  
+  pool = new Pool({
+    connectionString: connStr,
+    // Connection pool safety
+    max: MAX_POOL_SIZE,
+    idleTimeoutMillis: IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: CONNECTION_TIMEOUT_MS,
+    // Query timeout (statement timeout) - 30 seconds default
+    statement_timeout: dbConfig.queryTimeoutMs || 30000,
+  });
+  
+  // Handle pool errors
+  pool.on("error", (err) => {
+    console.error("[database] PostgreSQL pool error:", err);
+  });
+  
   return pool;
 }
 
