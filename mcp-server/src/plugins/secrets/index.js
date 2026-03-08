@@ -1,12 +1,18 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
 import {
   listSecrets,
   registerSecret,
   unregisterSecret,
   resolveTemplate,
+  auditEntry,
+  generateCorrelationId,
+  getAuditLogEntries,
 } from "./secrets.store.js";
+
+const pluginError = createPluginErrorHandler("secrets");
 
 export const name = "secrets";
 export const version = "1.0.0";
@@ -18,6 +24,7 @@ export const endpoints = [
   { method: "POST",   path: "/secrets",          description: "Register a new secret name",               scope: "danger" },
   { method: "DELETE", path: "/secrets/:name",    description: "Unregister a secret name",                 scope: "danger" },
   { method: "POST",   path: "/secrets/resolve",  description: "Resolve template refs server-side",        scope: "write"  },
+  { method: "GET",    path: "/secrets/audit",    description: "View audit log (values never included)",    scope: "read"   },
   { method: "GET",    path: "/secrets/health",   description: "Plugin health",                            scope: "read"   },
 ];
 export const examples = [
@@ -38,11 +45,58 @@ const resolveSchema = z.object({
 function validate(schema, body, res) {
   const result = schema.safeParse(body);
   if (!result.success) {
-    res.status(400).json({ ok: false, error: "invalid_request", details: result.error.flatten() });
+    const err = pluginError.validation("Invalid request", result.error.flatten());
+    res.status(400).json({ ok: false, error: err.code, message: err.message, details: err.details });
     return null;
   }
   return result.data;
 }
+
+function extractContext(req) {
+  return {
+    actor: req.user?.id || req.user?.email || "anonymous",
+    workspaceId: req.headers["x-workspace-id"] || null,
+    projectId: req.headers["x-project-id"] || null,
+  };
+}
+
+async function runWithAudit(operation, secretName, context, fn) {
+  const startTime = Date.now();
+  const correlationId = generateCorrelationId();
+
+  try {
+    const result = await fn();
+
+    auditEntry({
+      operation,
+      secretName,
+      allowed: true,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+    });
+
+    return result;
+  } catch (err) {
+    auditEntry({
+      operation,
+      secretName,
+      allowed: false,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId,
+      durationMs: Date.now() - startTime,
+      error: err.message,
+      reason: err.code || "execution_error",
+    });
+    throw err;
+  }
+}
+
+function _unused() { runWithAudit; } // Prevent lint error, function used for future extension
 
 export function register(app) {
   const router = Router();
@@ -55,9 +109,16 @@ export function register(app) {
    * GET /secrets
    * Returns registered secret names with hasValue flag (no values).
    */
-  router.get("/", requireScope("read"), (_req, res) => {
-    const secrets = listSecrets();
-    res.json({ ok: true, count: secrets.length, secrets });
+  router.get("/", requireScope("read"), (req, res) => {
+    const context = extractContext(req);
+    try {
+      const secrets = listSecrets(context);
+      res.json({ ok: true, count: secrets.length, secrets });
+    } catch (err) {
+      const errCode = err.message.includes("workspaceId") ? "workspace_required" : "list_failed";
+      const stdErr = pluginError.authorization(err.message, { code: errCode });
+      res.status(403).json({ ok: false, error: stdErr.code, message: stdErr.message });
+    }
   });
 
   /**
@@ -69,11 +130,41 @@ export function register(app) {
     const data = validate(registerSchema, req.body, res);
     if (!data) return;
 
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
     try {
-      const entry = registerSecret(data.name, data.description);
+      const entry = registerSecret(data.name, data.description, context);
+
+      auditEntry({
+        operation: "register",
+        secretName: data.name,
+        allowed: true,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+      });
+
       res.status(201).json({ ok: true, secret: entry });
     } catch (err) {
-      res.status(400).json({ ok: false, error: "invalid_name", message: err.message });
+      auditEntry({
+        operation: "register",
+        secretName: data.name,
+        allowed: false,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+        error: err.message,
+        reason: "invalid_name",
+      });
+
+      const stdErr = pluginError.validation(err.message, { code: "invalid_name" });
+      res.status(400).json({ ok: false, error: stdErr.code, message: stdErr.message });
     }
   });
 
@@ -83,11 +174,48 @@ export function register(app) {
    */
   router.delete("/:name", requireScope("danger"), (req, res) => {
     const { name: secretName } = req.params;
-    const existed = unregisterSecret(secretName);
-    if (!existed) {
-      return res.status(404).json({ ok: false, error: "not_found", message: `Secret "${secretName}" is not registered` });
+    const context = extractContext(req);
+    const startTime = Date.now();
+    const correlationId = generateCorrelationId();
+
+    try {
+      const existed = unregisterSecret(secretName, context);
+
+      auditEntry({
+        operation: "unregister",
+        secretName,
+        allowed: true,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+      });
+
+      if (!existed) {
+        const stdErr = pluginError.notFound(`Secret "${secretName}" is not registered`, { resource: "secret", name: secretName });
+        return res.status(404).json({ ok: false, error: stdErr.code, message: stdErr.message });
+      }
+
+      res.json({ ok: true, unregistered: secretName });
+    } catch (err) {
+      auditEntry({
+        operation: "unregister",
+        secretName,
+        allowed: false,
+        actor: context.actor,
+        workspaceId: context.workspaceId,
+        projectId: context.projectId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+        error: err.message,
+        reason: err.message.includes("workspaceId") ? "workspace_required" : "unregister_failed",
+      });
+
+      const statusCode = err.message.includes("workspaceId") ? 403 : 500;
+      const stdErr = pluginError.internal(err.message);
+      res.status(statusCode).json({ ok: false, error: stdErr.code, message: stdErr.message });
     }
-    res.json({ ok: true, unregistered: secretName });
   });
 
   /**
@@ -100,6 +228,7 @@ export function register(app) {
     const data = validate(resolveSchema, req.body, res);
     if (!data) return;
 
+    const context = extractContext(req);
     const { template } = data;
 
     // Find all refs in the template
@@ -112,6 +241,20 @@ export function register(app) {
       if (val != null) resolved.push(ref);
       else missing.push(ref);
     }
+
+    // Log resolution attempt (never log actual values)
+    const startTime = Date.now();
+    auditEntry({
+      operation: "resolve",
+      secretName: refs.join(","), // Multiple secrets can be resolved in one template
+      allowed: missing.length === 0,
+      actor: context.actor,
+      workspaceId: context.workspaceId,
+      projectId: context.projectId,
+      correlationId: generateCorrelationId(),
+      durationMs: Date.now() - startTime,
+      reason: missing.length > 0 ? `missing: ${missing.join(",")}` : null,
+    });
 
     // Return summary only — never return resolved values
     res.json({
@@ -127,6 +270,15 @@ export function register(app) {
         "[RESOLVED]"
       ),
     });
+  });
+
+  /**
+   * GET /secrets/audit
+   * Returns secrets operation audit log (values never included).
+   */
+  router.get("/audit", requireScope("read"), (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
   });
 
   app.use("/secrets", router);
