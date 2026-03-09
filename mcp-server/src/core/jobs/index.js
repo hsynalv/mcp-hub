@@ -5,8 +5,26 @@
  * Plugins can register job handlers via registerJobHandler().
  */
 
+// Core types
+export { JobStatus, VALID_JOB_STATUSES } from "./job.types.js";
+
+// Store
+export { JobStore, createJobStore, getJobStore, setJobStore } from "./job.store.js";
+
+// Events
+export { JobEventEmitter, JobEventType, getJobEventEmitter, setJobEventEmitter } from "./job.events.js";
+
+// Queue
+export { JobQueue, createJobQueue } from "./job.queue.js";
+
+// Worker
+export { JobWorker, createJobWorker } from "./job.worker.js";
+
+// Manager - primary interface
+export { JobManager, createJobManager, getJobManager, setJobManager } from "./job.manager.js";
+
+// Legacy exports for backward compatibility
 export {
-  // Core job functions
   createJob,
   submitJob,
   getJob,
@@ -17,5 +35,4 @@ export {
   JobState,
 } from "../jobs.js";
 
-// Re-export with clearer name for plugins
 export { registerJobRunner as registerJobHandler } from "../jobs.js";
