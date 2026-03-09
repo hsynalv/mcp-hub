@@ -13,8 +13,33 @@ import {
   getAuditLogEntries,
   MAX_FILE_SIZE_MB,
 } from "./storage.adapter.js";
+import { canAccessFileStorage, getPolicyManager } from "../../core/policy/index.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const pluginError = createPluginErrorHandler("file-storage");
+
+export const metadata = createMetadata({
+  name: "file-storage",
+  version: "1.0.0",
+  description: "S3, Google Drive ve lokal depolama ile dosya işlemleri",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write", "admin"],
+  capabilities: ["read", "write", "delete", "file", "storage", "audit", "policy"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: true,
+  supportsWorkspaceIsolation: true,
+  hasTests: true,
+  hasDocs: true,
+  riskLevel: RiskLevel.HIGH,
+  owner: "platform-team",
+  tags: ["storage", "files", "s3", "gdrive", "local"],
+  dependencies: [],
+  backends: ["s3", "gdrive", "local"],
+  since: "1.0.0",
+  notes: "Supports multiple storage backends with unified interface.",
+});
 
 export const name = "file-storage";
 export const version = "1.0.0";
@@ -223,6 +248,26 @@ export function register(app) {
       const err = pluginError.validation("Path traversal or invalid path");
       return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
+
+    // Policy check using core policy manager
+    const policyManager = getPolicyManager();
+    if (policyManager) {
+      const context = extractContext(req);
+      const policyResult = await canAccessFileStorage({
+        actor: context.actor || "unknown",
+        workspaceId: context.workspaceId || "global",
+        action: "write",
+        path,
+      });
+      if (!policyResult.allowed) {
+        return res.status(403).json({
+          ok: false,
+          error: "POLICY_DENIED",
+          message: policyResult.reason || "Write operation not authorized",
+        });
+      }
+    }
+
     const context = extractContext(req);
     await runAdapter(data.backend, (adapter) => adapter.write(path, data.content, data.contentType, context), res, req, { operation: "write", path });
   });
@@ -234,6 +279,26 @@ export function register(app) {
       const err = pluginError.validation("Path required and must be valid");
       return res.status(400).json({ ok: false, error: err.code, message: err.message });
     }
+
+    // Policy check using core policy manager
+    const policyManager = getPolicyManager();
+    if (policyManager) {
+      const context = extractContext(req);
+      const policyResult = await canAccessFileStorage({
+        actor: context.actor || "unknown",
+        workspaceId: context.workspaceId || "global",
+        action: "delete",
+        path,
+      });
+      if (!policyResult.allowed) {
+        return res.status(403).json({
+          ok: false,
+          error: "POLICY_DENIED",
+          message: policyResult.reason || "Delete operation not authorized",
+        });
+      }
+    }
+
     const context = extractContext(req);
     await runAdapter(backend, (adapter) => adapter.delete(path, context), res, req, { operation: "delete", path });
   });

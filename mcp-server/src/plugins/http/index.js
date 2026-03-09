@@ -10,8 +10,33 @@ import { httpRequest } from "./http.client.js";
 import { validateUrlSafety } from "./security.js";
 import { config } from "../../core/config.js";
 import { randomBytes } from "crypto";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
-// Audit log for HTTP requests (simple in-memory, similar to shell)
+// ── Plugin Metadata ──────────────────────────────────────────────────────────
+
+export const metadata = createMetadata({
+  name: "http",
+  version: "1.0.0",
+  description: "HTTP client with caching, rate limiting, and security controls",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write"],
+  capabilities: ["http", "request", "cache", "audit", "security"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: false,
+  supportsWorkspaceIsolation: false,
+  hasTests: true,
+  hasDocs: true,
+  riskLevel: RiskLevel.MEDIUM,
+  owner: "platform-team",
+  tags: ["http", "client", "api", "rest", "webhook"],
+  dependencies: [],
+  since: "1.0.0",
+  notes: "HTTP client with built-in caching, rate limiting, and domain security controls.",
+});
+
+// ── Audit Log ────────────────────────────────────────────────────────────────
 const httpAuditLog = [];
 const MAX_AUDIT_LOG = 1000;
 

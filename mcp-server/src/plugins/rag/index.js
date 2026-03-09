@@ -8,8 +8,32 @@ import { z } from "zod";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { MemoryStore } from "./stores/memory.store.js";
+import { auditLog, getAuditManager } from "../../core/audit/index.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const pluginError = createPluginErrorHandler("rag");
+
+export const metadata = createMetadata({
+  name: "rag",
+  version: "1.0.0",
+  description: "Document indexing and semantic search with workspace isolation and audit logging",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write"],
+  capabilities: ["read", "write", "rag", "search", "indexing", "semantic", "audit"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: true,
+  supportsWorkspaceIsolation: true,
+  hasTests: true,
+  hasDocs: true,
+  riskLevel: RiskLevel.MEDIUM,
+  owner: "platform-team",
+  tags: ["rag", "search", "semantic", "documents", "ai"],
+  dependencies: [],
+  since: "1.0.0",
+  notes: "RAG (Retrieval-Augmented Generation) for document indexing and semantic search.",
+});
 
 // Configuration
 const MAX_DOCUMENT_SIZE = parseInt(process.env.RAG_MAX_DOCUMENT_SIZE, 10) || 10 * 1024 * 1024; // 10MB default
@@ -25,10 +49,6 @@ const store = new MemoryStore({ name: "rag-memory" });
 
 // Global ID counter for document IDs
 const globalNextId = { value: 1 };
-
-// In-memory audit log
-const auditLog = [];
-const MAX_AUDIT_LOG_SIZE = 1000;
 
 // Plugin exports
 export const name = "rag";
@@ -191,39 +211,36 @@ export function sanitizeMetadata(metadata) {
 /**
  * Add audit entry for RAG operations (no content logged)
  */
-export function auditEntry(entry) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
+export async function auditEntry(entry) {
+  await auditLog({
+    plugin: "rag",
     operation: entry.operation,
-    workspaceId: entry.workspaceId || null,
+    actor: entry.actor || "anonymous",
+    workspaceId: entry.workspaceId || "global",
     projectId: entry.projectId || null,
-    actor: entry.actor,
-    correlationId: entry.correlationId || null,
-    durationMs: entry.durationMs || null,
-    docCount: entry.docCount || null,
-    chunkCount: entry.chunkCount || null,
-    queryLength: entry.queryLength || null,
-    topK: entry.topK || null,
+    correlationId: entry.correlationId,
+    allowed: entry.success,
     success: entry.success,
-    error: entry.error || null,
-  };
-
-  auditLog.unshift(logEntry);
-  if (auditLog.length > MAX_AUDIT_LOG_SIZE) {
-    auditLog.pop();
-  }
+    durationMs: entry.durationMs,
+    error: entry.error || undefined,
+    metadata: {
+      docCount: entry.docCount,
+      chunkCount: entry.chunkCount,
+      queryLength: entry.queryLength,
+      topK: entry.topK,
+    },
+  });
 
   const status = entry.success ? "SUCCESS" : "FAILED";
   console.log(`[rag-audit] ${status} | ${entry.operation} | ws:${entry.workspaceId || "global"} | ${entry.correlationId}`);
-
-  return logEntry;
 }
 
 /**
  * Get recent audit log entries
  */
-export function getAuditLogEntries(limit = 100) {
-  return auditLog.slice(0, Math.min(limit, MAX_AUDIT_LOG_SIZE));
+export async function getAuditLogEntries(limit = 100) {
+  const manager = getAuditManager();
+  return await manager.getRecentEntries({ limit, plugin: "rag" });
 }
 
 /**

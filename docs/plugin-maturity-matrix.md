@@ -11,17 +11,17 @@ This document provides a comprehensive overview of all MCP Hub plugins and their
 | llm-router | LLM routing & cost tracking | 🟢 stable | no | yes | yes |
 | slack | Slack messaging/bots | 🟢 stable | yes | yes | yes |
 | git | Git operations | 🟢 stable | no | yes | yes |
-| database | MSSQL/PostgreSQL/MongoDB | 🟡 beta | no | no | yes |
-| file-storage | S3/GDrive/local files | 🟡 beta | no | no | yes |
-| rag | Document indexing/search | 🟡 beta | no | no | yes |
-| http | Controlled outbound HTTP | 🟡 beta | no | no | yes |
-| policy | Policy engine/guardrails | 🟡 beta | no | no | yes |
-| secrets | Secret reference system | 🟡 beta | no | no | yes |
-| workspace | File operations | 🟡 beta | no | no | yes |
+| database | MSSQL/PostgreSQL/MongoDB | � stable | no | yes | yes |
+| file-storage | S3/GDrive/local files | � stable | no | yes | yes |
+| rag | Document indexing/search | � stable | no | yes | yes |
+| http | Controlled outbound HTTP | � stable | no | yes | yes |
+| policy | Policy engine/guardrails | � stable | no | yes | yes |
+| secrets | Secret reference system | � stable | no | yes | yes |
+| workspace | File operations | � stable | no | yes | yes |
 | observability | Health/metrics/dashboard | 🟡 beta | no | no | yes |
 | n8n | n8n workflow management | 🟡 beta | yes | no | yes |
 | docker | Container management | 🟡 beta | yes | no | yes |
-| shell | Shell command execution | 🔴 experimental | yes | no | yes |
+| shell | Shell command execution | � stable | yes | yes | yes |
 | email | SMTP/IMAP email | 🔴 experimental | yes | no | yes |
 | openapi | OpenAPI spec analyzer | 🔴 experimental | no | no | yes |
 | brain | Knowledge memory | 🔴 experimental | no | no | yes |
@@ -61,13 +61,6 @@ These plugins have comprehensive documentation, tests, and metadata:
 | llm-router | Cost-effective LLM routing |
 | slack | Team notifications |
 | git | Repository operations |
-
-### Beta (🟡 beta)
-
-Functional plugins needing more testing or documentation:
-
-| Plugin | Use Case |
-|--------|----------|
 | database | Multi-database queries |
 | file-storage | Cloud/local file operations |
 | rag | Document search |
@@ -75,6 +68,14 @@ Functional plugins needing more testing or documentation:
 | policy | Guardrails & approval flows |
 | secrets | Secure credential management |
 | workspace | Project file operations |
+| shell | Command execution (sandboxed) |
+
+### Beta (🟡 beta)
+
+Functional plugins needing more testing or documentation:
+
+| Plugin | Use Case |
+|--------|----------|
 | observability | Monitoring & metrics |
 | n8n | Workflow automation |
 | docker | Container management |

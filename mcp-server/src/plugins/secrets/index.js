@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { canResolveSecret, getPolicyManager } from "../../core/policy/index.js";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import {
   listSecrets,
   registerSecret,
@@ -224,7 +226,7 @@ export function register(app) {
    * Returns only a confirmation — the resolved value is used server-side.
    * This endpoint is for verification: did all refs resolve?
    */
-  router.post("/resolve", requireScope("write"), (req, res) => {
+  router.post("/resolve", requireScope("write"), async (req, res) => {
     const data = validate(resolveSchema, req.body, res);
     if (!data) return;
 
@@ -235,6 +237,23 @@ export function register(app) {
     const refs = [...template.matchAll(/\{\{secret:([A-Z0-9_]+)\}\}/g)].map((m) => m[1]);
     const resolved = [];
     const missing  = [];
+
+    // Policy check using core policy manager
+    const policyManager = getPolicyManager();
+    if (policyManager) {
+      const policyResult = await canResolveSecret({
+        actor: context.actor || "unknown",
+        workspaceId: context.workspaceId || "global",
+        secretName: refs.join(","),
+      });
+      if (!policyResult.allowed) {
+        return res.status(403).json({
+          ok: false,
+          error: policyResult.code || "POLICY_DENIED",
+          message: policyResult.reason || "Secret resolution not authorized",
+        });
+      }
+    }
 
     for (const ref of refs) {
       const val = process.env[ref];

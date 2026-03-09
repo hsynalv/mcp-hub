@@ -19,8 +19,31 @@ import {
   getAuditLogEntries,
 } from "./workspace.core.js";
 import { ToolTags } from "../../core/tool-registry.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const pluginError = createPluginErrorHandler("workspace");
+
+export const metadata = createMetadata({
+  name: "workspace",
+  version: "1.0.0",
+  description: "File operations within configured workspace root with audit logging",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write"],
+  capabilities: ["read", "write", "delete", "file", "search", "audit"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: true,
+  supportsWorkspaceIsolation: true,
+  hasTests: true,
+  hasDocs: true,
+  riskLevel: RiskLevel.MEDIUM,
+  owner: "platform-team",
+  tags: ["workspace", "files", "filesystem", "local"],
+  dependencies: [],
+  since: "1.0.0",
+  notes: "All file operations are constrained to workspace root directory.",
+});
 
 export const name = "workspace";
 export const version = "1.0.0";

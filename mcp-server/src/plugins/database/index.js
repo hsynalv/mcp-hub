@@ -6,8 +6,33 @@ import { getAdapter, isValidType } from "./db.adapter.js";
 import { Errors, standardizeError, createPluginErrorHandler } from "../../core/error-standard.js";
 import { config } from "../../core/config.js";
 import { randomBytes } from "crypto";
+import { canAccessDatabase, getPolicyManager } from "../../core/policy/index.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const pluginError = createPluginErrorHandler("database");
+
+export const metadata = createMetadata({
+  name: "database",
+  version: "1.0.0",
+  description: "SQL and MongoDB query interface with safety controls",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write", "admin"],
+  capabilities: ["read", "write", "delete", "database", "query", "audit", "policy"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: true,
+  supportsWorkspaceIsolation: true,
+  hasTests: true,
+  hasDocs: true,
+  riskLevel: RiskLevel.HIGH,
+  owner: "platform-team",
+  tags: ["database", "sql", "mongodb", "query", "data"],
+  dependencies: [],
+  backends: ["postgres", "mysql", "sqlite", "mongodb"],
+  since: "1.0.0",
+  notes: "Supports SQL and MongoDB queries with policy-based access control and audit logging.",
+});
 
 // Database configuration
 const dbConfig = config.database || {};
@@ -417,12 +442,19 @@ export function register(app) {
           throw pluginError.authorization(`Query blocked: ${validation.reason}`);
         }
 
-        // Check if write operations are allowed for non-safe queries
-        if (!validation.isSafe) {
-          const opCheck = isDestructiveOperationAllowed(validation.type);
-          if (!opCheck.allowed) {
-            auditEntry({ operation: validation.type, type, query, allowed: false, reason: opCheck.reason, correlationId, actor, workspaceId, projectId });
-            throw pluginError.authorization(opCheck.message);
+        // Policy check using core policy manager
+        const policyManager = getPolicyManager();
+        if (policyManager) {
+          const policyResult = await canAccessDatabase({
+            actor: actor || "unknown",
+            workspaceId: workspaceId || "global",
+            action: validation.type,
+            table: undefined,
+            metadata: { sql: query.substring(0, 100) },
+          });
+          if (!policyResult.allowed) {
+            auditEntry({ operation: validation.type, type, query, allowed: false, reason: policyResult.reason || "Database access denied", correlationId, actor, workspaceId, projectId });
+            throw pluginError.authorization(policyResult.reason || "Database access denied");
           }
         }
 

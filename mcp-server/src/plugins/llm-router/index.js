@@ -8,6 +8,33 @@
 import OpenAI from "openai";
 import { withResilience } from "../../core/resilience.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { auditLog, generateCorrelationId as coreGenerateCorrelationId } from "../../core/audit/index.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
+
+const pluginError = createPluginErrorHandler("llm-router");
+
+export const metadata = createMetadata({
+  name: "llm-router",
+  version: "1.0.0",
+  description: "Multi-LLM Router Plugin - routes tasks to specialized LLM providers",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write"],
+  capabilities: ["llm", "ai", "routing", "completion", "chat", "audit"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: false,
+  supportsWorkspaceIsolation: true,
+  hasTests: true,
+  hasDocs: true,
+  riskLevel: RiskLevel.MEDIUM,
+  owner: "platform-team",
+  tags: ["llm", "ai", "openai", "anthropic", "google", "mistral", "ollama"],
+  dependencies: [],
+  providers: ["openai", "anthropic", "google", "mistral", "ollama"],
+  since: "1.0.0",
+  notes: "Routes tasks to specialized LLM providers based on capability, cost, and task type.",
+});
 
 // AbortController polyfill for Node.js < 18
 const _AbortController = typeof globalThis.AbortController !== "undefined" ? globalThis.AbortController : class AbortController {
@@ -17,66 +44,58 @@ const _AbortController = typeof globalThis.AbortController !== "undefined" ? glo
   abort() { this.signal.aborted = true; }
 };
 
-const pluginError = createPluginErrorHandler("llm-router");
-
 // Configuration
 const DEFAULT_LLM_TIMEOUT_MS = parseInt(process.env.LLM_TIMEOUT_MS, 10) || 60000; // 60s default
 const MAX_INPUT_TOKENS = parseInt(process.env.LLM_MAX_INPUT_TOKENS, 10) || 128000;
 const MAX_OUTPUT_TOKENS = parseInt(process.env.LLM_MAX_OUTPUT_TOKENS, 10) || 4096;
 const MAX_PROMPT_LENGTH = parseInt(process.env.LLM_MAX_PROMPT_LENGTH, 10) || 100000; // chars
 
-// In-memory audit log
-const auditLog = [];
-const MAX_AUDIT_LOG_SIZE = 1000;
-
 /**
  * Generate correlation ID for tracing
  */
 export function generateCorrelationId() {
-  return `llm-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  return coreGenerateCorrelationId ? coreGenerateCorrelationId() : `llm-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
 /**
  * Add audit entry for LLM operations (no prompt content logged)
  */
-export function auditEntry(entry) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
+export async function auditEntry(entry) {
+  await auditLog({
+    plugin: "llm-router",
     operation: entry.operation,
-    provider: entry.provider,
-    model: entry.model,
-    task: entry.task,
-    inputTokens: entry.inputTokens,
-    outputTokens: entry.outputTokens,
-    promptLength: entry.promptLength,
-    responseLength: entry.responseLength,
-    durationMs: entry.durationMs,
-    actor: entry.actor,
-    workspaceId: entry.workspaceId,
-    projectId: entry.projectId,
+    actor: entry.actor || "anonymous",
+    workspaceId: entry.workspaceId || "global",
+    projectId: entry.projectId || null,
     correlationId: entry.correlationId,
+    allowed: entry.success,
     success: entry.success,
-    error: entry.error,
-    fallback: entry.fallback,
-    retryCount: entry.retryCount,
-  };
-
-  auditLog.unshift(logEntry);
-  if (auditLog.length > MAX_AUDIT_LOG_SIZE) {
-    auditLog.pop();
-  }
+    durationMs: entry.durationMs,
+    error: entry.error || undefined,
+    metadata: {
+      provider: entry.provider,
+      model: entry.model,
+      task: entry.task,
+      inputTokens: entry.inputTokens,
+      outputTokens: entry.outputTokens,
+      promptLength: entry.promptLength,
+      responseLength: entry.responseLength,
+      fallback: entry.fallback,
+      retryCount: entry.retryCount,
+    },
+  });
 
   const status = entry.success ? "SUCCESS" : "FAILED";
   console.log(`[llm-audit] ${status} | ${entry.provider}/${entry.model} | ${entry.task} | ${entry.durationMs}ms | ${entry.correlationId}`);
-
-  return logEntry;
 }
 
 /**
  * Get recent audit log entries
  */
-export function getAuditLogEntries(limit = 100) {
-  return auditLog.slice(0, Math.min(limit, MAX_AUDIT_LOG_SIZE));
+export async function getAuditLogEntries(limit = 100) {
+  const { getAuditManager } = await import("../../core/audit/index.js");
+  const manager = getAuditManager();
+  return await manager.getRecentEntries({ limit, plugin: "llm-router" });
 }
 
 /**
