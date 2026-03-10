@@ -6,6 +6,7 @@ import { requireScope } from "../../core/auth.js";
 import { getLogs, getStats } from "../../core/audit.js";
 import { getPlugins } from "../../core/plugins.js";
 import { getJobStats } from "../../core/jobs.js";
+import { getHealthService, HealthStatus } from "../../core/health/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +17,7 @@ export const capabilities = ["read"];
 export const requires = [];
 export const endpoints = [
   { method: "GET", path: "/observability/health",  description: "Aggregate health of all plugins", scope: "read" },
+  { method: "GET", path: "/observability/health/detailed", description: "Detailed health with dependencies", scope: "read" },
   { method: "GET", path: "/observability/metrics", description: "Prometheus-format metrics",        scope: "read" },
   { method: "GET", path: "/observability/errors",  description: "Recent errors from audit log",     scope: "read" },
   { method: "GET", path: "/observability/dashboard", description: "Web dashboard for monitoring",    scope: "read" },
@@ -24,6 +26,7 @@ export const endpoints = [
 ];
 export const examples = [
   "GET /observability/health",
+  "GET /observability/health/detailed",
   "GET /observability/metrics",
   "GET /observability/errors?limit=20",
   "GET /observability/dashboard",
@@ -92,6 +95,70 @@ export function register(app) {
         totalErrors:   stats.errors ?? 0,
         errorRate:     stats.total ? Math.round((stats.errors / stats.total) * 100) : 0,
       },
+    });
+  });
+
+  /**
+   * GET /observability/health/detailed
+   * Detailed health check with dependencies using centralized health service.
+   */
+  router.get("/health/detailed", requireScope("read"), async (req, res) => {
+    const healthService = getHealthService();
+    const forceRefresh = req.query.refresh === "true";
+
+    // If health service has no plugins registered, register them
+    const plugins = getPlugins();
+    if (healthService.getStatus().pluginsRegistered === 0) {
+      for (const plugin of plugins) {
+        // Check if plugin has a health check function
+        const pluginModule = await import(
+          `../../plugins/${plugin.name}/index.js`
+        ).catch(() => null);
+
+        if (pluginModule?.health) {
+          healthService.registerPlugin(
+            plugin.name,
+            pluginModule.health,
+            { version: plugin.version },
+            plugin.requires || []
+          );
+        } else {
+          // Register with default health check
+          healthService.registerPlugin(
+            plugin.name,
+            async () => ({ status: HealthStatus.HEALTHY }),
+            { version: plugin.version },
+            plugin.requires || []
+          );
+        }
+      }
+    }
+
+    // Run health checks if requested or if no recent data
+    let health;
+    if (forceRefresh || healthService.getStatus().historySize === 0) {
+      health = await healthService.runChecks();
+    } else {
+      health = healthService.getCurrentHealth();
+    }
+
+    res.json({
+      ok: true,
+      status: health.status,
+      timestamp: new Date(health.timestamp).toISOString(),
+      summary: health.summary,
+      plugins: health.plugins.map(p => ({
+        name: p.name,
+        version: p.version,
+        status: p.status,
+        lastCheck: p.lastCheck ? new Date(p.lastCheck).toISOString() : null,
+        responseTime: p.responseTime,
+        message: p.message,
+        consecutiveFailures: p.consecutiveFailures,
+        dependencies: p.dependencies,
+        enabled: p.enabled,
+      })),
+      dependencies: healthService.getDependencyGraph().dependencies,
     });
   });
 
