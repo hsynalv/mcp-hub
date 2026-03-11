@@ -6,21 +6,15 @@
  * Works with public repos without a token; private repos require GITHUB_TOKEN.
  */
 
+import { withResilience } from "../../core/resilience.js";
+
 const BASE_URL = "https://api.github.com";
 
 function getToken() {
   return process.env.GITHUB_TOKEN ?? "";
 }
 
-/**
- * Make a request to the GitHub API.
- *
- * @param {"GET"|"POST"|"PATCH"} method
- * @param {string} path  e.g. "/repos/owner/repo"
- * @param {object|null} body
- * @returns {Promise<{ ok: boolean, data?: any, error?: string, details?: object }>}
- */
-export async function githubRequest(method, path, body = null) {
+function buildHeaders() {
   const token = getToken();
   const headers = {
     Accept: "application/vnd.github+json",
@@ -28,31 +22,89 @@ export async function githubRequest(method, path, body = null) {
     "User-Agent": "mcp-hub/1.0",
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
+function classifyError(status) {
+  if (status === 401) return "github_auth_error";
+  if (status === 403) return "github_forbidden";
+  if (status === 404) return "github_not_found";
+  if (status === 422) return "github_validation_error";
+  if (status === 429) return "github_rate_limited";
+  return "github_api_error";
+}
+
+/**
+ * Extract rate limit info from GitHub response headers.
+ */
+function extractRateLimit(headers) {
+  const remaining = headers.get("X-RateLimit-Remaining");
+  const reset     = headers.get("X-RateLimit-Reset");
+  const limit     = headers.get("X-RateLimit-Limit");
+  return {
+    limit:     limit     ? Number(limit)     : null,
+    remaining: remaining ? Number(remaining) : null,
+    resetAt:   reset     ? new Date(Number(reset) * 1000).toISOString() : null,
+  };
+}
+
+/**
+ * Low-level GitHub request (no resilience wrapping).
+ * Handles rate-limit 403/429 by throwing "rate_limited" so withResilience retries.
+ */
+async function _githubRequest(method, path, body = null) {
+  const headers = buildHeaders();
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const rateLimit = extractRateLimit(res.headers);
+
+  // 204 No Content
+  if (res.status === 204) return { ok: true, data: null, rateLimit };
+
+  const json = await res.json().catch(() => ({}));
+
+  // Rate-limited — throw so the resilience layer can retry after a delay
+  if (res.status === 429 || (res.status === 403 && rateLimit.remaining === 0)) {
+    const resetMs = rateLimit.resetAt
+      ? new Date(rateLimit.resetAt).getTime() - Date.now()
+      : 60_000;
+    await new Promise(r => setTimeout(r, Math.min(resetMs, 60_000)));
+    throw new Error("rate_limited");
+  }
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: classifyError(res.status),
+      rateLimit,
+      details: {
+        status: res.status,
+        message: json.message ?? JSON.stringify(json),
+      },
+    };
+  }
+
+  return { ok: true, data: json, rateLimit };
+}
+
+/**
+ * Make a request to the GitHub API with retry + circuit breaker.
+ *
+ * @param {"GET"|"POST"|"PATCH"|"DELETE"} method
+ * @param {string} path  e.g. "/repos/owner/repo"
+ * @param {object|null} body
+ * @returns {Promise<{ ok: boolean, data?: any, rateLimit?: object, error?: string, details?: object }>}
+ */
+export async function githubRequest(method, path, body = null) {
   try {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
+    return await withResilience("github-api", () => _githubRequest(method, path, body), {
+      circuit: { failureThreshold: 10, resetTimeoutMs: 60_000 },
+      retry: { maxAttempts: 3, backoffMs: 1_000 },
     });
-
-    // 204 No Content
-    if (res.status === 204) return { ok: true, data: null };
-
-    const json = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: classifyError(res.status),
-        details: {
-          status: res.status,
-          message: json.message ?? JSON.stringify(json),
-        },
-      };
-    }
-
-    return { ok: true, data: json };
   } catch (err) {
     return {
       ok: false,
@@ -63,33 +115,31 @@ export async function githubRequest(method, path, body = null) {
 }
 
 /**
- * Paginate a GitHub list endpoint automatically (up to maxPages).
- * GitHub returns Link headers for cursor-based pagination.
+ * Paginate a GitHub list endpoint automatically (up to maxItems).
+ * Follows Link headers for cursor-based pagination.
  */
 export async function githubPaginate(path, maxItems = 100) {
-  const token = getToken();
-  const headers = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "mcp-hub/1.0",
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
+  const headers = buildHeaders();
   const perPage = Math.min(maxItems, 100);
   let url = `${BASE_URL}${path}${path.includes("?") ? "&" : "?"}per_page=${perPage}`;
   const allItems = [];
+  let lastRateLimit = null;
 
   while (url && allItems.length < maxItems) {
     try {
       const res = await fetch(url, { headers });
+      lastRateLimit = extractRateLimit(res.headers);
+
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         return {
           ok: false,
           error: classifyError(res.status),
+          rateLimit: lastRateLimit,
           details: { status: res.status, message: json.message },
         };
       }
+
       const json = await res.json();
       allItems.push(...(Array.isArray(json) ? json : []));
 
@@ -102,91 +152,40 @@ export async function githubPaginate(path, maxItems = 100) {
     }
   }
 
-  return { ok: true, data: allItems.slice(0, maxItems) };
-}
-
-function classifyError(status) {
-  if (status === 401) return "github_auth_error";
-  if (status === 403) return "github_forbidden";
-  if (status === 404) return "github_not_found";
-  if (status === 422) return "github_validation_error";
-  if (status === 429) return "github_rate_limited";
-  return "github_api_error";
+  return { ok: true, data: allItems.slice(0, maxItems), rateLimit: lastRateLimit };
 }
 
 // ── Pull Request Functions ──────────────────────────────────────────────────
 
-/**
- * Create a pull request
- * @param {string} owner - Repo owner
- * @param {string} repo - Repo name
- * @param {Object} prData - PR data
- * @returns {Promise<Object>}
- */
 export async function createPullRequest(owner, repo, prData) {
-  const path = `/repos/${owner}/${repo}/pulls`;
-  return githubRequest("POST", path, prData);
+  return githubRequest("POST", `/repos/${owner}/${repo}/pulls`, prData);
 }
 
-/**
- * List pull requests
- * @param {string} owner - Repo owner
- * @param {string} repo - Repo name
- * @param {Object} options - Query options
- * @returns {Promise<Object>}
- */
 export async function listPullRequests(owner, repo, options = {}) {
   const state = options.state || "open";
-  const path = `/repos/${owner}/${repo}/pulls?state=${state}`;
-  return githubPaginate(path, options.limit || 30);
+  return githubPaginate(`/repos/${owner}/${repo}/pulls?state=${state}`, options.limit || 30);
 }
 
-/**
- * Get a single pull request
- * @param {string} owner - Repo owner
- * @param {string} repo - Repo name
- * @param {number} number - PR number
- * @returns {Promise<Object>}
- */
 export async function getPullRequest(owner, repo, number) {
-  const path = `/repos/${owner}/${repo}/pulls/${number}`;
-  return githubRequest("GET", path);
+  return githubRequest("GET", `/repos/${owner}/${repo}/pulls/${number}`);
 }
 
-/**
- * Create PR comment
- * @param {string} owner - Repo owner
- * @param {string} repo - Repo name
- * @param {number} number - PR number
- * @param {string} body - Comment body
- * @returns {Promise<Object>}
- */
 export async function createPRComment(owner, repo, number, body) {
-  const path = `/repos/${owner}/${repo}/issues/${number}/comments`;
-  return githubRequest("POST", path, { body });
+  return githubRequest("POST", `/repos/${owner}/${repo}/issues/${number}/comments`, { body });
 }
 
-/**
- * Create a branch
- * @param {string} owner - Repo owner
- * @param {string} repo - Repo name
- * @param {string} branch - New branch name
- * @param {string} baseRef - Base ref (branch or SHA)
- * @returns {Promise<Object>}
- */
 export async function createBranch(owner, repo, branch, baseRef) {
-  // First get the base ref SHA
-  const basePath = `/repos/${owner}/${repo}/git/ref/heads/${baseRef}`;
-  const baseResult = await githubRequest("GET", basePath);
-
+  const baseResult = await githubRequest("GET", `/repos/${owner}/${repo}/git/ref/heads/${baseRef}`);
   if (!baseResult.ok) return baseResult;
 
   const sha = baseResult.data.object.sha;
-
-  // Create the new reference
-  const refPath = `/repos/${owner}/${repo}/git/refs`;
-  return githubRequest("POST", refPath, {
+  return githubRequest("POST", `/repos/${owner}/${repo}/git/refs`, {
     ref: `refs/heads/${branch}`,
     sha,
   });
+}
+
+export async function getFileContent(owner, repo, filePath, branch) {
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : "";
+  return githubRequest("GET", `/repos/${owner}/${repo}/contents/${filePath}${ref}`);
 }

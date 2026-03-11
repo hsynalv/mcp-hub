@@ -1,13 +1,63 @@
 import { Router } from "express";
 import { z } from "zod";
 import { notionRequest } from "./notion.client.js";
-import { toNotionBlocks, taskDatabaseSchema, toTaskProperties } from "./blocks.js";
+import { toNotionBlock, toNotionBlocks, taskDatabaseSchema, toTaskProperties, buildNotionProperty, buildDatabaseSchema } from "./blocks.js";
 import { config } from "../../core/config.js";
 import { validateBody } from "../../core/validate.js";
 import { ToolTags } from "../../core/tool-registry.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { auditLog } from "../../core/audit/index.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
+import { withResilience } from "../../core/resilience.js";
+
+const pluginError = createPluginErrorHandler("notion");
+
+export const metadata = createMetadata({
+  name: "notion",
+  version: "1.1.0",
+  description: "Notion pages, databases, projects and tasks",
+  status: PluginStatus.STABLE,
+  productionReady: true,
+  scopes: ["read", "write"],
+  capabilities: ["read", "write", "notion", "pages", "databases", "tasks"],
+  requiresAuth: true,
+  supportsAudit: true,
+  supportsPolicy: true,
+  supportsWorkspaceIsolation: false,
+  hasTests: false,
+  hasDocs: true,
+  riskLevel: RiskLevel.MEDIUM,
+  owner: "platform-team",
+  tags: ["notion", "pages", "databases", "tasks", "projects"],
+});
+
+// ── Field name configuration ───────────────────────────────────────────────
+// All Notion database field names are configurable via env vars.
+// This makes the plugin work with any workspace schema, not just the default.
+export const notionFields = {
+  // Projects database field names
+  projectName:     process.env.NOTION_PROJECT_NAME_FIELD     || "Name",
+  projectStatus:   process.env.NOTION_PROJECT_STATUS_FIELD   || "Status",
+  projectPriority: process.env.NOTION_PROJECT_PRIORITY_FIELD || "Öncelik",
+  projectStart:    process.env.NOTION_PROJECT_START_FIELD    || "Başlangıç",
+  projectEnd:      process.env.NOTION_PROJECT_END_FIELD      || "bitiş",
+  // Projects status values
+  statusNotStarted: process.env.NOTION_STATUS_NOT_STARTED || "Yapılmadı",
+  statusInProgress: process.env.NOTION_STATUS_IN_PROGRESS || "Yapılıyor",
+  statusDone:       process.env.NOTION_STATUS_DONE        || "Tamamlandı",
+  // Priority values
+  priorityLow:    process.env.NOTION_PRIORITY_LOW    || "Az",
+  priorityNormal: process.env.NOTION_PRIORITY_NORMAL || "Normal",
+  priorityHigh:   process.env.NOTION_PRIORITY_HIGH   || "Yüksek",
+  // Tasks database field names
+  taskName:    process.env.NOTION_TASK_NAME_FIELD    || "Görev",
+  taskDueDate: process.env.NOTION_TASK_DUE_DATE_FIELD|| "Son Tarih",
+  taskProject: process.env.NOTION_TASK_PROJECT_FIELD || "Projeler",
+  taskDone:    process.env.NOTION_TASK_DONE_FIELD    || "",
+};
 
 export const name = "notion";
-export const version = "1.0.0";
+export const version = "1.1.0";
 export const description = "Notion pages, databases, projects and tasks";
 export const capabilities = ["read", "write"];
 export const requires = ["NOTION_API_KEY"];
@@ -25,7 +75,8 @@ export const endpoints = [
   { method: "POST",   path: "/notion/pages",               description: "Create a page",                              scope: "write" },
   { method: "PATCH",  path: "/notion/pages/:id/append",    description: "Append blocks to a page",                    scope: "write" },
   { method: "GET",    path: "/notion/pages/:id/blocks",    description: "Get page content blocks",                    scope: "read"  },
-  { method: "PATCH",  path: "/notion/databases/rows/:id",  description: "Update a row's properties",                  scope: "write" },
+  { method: "PATCH",  path: "/notion/databases/rows/:id",        description: "Update a row's properties",                   scope: "write" },
+  { method: "PATCH",  path: "/notion/databases/:id/properties",  description: "Add or rename columns on an existing database", scope: "write" },
   { method: "POST",   path: "/notion/templates/apply",       description: "Apply a page template",                      scope: "write" },
   { method: "POST",   path: "/notion/templates/pages",       description: "Create page from template",                  scope: "write" },
 ];
@@ -236,6 +287,245 @@ export const tools = [
     },
     handler: async (args) => attachLink(args.pageId, args.url, args.label),
   },
+  {
+    name: "notion_create_database",
+    description: "Create a Notion database with custom columns inside a page. Supports all Notion column types: title, rich_text, number, select, multi_select, status, date, checkbox, url, email, phone_number, people, files.",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        parentPageId: { type: "string", description: "Parent page ID where the database will be created" },
+        title: { type: "string", description: "Database title (e.g. 'Sprint Tasks', 'Bug Tracker')" },
+        inline: { type: "boolean", description: "Create as inline database (default: true)", default: true },
+        columns: {
+          type: "array",
+          description: "Column definitions. One 'title' type column is required. If omitted, default task schema is used.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Column name" },
+              type: {
+                type: "string",
+                enum: ["title", "rich_text", "number", "select", "multi_select", "status", "date", "checkbox", "url", "email", "phone_number", "people", "files", "created_time", "created_by", "last_edited_time", "last_edited_by"],
+                description: "Column type",
+              },
+              options: { type: "array", items: { type: "string" }, description: "Options for select/multi_select/status columns" },
+              format: { type: "string", description: "Number format (number, dollar, percent, euro, etc.)" },
+            },
+            required: ["name", "type"],
+          },
+        },
+        explanation: { type: "string", description: "Explain why you are creating this database" },
+      },
+      required: ["parentPageId", "explanation"],
+    },
+    handler: async (args) => {
+      let properties;
+      if (args.columns && args.columns.length > 0) {
+        properties = buildDatabaseSchema(args.columns);
+      } else {
+        const defaultSchema = taskDatabaseSchema(args.title || "Tasks");
+        properties = defaultSchema.properties;
+      }
+
+      const result = await notionRequest("POST", "/databases", {
+        parent: { type: "page_id", page_id: args.parentPageId },
+        title: [{ type: "text", text: { content: args.title || "Tasks" } }],
+        properties,
+        is_inline: args.inline !== false,
+      });
+
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        data: {
+          databaseId: result.data.id,
+          url: result.data.url,
+          title: args.title,
+          columns: Object.entries(result.data.properties ?? {}).map(([name, prop]) => ({ name, type: prop.type })),
+          explanation: args.explanation,
+        },
+      };
+    },
+  },
+  {
+    name: "notion_add_columns",
+    description: "Add new columns to an existing Notion database. Use this to extend a database's schema after creation.",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        databaseId: { type: "string", description: "Database ID to add columns to" },
+        columns: {
+          type: "array",
+          description: "Columns to add",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Column name" },
+              type: {
+                type: "string",
+                enum: ["rich_text", "number", "select", "multi_select", "status", "date", "checkbox", "url", "email", "phone_number", "people", "files"],
+                description: "Column type",
+              },
+              options: { type: "array", items: { type: "string" }, description: "Options for select/multi_select/status" },
+              format: { type: "string", description: "Format for number columns (number, dollar, percent, euro...)" },
+            },
+            required: ["name", "type"],
+          },
+        },
+        explanation: { type: "string", description: "Explain why you are adding these columns" },
+      },
+      required: ["databaseId", "columns", "explanation"],
+    },
+    handler: async (args) => {
+      const properties = {};
+      for (const col of args.columns) {
+        properties[col.name] = buildNotionProperty(col.type, col);
+      }
+
+      const result = await notionRequest("PATCH", `/databases/${args.databaseId}`, { properties });
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        data: {
+          databaseId: args.databaseId,
+          addedColumns: args.columns.map(c => ({ name: c.name, type: c.type })),
+          fullSchema: Object.entries(result.data.properties ?? {}).map(([name, prop]) => ({ name, type: prop.type })),
+          explanation: args.explanation,
+        },
+      };
+    },
+  },
+  {
+    name: "notion_rename_column",
+    description: "Rename a column in a Notion database.",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        databaseId: { type: "string", description: "Database ID" },
+        currentName: { type: "string", description: "Current column name" },
+        newName: { type: "string", description: "New column name" },
+        explanation: { type: "string", description: "Explain why you are renaming this column" },
+      },
+      required: ["databaseId", "currentName", "newName", "explanation"],
+    },
+    handler: async (args) => {
+      const result = await notionRequest("PATCH", `/databases/${args.databaseId}`, {
+        properties: { [args.currentName]: { name: args.newName } },
+      });
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        data: {
+          databaseId: args.databaseId,
+          renamed: { from: args.currentName, to: args.newName },
+          explanation: args.explanation,
+        },
+      };
+    },
+  },
+  {
+    name: "notion_get_database_schema",
+    description: "Get the schema (columns and their types) of a Notion database",
+    tags: [ToolTags.READ, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        databaseId: { type: "string", description: "Database ID" },
+      },
+      required: ["databaseId"],
+    },
+    handler: async (args) => {
+      const result = await notionRequest("GET", `/databases/${args.databaseId}`);
+      if (!result.ok) return result;
+
+      const schema = Object.entries(result.data.properties ?? {}).map(([name, prop]) => {
+        const entry = { name, type: prop.type };
+        if (prop.select?.options) entry.options = prop.select.options.map(o => o.name);
+        if (prop.multi_select?.options) entry.options = prop.multi_select.options.map(o => o.name);
+        if (prop.status?.options) entry.options = prop.status.options.map(o => o.name);
+        if (prop.number?.format) entry.format = prop.number.format;
+        return entry;
+      });
+
+      return {
+        ok: true,
+        data: {
+          databaseId: args.databaseId,
+          title: result.data.title?.[0]?.plain_text || "Untitled",
+          url: result.data.url,
+          columns: schema,
+          columnCount: schema.length,
+        },
+      };
+    },
+  },
+  {
+    name: "notion_add_row",
+    description: "Add a row to any Notion database. Automatically detects the title column. Supports common field types.",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        databaseId: { type: "string", description: "Database ID" },
+        title: { type: "string", description: "Row title (goes into the title column)" },
+        fields: {
+          type: "object",
+          description: "Field values as key-value pairs. Key = column name, value = field value. Strings for text/select, arrays for multi_select, booleans for checkbox, ISO dates for date.",
+          additionalProperties: true,
+        },
+        explanation: { type: "string", description: "Explain why you are adding this row" },
+      },
+      required: ["databaseId", "title", "explanation"],
+    },
+    handler: async (args) => {
+      // Fetch schema to find title column and property types
+      const dbRes = await notionRequest("GET", `/databases/${args.databaseId}`);
+      if (!dbRes.ok) return dbRes;
+
+      const props = dbRes.data.properties ?? {};
+      const titleProp = Object.entries(props).find(([, v]) => v.type === "title")?.[0] ?? "Name";
+
+      const properties = {
+        [titleProp]: { title: [{ type: "text", text: { content: args.title } }] },
+      };
+
+      for (const [key, value] of Object.entries(args.fields || {})) {
+        const propDef = props[key];
+        if (!propDef) continue;
+
+        const type = propDef.type;
+        if (type === "rich_text")     properties[key] = { rich_text: [{ type: "text", text: { content: String(value) } }] };
+        else if (type === "number")   properties[key] = { number: Number(value) };
+        else if (type === "select")   properties[key] = { select: { name: String(value) } };
+        else if (type === "status")   properties[key] = { status: { name: String(value) } };
+        else if (type === "multi_select") properties[key] = { multi_select: (Array.isArray(value) ? value : [value]).map(n => ({ name: String(n) })) };
+        else if (type === "checkbox") properties[key] = { checkbox: Boolean(value) };
+        else if (type === "date")     properties[key] = { date: { start: String(value) } };
+        else if (type === "url")      properties[key] = { url: String(value) };
+        else if (type === "email")    properties[key] = { email: String(value) };
+        else if (type === "phone_number") properties[key] = { phone_number: String(value) };
+      }
+
+      const result = await notionRequest("POST", "/pages", {
+        parent: { database_id: args.databaseId },
+        properties,
+      });
+
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        data: {
+          rowId: result.data.id,
+          url: result.data.url,
+          title: args.title,
+          explanation: args.explanation,
+        },
+      };
+    },
+  },
 ];
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
@@ -260,9 +550,23 @@ const appendBlocksSchema = z.object({
   blocks: z.array(blockSchema).min(1),
 });
 
+const columnDescriptor = z.object({
+  name: z.string().min(1),
+  type: z.enum([
+    "title", "rich_text", "text", "number", "select", "multi_select", "status",
+    "date", "checkbox", "url", "email", "phone_number", "people",
+    "files", "created_time", "created_by", "last_edited_time", "last_edited_by",
+  ]),
+  options: z.array(z.union([z.string(), z.object({ name: z.string(), color: z.string().optional() })])).optional(),
+  colors: z.array(z.string()).optional(),
+  format: z.string().optional(), // for number columns
+});
+
 const createDatabaseSchema = z.object({
   parentPageId: z.string().min(1),
   title: z.string().optional(),
+  inline: z.boolean().optional().default(true),
+  columns: z.array(columnDescriptor).optional(), // custom columns; if omitted, uses default task schema
 });
 
 const addTaskSchema = z.object({
@@ -361,6 +665,19 @@ function formatRow(page) {
 
 // ── Plugin register ───────────────────────────────────────────────────────────
 
+function notionAudit(req, operation, success, meta = {}) {
+  return auditLog({
+    plugin: "notion",
+    operation,
+    actor: req.user?.id || req.headers?.["x-actor"] || "anonymous",
+    workspaceId: req.headers?.["x-workspace-id"] || null,
+    projectId: req.projectId || req.headers?.["x-project-id"] || null,
+    allowed: true,
+    success,
+    metadata: meta,
+  }).catch(() => {}); // audit failures must never break the request
+}
+
 export function register(app) {
   const router = Router();
 
@@ -438,6 +755,7 @@ export function register(app) {
     const result = await notionRequest("POST", "/pages", payload);
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
+    notionAudit(req, "create_page", true, { pageId: result.data.id, title: data.title });
     res.json({ ok: true, page: formatPage(result.data) });
   });
 
@@ -456,6 +774,7 @@ export function register(app) {
     });
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
+    notionAudit(req, "append_blocks", true, { pageId: req.params.id, blockCount: data.blocks.length });
     res.json({ ok: true, appended: data.blocks.length });
   });
 
@@ -529,25 +848,107 @@ export function register(app) {
 
   /**
    * POST /notion/databases
-   * Create an inline task database inside a page.
+   * Create a database inside a page with custom or default columns.
    *
-   * Body: { parentPageId, title? }
+   * Body:
+   *   parentPageId  string  — parent page ID
+   *   title         string  — database title (default: "Tasks")
+   *   inline        boolean — create as inline database (default: true)
+   *   columns       array   — custom column descriptors (optional)
+   *     Each column: { name, type, options?, format? }
+   *     Supported types: title, rich_text, number, select, multi_select,
+   *       status, date, checkbox, url, email, phone_number, people, files,
+   *       created_time, created_by, last_edited_time, last_edited_by
+   *
+   * If columns is omitted, the default task schema is used:
+   *   Name (title), Status (select), Priority (select), Due Date (date), Notes (rich_text)
+   *
+   * Example custom columns:
+   *   [
+   *     { "name": "Task", "type": "title" },
+   *     { "name": "Status", "type": "select", "options": ["Todo", "In Progress", "Done"] },
+   *     { "name": "Assignee", "type": "people" },
+   *     { "name": "Effort", "type": "number", "format": "number" },
+   *     { "name": "Tags", "type": "multi_select", "options": ["bug", "feature", "chore"] }
+   *   ]
    */
   router.post("/databases", async (req, res) => {
     const data = validate(createDatabaseSchema, req.body, res);
     if (!data) return;
 
-    const schema = taskDatabaseSchema(data.title ?? "Tasks");
+    let properties;
+    if (data.columns && data.columns.length > 0) {
+      properties = buildDatabaseSchema(data.columns);
+    } else {
+      const defaultSchema = taskDatabaseSchema(data.title ?? "Tasks");
+      properties = defaultSchema.properties;
+    }
+
     const payload = {
       parent: { type: "page_id", page_id: data.parentPageId },
-      ...schema,
-      is_inline: true,
+      title: [{ type: "text", text: { content: data.title ?? "Tasks" } }],
+      properties,
+      is_inline: data.inline !== false,
     };
 
     const result = await notionRequest("POST", "/databases", payload);
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
-    res.json({ ok: true, database: formatDatabase(result.data) });
+    notionAudit(req, "create_database", true, { databaseId: result.data.id, title: data.title, columnCount: Object.keys(properties).length });
+    res.json({
+      ok: true,
+      database: formatDatabase(result.data),
+      columns: Object.entries(result.data.properties ?? {}).map(([name, prop]) => ({ name, type: prop.type })),
+    });
+  });
+
+  /**
+   * PATCH /notion/databases/:id/properties
+   * Add new columns or rename existing columns on a database.
+   *
+   * Body:
+   *   columns  array  — column descriptors to add or update
+   *     { name: string, type: string, ...options }  → add a new column
+   *     { name: string, rename: string }             → rename an existing column
+   *
+   * Notion does NOT support deleting columns via the API.
+   *
+   * Example — add two columns:
+   *   { "columns": [
+   *     { "name": "Assignee", "type": "people" },
+   *     { "name": "Sprint", "type": "select", "options": ["Sprint 1", "Sprint 2"] }
+   *   ]}
+   *
+   * Example — rename a column:
+   *   { "columns": [{ "name": "Old Name", "rename": "New Name" }] }
+   */
+  router.patch("/databases/:id/properties", async (req, res) => {
+    const { columns } = req.body;
+    if (!Array.isArray(columns) || columns.length === 0) {
+      return err(res, 400, "missing_columns", "Provide a columns array with at least one column descriptor");
+    }
+
+    const properties = {};
+    for (const col of columns) {
+      if (col.rename) {
+        // Rename an existing column
+        properties[col.name] = { name: col.rename };
+      } else {
+        // Add a new column
+        properties[col.name] = buildNotionProperty(col.type || "rich_text", col);
+      }
+    }
+
+    const result = await notionRequest("PATCH", `/databases/${req.params.id}`, { properties });
+    if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
+
+    notionAudit(req, "update_database_properties", true, { databaseId: req.params.id, columnCount: columns.length });
+    res.json({
+      ok: true,
+      databaseId: req.params.id,
+      updatedColumns: columns.map(c => ({ name: c.rename || c.name, type: c.type || (c.rename ? "renamed" : "rich_text") })),
+      schema: Object.entries(result.data.properties ?? {}).map(([name, prop]) => ({ name, type: prop.type })),
+    });
   });
 
   /**
@@ -558,6 +959,34 @@ export function register(app) {
     const result = await notionRequest("GET", `/databases/${req.params.id}`);
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
     res.json({ ok: true, database: formatDatabase(result.data) });
+  });
+
+  /**
+   * GET /notion/databases/:id/rows
+   * Query rows from a database with cursor-based pagination.
+   *
+   * Query params:
+   *   limit  = page size, 1-100 (default: 50)
+   *   cursor = next_cursor from previous response (for pagination)
+   */
+  router.get("/databases/:id/rows", async (req, res) => {
+    const limit  = Math.min(Number(req.query.limit ?? 50), 100);
+    const cursor = req.query.cursor || undefined;
+
+    const payload = { page_size: limit };
+    if (cursor) payload.start_cursor = cursor;
+
+    const result = await notionRequest("POST", `/databases/${req.params.id}/query`, payload);
+    if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
+
+    const rows = (result.data.results ?? []).map(formatRow);
+    res.json({
+      ok: true,
+      count: rows.length,
+      rows,
+      hasMore: result.data.has_more ?? false,
+      nextCursor: result.data.next_cursor || null,
+    });
   });
 
   /**
@@ -858,12 +1287,12 @@ export function register(app) {
     if (!dbId) return err(res, 500, "config_error", "NOTION_PROJECTS_DB_ID is not set in .env");
 
     const properties = {
-      Name: { title: [{ type: "text", text: { content: data.name } }] },
-      Status: { status: { name: data.status } },
-      Öncelik: { select: { name: data.oncelik } },
+      [notionFields.projectName]:     { title: [{ type: "text", text: { content: data.name } }] },
+      [notionFields.projectStatus]:   { status: { name: data.status } },
+      [notionFields.projectPriority]: { select: { name: data.oncelik } },
     };
-    if (data.baslangic) properties["Başlangıç"] = { date: { start: data.baslangic } };
-    if (data.bitis) properties["bitiş"] = { date: { start: data.bitis } };
+    if (data.baslangic) properties[notionFields.projectStart] = { date: { start: data.baslangic } };
+    if (data.bitis)     properties[notionFields.projectEnd]   = { date: { start: data.bitis } };
 
     const result = await notionRequest("POST", "/pages", {
       parent: { database_id: dbId },
@@ -872,6 +1301,7 @@ export function register(app) {
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
     const row = result.data;
+    notionAudit(req, "create_project", true, { projectId: row.id, name: data.name });
     res.json({
       ok: true,
       project: {
@@ -898,20 +1328,20 @@ export function register(app) {
 
     const payload = { page_size: Math.min(Number(req.query.limit ?? 20), 100) };
     if (req.query.status) {
-      payload.filter = { property: "Status", status: { equals: req.query.status } };
+      payload.filter = { property: notionFields.projectStatus, status: { equals: req.query.status } };
     }
-    payload.sorts = [{ property: "Başlangıç", direction: "descending" }];
+    payload.sorts = [{ property: notionFields.projectStart, direction: "descending" }];
 
     const result = await notionRequest("POST", `/databases/${dbId}/query`, payload);
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
     const projects = (result.data.results ?? []).map((p) => ({
       id: p.id,
-      name: p.properties?.Name?.title?.[0]?.plain_text ?? "Untitled",
-      status: p.properties?.Status?.status?.name ?? null,
-      oncelik: p.properties?.Öncelik?.select?.name ?? null,
-      baslangic: p.properties?.["Başlangıç"]?.date?.start ?? null,
-      bitis: p.properties?.["bitiş"]?.date?.start ?? null,
+      name: p.properties?.[notionFields.projectName]?.title?.[0]?.plain_text ?? "Untitled",
+      status: p.properties?.[notionFields.projectStatus]?.status?.name ?? null,
+      oncelik: p.properties?.[notionFields.projectPriority]?.select?.name ?? null,
+      baslangic: p.properties?.[notionFields.projectStart]?.date?.start ?? null,
+      bitis: p.properties?.[notionFields.projectEnd]?.date?.start ?? null,
       url: p.url,
     }));
 
@@ -932,11 +1362,11 @@ export function register(app) {
     if (!dbId) return err(res, 500, "config_error", "NOTION_TASKS_DB_ID is not set in .env");
 
     const properties = {
-      Görev: { title: [{ type: "text", text: { content: data.gorev } }] },
-      "": { checkbox: data.tamamlandi ?? false },
+      [notionFields.taskName]: { title: [{ type: "text", text: { content: data.gorev } }] },
     };
-    if (data.sonTarih) properties["Son Tarih"] = { date: { start: data.sonTarih } };
-    if (data.projeId) properties["Projeler"] = { relation: [{ id: data.projeId }] };
+    if (notionFields.taskDone) properties[notionFields.taskDone] = { checkbox: data.tamamlandi ?? false };
+    if (data.sonTarih) properties[notionFields.taskDueDate] = { date: { start: data.sonTarih } };
+    if (data.projeId)  properties[notionFields.taskProject]  = { relation: [{ id: data.projeId }] };
 
     const result = await notionRequest("POST", "/pages", {
       parent: { database_id: dbId },
@@ -945,6 +1375,7 @@ export function register(app) {
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
     const row = result.data;
+    notionAudit(req, "create_task", true, { taskId: row.id, gorev: data.gorev });
     res.json({
       ok: true,
       task: {
@@ -974,10 +1405,10 @@ export function register(app) {
 
     const filters = [];
     if (req.query.projeId) {
-      filters.push({ property: "Projeler", relation: { contains: req.query.projeId } });
+      filters.push({ property: notionFields.taskProject, relation: { contains: req.query.projeId } });
     }
-    if (req.query.tamamlandi !== undefined) {
-      filters.push({ property: "", checkbox: { equals: req.query.tamamlandi === "true" } });
+    if (req.query.tamamlandi !== undefined && notionFields.taskDone) {
+      filters.push({ property: notionFields.taskDone, checkbox: { equals: req.query.tamamlandi === "true" } });
     }
     if (filters.length === 1) payload.filter = filters[0];
     else if (filters.length > 1) payload.filter = { and: filters };
@@ -987,10 +1418,10 @@ export function register(app) {
 
     const tasks = (result.data.results ?? []).map((p) => ({
       id: p.id,
-      gorev: p.properties?.Görev?.title?.[0]?.plain_text ?? "Untitled",
-      tamamlandi: p.properties?.[""]?.checkbox ?? false,
-      sonTarih: p.properties?.["Son Tarih"]?.date?.start ?? null,
-      projeler: (p.properties?.Projeler?.relation ?? []).map((r) => r.id),
+      gorev: p.properties?.[notionFields.taskName]?.title?.[0]?.plain_text ?? "Untitled",
+      tamamlandi: notionFields.taskDone ? (p.properties?.[notionFields.taskDone]?.checkbox ?? false) : false,
+      sonTarih: p.properties?.[notionFields.taskDueDate]?.date?.start ?? null,
+      projeler: (p.properties?.[notionFields.taskProject]?.relation ?? []).map((r) => r.id),
       url: p.url,
     }));
 
@@ -1030,12 +1461,12 @@ export function register(app) {
 
     // ── Step 1: Create project ─────────────────────────────────────────────
     const projectProperties = {
-      Name: { title: [{ type: "text", text: { content: data.name } }] },
-      Status: { status: { name: data.status } },
-      Öncelik: { select: { name: data.oncelik } },
+      [notionFields.projectName]:     { title: [{ type: "text", text: { content: data.name } }] },
+      [notionFields.projectStatus]:   { status: { name: data.status } },
+      [notionFields.projectPriority]: { select: { name: data.oncelik } },
     };
-    if (data.baslangic?.trim()) projectProperties["Başlangıç"] = { date: { start: data.baslangic.trim() } };
-    if (data.bitis?.trim()) projectProperties["bitiş"] = { date: { start: data.bitis.trim() } };
+    if (data.baslangic?.trim()) projectProperties[notionFields.projectStart] = { date: { start: data.baslangic.trim() } };
+    if (data.bitis?.trim())     projectProperties[notionFields.projectEnd]   = { date: { start: data.bitis.trim() } };
 
     const projectRes = await notionRequest("POST", "/pages", {
       parent: { database_id: projectsDbId },
@@ -1052,11 +1483,10 @@ export function register(app) {
     const taskResults = await Promise.all(
       tasks.map((task) => {
         const taskProperties = {
-          Görev: { title: [{ type: "text", text: { content: task.gorev } }] },
-          Projeler: { relation: [{ id: projectId }] },
+          [notionFields.taskName]:    { title: [{ type: "text", text: { content: task.gorev } }] },
+          [notionFields.taskProject]: { relation: [{ id: projectId }] },
         };
-        if (task.sonTarih) taskProperties["Son Tarih"] = { date: { start: task.sonTarih } };
-        // Notion checkbox field has empty-string name — cannot be written via API, defaults to false
+        if (task.sonTarih) taskProperties[notionFields.taskDueDate] = { date: { start: task.sonTarih } };
         return notionRequest("POST", "/pages", {
           parent: { database_id: tasksDbId },
           properties: taskProperties,
@@ -1072,6 +1502,7 @@ export function register(app) {
         url: r.data.url,
       }));
 
+    notionAudit(req, "setup_project", true, { projectId, name: data.name, taskCount: createdTasks.length });
     res.json({
       ok: true,
       project: {
@@ -1102,6 +1533,7 @@ export function register(app) {
     const result = await notionRequest("PATCH", `/pages/${pageId}`, { archived: true });
     if (!result.ok) return err(res, 502, result.error, result.details?.message, result.details);
 
+    notionAudit(req, "archive_page", true, { pageId });
     res.json({ ok: true, archived: true, id: pageId });
   });
 
@@ -1127,6 +1559,7 @@ export function register(app) {
     const succeeded = results.filter((r) => r.ok).length;
     const failed    = results.filter((r) => !r.ok).length;
 
+    notionAudit(req, "bulk_archive", true, { total: ids.length, succeeded, failed });
     res.json({ ok: true, archived: succeeded, failed, total: ids.length });
   });
 
@@ -1221,6 +1654,7 @@ export function register(app) {
       });
     }
 
+    notionAudit(req, "create_row", true, { pageId: page.id, databaseId, title });
     res.json({
       ok: true,
       id: page.id,
@@ -1289,49 +1723,167 @@ export function register(app) {
  * @param {Object} inputs - Template inputs
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
+// Built-in template registry — extend with registerTemplate()
+const templateRegistry = new Map();
+
+/**
+ * Register a custom template. Plugins or external code can extend the template system.
+ * @param {string} name - Template name
+ * @param {function} fn - Function(inputs) => { title, icon, blocks }
+ */
+export function registerTemplate(name, fn) {
+  templateRegistry.set(name, fn);
+}
+
+function b(type, text, extra = {}) {
+  const richText = [{ type: "text", text: { content: String(text ?? "") } }];
+  return { type, [type]: { rich_text: richText, ...extra } };
+}
+function bList(items, type = "bulleted_list_item") {
+  return items.map(text => b(type, text));
+}
+function bTodo(items) {
+  return items.map(text => ({ type: "to_do", to_do: { rich_text: [{ type: "text", text: { content: text } }], checked: false } }));
+}
+function bH2(text) { return { type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: text } }] } }; }
+function bH3(text) { return { type: "heading_3", heading_3: { rich_text: [{ type: "text", text: { content: text } }] } }; }
+function bDiv() { return { type: "divider", divider: {} }; }
+
+// Register built-in templates
+registerTemplate("feature_delivery", (inputs) => ({
+  title: inputs.title || "Feature: [Name]",
+  icon: "🚀",
+  blocks: [
+    bH2("Summary"),
+    b("paragraph", inputs.summary || "What this feature does and why it matters."),
+    bH2("Acceptance Criteria"),
+    ...bList(inputs.criteria || ["Criteria 1", "Criteria 2", "Criteria 3"]),
+    bH2("Implementation Plan"),
+    b("paragraph", inputs.plan || "Steps to implement this feature."),
+    bH2("Related Links"),
+    ...bList([`PR: ${inputs.prUrl || "[PR URL]"}`, `Design: ${inputs.designUrl || "[Design Doc]"}`]),
+    bH2("Release Notes"),
+    b("paragraph", inputs.releaseNotes || "What users should know about this change."),
+  ],
+}));
+
+registerTemplate("task", (inputs) => ({
+  title: inputs.title || "Task: [Name]",
+  icon: "📋",
+  blocks: [
+    b("paragraph", inputs.description || "Task description."),
+    bDiv(),
+    bH3("Checklist"),
+    ...bTodo(inputs.checklist || ["Step 1", "Step 2", "Step 3"]),
+  ],
+}));
+
+registerTemplate("meeting_notes", (inputs) => ({
+  title: inputs.title || `Meeting: ${new Date().toLocaleDateString()}`,
+  icon: "🗓️",
+  blocks: [
+    bH2("Meeting Info"),
+    b("paragraph", `Date: ${inputs.date || new Date().toLocaleDateString()}`),
+    b("paragraph", `Attendees: ${(inputs.attendees || ["Attendee 1", "Attendee 2"]).join(", ")}`),
+    bDiv(),
+    bH2("Agenda"),
+    ...bList(inputs.agenda || ["Topic 1", "Topic 2", "Topic 3"]),
+    bDiv(),
+    bH2("Notes"),
+    b("paragraph", inputs.notes || "Key discussion points..."),
+    bDiv(),
+    bH2("Action Items"),
+    ...bTodo(inputs.actionItems || ["Follow up on ...", "Send email about ...", "Schedule next meeting"]),
+    bDiv(),
+    bH2("Decisions"),
+    b("paragraph", inputs.decisions || "Decisions made during the meeting..."),
+  ],
+}));
+
+registerTemplate("bug_report", (inputs) => ({
+  title: inputs.title || "Bug: [Description]",
+  icon: "🐛",
+  blocks: [
+    bH2("Bug Summary"),
+    b("paragraph", inputs.summary || "Brief description of the bug."),
+    bDiv(),
+    bH2("Steps to Reproduce"),
+    ...bList(inputs.steps || ["Step 1: ...", "Step 2: ...", "Step 3: ..."]),
+    bH2("Expected Behavior"),
+    b("paragraph", inputs.expected || "What should happen."),
+    bH2("Actual Behavior"),
+    b("paragraph", inputs.actual || "What actually happens."),
+    bDiv(),
+    bH2("Environment"),
+    ...bList([
+      `OS: ${inputs.os || "macOS / Windows / Linux"}`,
+      `Browser: ${inputs.browser || "Chrome / Firefox / Safari"}`,
+      `Version: ${inputs.version || "vX.X.X"}`,
+    ]),
+    bH2("Severity"),
+    b("paragraph", inputs.severity || "Low / Medium / High / Critical"),
+    bDiv(),
+    bH2("Possible Fix"),
+    b("paragraph", inputs.fix || "Potential root cause or fix suggestion."),
+  ],
+}));
+
+registerTemplate("weekly_review", (inputs) => ({
+  title: inputs.title || `Weekly Review — W${Math.ceil(new Date().getDate() / 7)} ${new Date().toLocaleDateString("en-US", { month: "long" })}`,
+  icon: "📅",
+  blocks: [
+    bH2("✅ Wins This Week"),
+    ...bList(inputs.wins || ["Shipped feature X", "Closed N bugs", "Completed sprint"]),
+    bDiv(),
+    bH2("🚧 Challenges"),
+    ...bList(inputs.challenges || ["Blocker 1", "Slow progress on Y"]),
+    bDiv(),
+    bH2("📊 Metrics"),
+    b("paragraph", inputs.metrics || "Velocity, PRs merged, issues closed..."),
+    bDiv(),
+    bH2("🎯 Next Week Focus"),
+    ...bTodo(inputs.nextWeek || ["Priority task 1", "Priority task 2", "Priority task 3"]),
+    bDiv(),
+    bH2("💡 Learnings"),
+    b("paragraph", inputs.learnings || "Key learnings from this week."),
+  ],
+}));
+
+registerTemplate("project_brief", (inputs) => ({
+  title: inputs.title || "Project Brief: [Name]",
+  icon: "📄",
+  blocks: [
+    bH2("Overview"),
+    b("paragraph", inputs.overview || "What this project is and why we're doing it."),
+    bDiv(),
+    bH2("Goals & Success Criteria"),
+    ...bList(inputs.goals || ["Goal 1", "Goal 2", "Goal 3"]),
+    bDiv(),
+    bH2("Scope"),
+    bH3("In Scope"),
+    ...bList(inputs.inScope || ["Feature A", "Feature B"]),
+    bH3("Out of Scope"),
+    ...bList(inputs.outScope || ["Feature C (later)", "Feature D (different project)"]),
+    bDiv(),
+    bH2("Timeline"),
+    b("paragraph", inputs.timeline || "Start: ... | End: ... | Milestones: ..."),
+    bDiv(),
+    bH2("Team"),
+    ...bList(inputs.team || ["PM: ...", "Engineering: ...", "Design: ..."]),
+    bDiv(),
+    bH2("Risks"),
+    ...bList(inputs.risks || ["Risk 1 and mitigation", "Risk 2 and mitigation"]),
+  ],
+}));
+
 export async function applyTemplate(templateName, inputs = {}) {
-  const templates = {
-    feature_delivery: {
-      title: inputs.title || "Feature: [Name]",
-      icon: "🚀",
-      blocks: [
-        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Summary" } }] } },
-        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.summary || "What this feature does and why it matters." } }] } },
-        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Acceptance Criteria" } }] } },
-        ...(inputs.criteria || ["Criteria 1", "Criteria 2", "Criteria 3"]).map(c => ({
-          type: "bulleted_list_item",
-          bulleted_list_item: { rich_text: [{ text: { content: c } }] },
-        })),
-        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Implementation Plan" } }] } },
-        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.plan || "Steps to implement this feature." } }] } },
-        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Related Links" } }] } },
-        { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ text: { content: `PR: ${inputs.prUrl || "[PR URL]"}` } }] } },
-        { type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ text: { content: `Design: ${inputs.designUrl || "[Design Doc]"}` } }] } },
-        { type: "heading_2", heading_2: { rich_text: [{ text: { content: "Release Notes" } }] } },
-        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.releaseNotes || "What users should know about this change." } }] } },
-      ],
-    },
-    task: {
-      title: inputs.title || "Task: [Name]",
-      icon: "📋",
-      blocks: [
-        { type: "paragraph", paragraph: { rich_text: [{ text: { content: inputs.description || "Task description." } }] } },
-        { type: "divider", divider: {} },
-        { type: "heading_3", heading_3: { rich_text: [{ text: { content: "Checklist" } }] } },
-        ...(inputs.checklist || ["Step 1", "Step 2", "Step 3"]).map(item => ({
-          type: "to_do",
-          to_do: { rich_text: [{ text: { content: item } }], checked: false },
-        })),
-      ],
-    },
-  };
-
-  const template = templates[templateName];
-  if (!template) {
-    return { ok: false, error: { code: "unknown_template", message: `Template '${templateName}' not found. Available: ${Object.keys(templates).join(", ")}` } };
+  const templateFn = templateRegistry.get(templateName);
+  if (!templateFn) {
+    const available = [...templateRegistry.keys()].join(", ");
+    return { ok: false, error: { code: "unknown_template", message: `Template '${templateName}' not found. Available: ${available}` } };
   }
-
-  return { ok: true, data: { template: templateName, ...template } };
+  const result = templateFn(inputs);
+  return { ok: true, data: { template: templateName, ...result } };
 }
 
 /**

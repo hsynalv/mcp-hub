@@ -151,6 +151,143 @@ export function taskDatabaseSchema(title = "Tasks") {
   };
 }
 
+// ── Database property schema builders ────────────────────────────────────────
+
+const NOTION_COLORS = ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
+const NUMBER_FORMATS = ["number", "number_with_commas", "percent", "dollar", "canadian_dollar", "euro", "pound", "yen", "ruble", "rupee", "won", "yuan", "real", "lira", "rupiah", "franc", "hong_kong_dollar", "new_zealand_dollar", "krona", "norwegian_krone", "mexican_peso", "rand", "new_taiwan_dollar", "danish_krone", "zloty", "baht", "forint", "koruna", "shekel", "chilean_peso", "philippine_peso", "dirham", "colombian_peso", "riyal", "ringgit", "leu", "argentine_peso", "uruguayan_peso", "singapore_dollar"];
+
+function randomColor(index) {
+  return NOTION_COLORS[(index + 1) % NOTION_COLORS.length];
+}
+
+/**
+ * Build a Notion database property schema object from a simple descriptor.
+ *
+ * Supported types:
+ *   title, rich_text, number, select, multi_select, status,
+ *   date, checkbox, url, email, phone_number, people,
+ *   created_time, created_by, last_edited_time, last_edited_by
+ *
+ * @param {string} type - Property type
+ * @param {object} options - Type-specific options
+ *   - select / multi_select: { options: string[] | { name, color }[] }
+ *   - number: { format: string }  e.g. "dollar", "percent", "number"
+ *   - status: { options: string[], groups?: { name, color, optionNames }[] }
+ * @returns {object} Notion property schema
+ */
+export function buildNotionProperty(type, options = {}) {
+  switch (type) {
+    case "title":
+      return { title: {} };
+
+    case "rich_text":
+    case "text":
+      return { rich_text: {} };
+
+    case "number":
+      return { number: { format: options.format || "number" } };
+
+    case "select": {
+      const opts = (options.options || []).map((o, i) =>
+        typeof o === "string"
+          ? { name: o, color: options.colors?.[i] || randomColor(i) }
+          : { name: o.name, color: o.color || randomColor(i) }
+      );
+      return { select: { options: opts } };
+    }
+
+    case "multi_select": {
+      const opts = (options.options || []).map((o, i) =>
+        typeof o === "string"
+          ? { name: o, color: options.colors?.[i] || randomColor(i) }
+          : { name: o.name, color: o.color || randomColor(i) }
+      );
+      return { multi_select: { options: opts } };
+    }
+
+    case "status": {
+      const statusOpts = (options.options || ["Not Started", "In Progress", "Done"]).map((o, i) =>
+        typeof o === "string" ? { name: o, color: randomColor(i) } : o
+      );
+      const groups = options.groups || [
+        { name: "To-do",       color: "gray",  option_ids: [] },
+        { name: "In progress", color: "blue",  option_ids: [] },
+        { name: "Complete",    color: "green", option_ids: [] },
+      ];
+      return { status: { options: statusOpts, groups } };
+    }
+
+    case "date":
+      return { date: {} };
+
+    case "checkbox":
+      return { checkbox: {} };
+
+    case "url":
+      return { url: {} };
+
+    case "email":
+      return { email: {} };
+
+    case "phone_number":
+      return { phone_number: {} };
+
+    case "people":
+      return { people: {} };
+
+    case "files":
+      return { files: {} };
+
+    case "created_time":
+      return { created_time: {} };
+
+    case "created_by":
+      return { created_by: {} };
+
+    case "last_edited_time":
+      return { last_edited_time: {} };
+
+    case "last_edited_by":
+      return { last_edited_by: {} };
+
+    default:
+      // Unknown type — fallback to rich_text
+      return { rich_text: {} };
+  }
+}
+
+/**
+ * Build a Notion database properties schema from an array of column descriptors.
+ *
+ * Column descriptor: { name: string, type: string, ...options }
+ * One column with type "title" is required (auto-added as "Name" if missing).
+ *
+ * Example:
+ *   buildDatabaseSchema([
+ *     { name: "Task", type: "title" },
+ *     { name: "Status", type: "select", options: ["Todo", "In Progress", "Done"] },
+ *     { name: "Due Date", type: "date" },
+ *     { name: "Effort", type: "number", format: "number" },
+ *   ])
+ */
+export function buildDatabaseSchema(columns = []) {
+  const properties = {};
+  let hasTitleCol = false;
+
+  for (const col of columns) {
+    const { name, type, ...opts } = col;
+    properties[name] = buildNotionProperty(type, opts);
+    if (type === "title") hasTitleCol = true;
+  }
+
+  // Notion requires exactly one title property
+  if (!hasTitleCol) {
+    properties["Name"] = { title: {} };
+  }
+
+  return properties;
+}
+
 /**
  * Build a Notion page property object for a task row.
  *

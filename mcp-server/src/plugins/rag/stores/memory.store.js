@@ -87,23 +87,38 @@ export class MemoryStore extends RagStore {
   }
 
   /**
-   * Search documents by similarity
+   * Search documents by similarity.
+   *
+   * When a document has per-chunk embeddings (chunkEmbeddings[]), each chunk
+   * is compared independently and the document scores at the highest chunk
+   * similarity. This ensures long documents are fully searchable — not just
+   * by their first chunk.
+   *
+   * Falls back to doc.embedding for backward compatibility with documents
+   * indexed before the per-chunk embedding feature was added.
    */
   async searchDocuments(workspaceId, queryEmbedding, options = {}) {
-    const store = this._getWorkspaceStore(workspaceId);
-    const limit = options.limit || 10;
+    const store    = this._getWorkspaceStore(workspaceId);
+    const limit    = options.limit    || 10;
     const minScore = options.minScore || 0.1;
 
     const results = [];
     for (const doc of store.values()) {
-      const score = cosineSimilarity(queryEmbedding, doc.embedding);
-      if (score >= minScore) {
-        results.push(new SearchResult(
-          doc.id,
-          score,
-          doc.content,
-          doc.metadata
-        ));
+      let bestScore = 0;
+
+      if (Array.isArray(doc.chunkEmbeddings) && doc.chunkEmbeddings.length > 0) {
+        // Score = best similarity across all chunks
+        for (const chunkVec of doc.chunkEmbeddings) {
+          const s = cosineSimilarity(queryEmbedding, chunkVec);
+          if (s > bestScore) bestScore = s;
+        }
+      } else if (doc.embedding) {
+        // Backward-compat: single document-level embedding
+        bestScore = cosineSimilarity(queryEmbedding, doc.embedding);
+      }
+
+      if (bestScore >= minScore) {
+        results.push(new SearchResult(doc.id, bestScore, doc.content, doc.metadata));
       }
     }
 

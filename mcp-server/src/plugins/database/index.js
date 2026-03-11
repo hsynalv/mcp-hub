@@ -8,6 +8,7 @@ import { config } from "../../core/config.js";
 import { randomBytes } from "crypto";
 import { canAccessDatabase, getPolicyManager } from "../../core/policy/index.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
+import { ToolTags } from "../../core/tool-registry.js";
 
 const pluginError = createPluginErrorHandler("database");
 
@@ -80,26 +81,19 @@ function getAuditLogEntries(limit = 100) {
 }
 
 /**
- * Execute function with timeout using AbortController
+ * Execute function with timeout using Promise.race.
+ * AbortController was previously used but the signal was never forwarded to DB adapters,
+ * making it ineffective. Promise.race guarantees the timeout is honored regardless of adapter.
  */
 async function withTimeout(fn, timeoutMs, operationName) {
-  // eslint-disable-next-line no-undef
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
-  try {
-    const result = await fn(controller.signal);
-    clearTimeout(timeoutId);
-    return result;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (err.name === "AbortError" || err.message?.includes("abort")) {
-      const timeoutError = new Error("query_timeout");
-      timeoutError.message = `Query '${operationName}' exceeded ${timeoutMs}ms timeout`;
-      throw timeoutError;
-    }
-    throw err;
-  }
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => {
+      const e = new Error(`Query '${operationName}' exceeded ${timeoutMs}ms timeout`);
+      e.message = "query_timeout";
+      reject(e);
+    }, timeoutMs)
+  );
+  return Promise.race([fn(), timeout]);
 }
 
 /**
@@ -317,7 +311,7 @@ const querySchema = z.object({
 
 async function runAdapter(type, fn, res, _req, options = {}) {
   const { timeoutMs = QUERY_TIMEOUT_MS, operationName = "database_operation" } = options;
-  
+
   if (!isValidType(type)) {
     return res.status(400).json({ ok: false, error: "invalid_backend", message: "Type must be one of: mssql, postgres, mongodb" });
   }
@@ -349,29 +343,267 @@ async function runAdapter(type, fn, res, _req, options = {}) {
   }
 }
 
+export const requires = [];
+// At least one of these env vars must be set depending on which adapter you use:
+//   POSTGRES_URL or DATABASE_URL         → postgres adapter
+//   MSSQL_HOST + MSSQL_USER + ...        → mssql adapter
+//   MONGODB_URI or MONGO_URI             → mongodb adapter
+//   DATABASE_DEFAULT_MODE=readwrite      → enable write operations (default: readonly)
+
+// ── MCP Tools ─────────────────────────────────────────────────────────────────
+
+export const tools = [
+  {
+    name: "database_query",
+    description: "Execute a read-only SQL query (SELECT, WITH, EXPLAIN) or MongoDB aggregation pipeline. INSERT/UPDATE/DELETE/DDL are blocked unless DATABASE_DEFAULT_MODE=readwrite.",
+    tags: [ToolTags.READ, ToolTags.DATABASE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["postgres", "mssql", "mongodb"],
+          description: "Database type",
+        },
+        query: {
+          type: "string",
+          description: "SQL query string (for postgres/mssql) or MongoDB collection name (for mongodb with pipeline/filter)",
+        },
+        pipeline: {
+          type: "array",
+          description: "MongoDB aggregation pipeline stages (only for type=mongodb)",
+          items: { type: "object" },
+        },
+        filter: {
+          type: "object",
+          description: "MongoDB query filter (only for type=mongodb without pipeline)",
+        },
+        params: {
+          type: "array",
+          description: "SQL parameterized query values ($1, $2... for postgres; @p0, @p1... for mssql)",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain what you are querying and why",
+        },
+      },
+      required: ["type", "explanation"],
+    },
+    handler: async (args) => {
+      if (!isValidType(args.type)) {
+        return { ok: false, error: { code: "invalid_backend", message: "type must be postgres, mssql, or mongodb" } };
+      }
+      try {
+        const adapter = await getAdapter(args.type);
+
+        if (args.type === "mongodb") {
+          const query = { collection: args.query, pipeline: args.pipeline, filter: args.filter };
+          const result = await adapter.query(query);
+          return { ok: true, data: result };
+        }
+
+        if (!args.query) {
+          return { ok: false, error: { code: "missing_query", message: "query string is required for SQL databases" } };
+        }
+
+        const validation = validateSqlQuery(args.query, true);
+        if (!validation.allowed) {
+          return { ok: false, error: { code: "query_blocked", message: `Query blocked: ${validation.reason}` } };
+        }
+
+        const result = await adapter.query(args.query, args.params || []);
+        return { ok: true, data: result };
+      } catch (e) {
+        return { ok: false, error: { code: "query_failed", message: e.message } };
+      }
+    },
+  },
+  {
+    name: "database_select",
+    description: "Select rows from a table or MongoDB collection with optional filters and row limit. Safe read-only operation.",
+    tags: [ToolTags.READ, ToolTags.DATABASE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        type:  { type: "string", enum: ["postgres", "mssql", "mongodb"], description: "Database type" },
+        table: { type: "string", description: "Table name (SQL) or collection name (MongoDB)" },
+        where: { type: "object", description: "Filter conditions as key-value pairs (e.g. { status: 'active' })" },
+        limit: { type: "number", default: 50, description: "Max rows to return (max 1000)" },
+        explanation: { type: "string", description: "Explain what data you are selecting and why" },
+      },
+      required: ["type", "table", "explanation"],
+    },
+    handler: async (args) => {
+      if (!isValidType(args.type)) {
+        return { ok: false, error: { code: "invalid_backend", message: "type must be postgres, mssql, or mongodb" } };
+      }
+      try {
+        const adapter = await getAdapter(args.type);
+        const result = await adapter.select(args.table, args.where || {}, Math.min(args.limit || 50, 1000));
+        return { ok: true, data: result };
+      } catch (e) {
+        return { ok: false, error: { code: "query_failed", message: e.message } };
+      }
+    },
+  },
+  {
+    name: "database_tables",
+    description: "List all tables (SQL) or collections (MongoDB) in the connected database",
+    tags: [ToolTags.READ, ToolTags.DATABASE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["postgres", "mssql", "mongodb"], description: "Database type" },
+      },
+      required: ["type"],
+    },
+    handler: async (args) => {
+      if (!isValidType(args.type)) {
+        return { ok: false, error: { code: "invalid_backend", message: "type must be postgres, mssql, or mongodb" } };
+      }
+      try {
+        const adapter = await getAdapter(args.type);
+        const result = await adapter.getTables();
+        return { ok: true, data: result };
+      } catch (e) {
+        return { ok: false, error: { code: "query_failed", message: e.message } };
+      }
+    },
+  },
+  {
+    name: "database_schema",
+    description: "Get the schema (columns and their types) of a specific table or MongoDB collection",
+    tags: [ToolTags.READ, ToolTags.DATABASE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        type:  { type: "string", enum: ["postgres", "mssql", "mongodb"], description: "Database type" },
+        table: { type: "string", description: "Table or collection name" },
+      },
+      required: ["type", "table"],
+    },
+    handler: async (args) => {
+      if (!isValidType(args.type)) {
+        return { ok: false, error: { code: "invalid_backend", message: "type must be postgres, mssql, or mongodb" } };
+      }
+      try {
+        const adapter = await getAdapter(args.type);
+        const result = await adapter.getSchema(args.table);
+        return { ok: true, data: result };
+      } catch (e) {
+        return { ok: false, error: { code: "query_failed", message: e.message } };
+      }
+    },
+  },
+  {
+    name: "database_write",
+    description: "Insert, update, or delete rows. Requires DATABASE_DEFAULT_MODE=readwrite env var. Operations will be blocked in readonly mode (the default). Always provide a clear explanation.",
+    tags: [ToolTags.WRITE, ToolTags.DATABASE, ToolTags.DESTRUCTIVE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        type:      { type: "string", enum: ["postgres", "mssql", "mongodb"], description: "Database type" },
+        operation: { type: "string", enum: ["insert", "update", "delete"],   description: "Write operation type" },
+        table:     { type: "string", description: "Table or collection name" },
+        data:      { type: "object", description: "Data to insert or updated field values for update" },
+        where:     { type: "object", description: "Filter condition — required for update and delete" },
+        explanation: { type: "string", description: "Explain exactly what data you are modifying and why. Be specific." },
+      },
+      required: ["type", "operation", "table", "explanation"],
+    },
+    handler: async (args) => {
+      if (!isValidType(args.type)) {
+        return { ok: false, error: { code: "invalid_backend", message: "type must be postgres, mssql, or mongodb" } };
+      }
+
+      const opCheck = isDestructiveOperationAllowed(args.operation);
+      if (!opCheck.allowed) {
+        return { ok: false, error: { code: "operation_blocked", message: opCheck.message } };
+      }
+
+      if ((args.operation === "update" || args.operation === "delete") && !args.where) {
+        return { ok: false, error: { code: "missing_where", message: `where filter is required for ${args.operation} to prevent accidental bulk changes` } };
+      }
+
+      try {
+        const adapter = await getAdapter(args.type);
+        let result;
+        if (args.operation === "insert")      result = await adapter.insert(args.table, args.data || {});
+        else if (args.operation === "update") result = await adapter.update(args.table, args.where, args.data || {});
+        else if (args.operation === "delete") result = await adapter.delete(args.table, args.where);
+
+        return { ok: true, data: result };
+      } catch (e) {
+        return { ok: false, error: { code: "write_failed", message: e.message } };
+      }
+    },
+  },
+];
+
 export function register(app) {
   const router = Router();
 
-  router.get("/health", requireScope("read"), (_req, res) => {
-    res.json({ ok: true, status: "healthy", plugin: name, version });
+  router.get("/health", requireScope("read"), async (_req, res) => {
+    const dbConf = config.database || {};
+    const adapters = ["postgres", "mssql", "mongodb"];
+
+    const checks = await Promise.allSettled(
+      adapters.map(async (type) => {
+        // Quickly check if this adapter is likely configured
+        const hasConfig = (
+          (type === "postgres"  && (dbConf.postgresUrl  || process.env.POSTGRES_URL  || process.env.DATABASE_URL)) ||
+          (type === "mssql"     && (dbConf.mssqlHost    || process.env.MSSQL_HOST)) ||
+          (type === "mongodb"   && (dbConf.mongoUri      || process.env.MONGODB_URI  || process.env.MONGO_URI))
+        );
+        if (!hasConfig) return { type, status: "not_configured" };
+
+        const start = Date.now();
+        try {
+          const adapter = await getAdapter(type);
+          await adapter.getTables();
+          return { type, status: "connected", latencyMs: Date.now() - start };
+        } catch (e) {
+          return { type, status: "error", error: e.message, latencyMs: Date.now() - start };
+        }
+      })
+    );
+
+    const results = checks.map(r => r.value ?? { type: "unknown", status: "error", error: String(r.reason) });
+    const healthy = results.every(r => r.status !== "error");
+
+    res.status(healthy ? 200 : 503).json({
+      ok: healthy,
+      plugin: name,
+      version,
+      mode: dbConf.defaultMode || "readonly",
+      queryTimeoutMs: QUERY_TIMEOUT_MS,
+      maxResultSizeMb: MAX_RESULT_SIZE_MB,
+      adapters: results,
+    });
   });
 
   router.get("/tables", requireScope("read"), async (req, res) => {
     const type = req.query.type;
-    const { actor, workspaceId, projectId } = extractContext(req);
-    await runAdapter(type, async (_signal) => {
+    const ctx = extractContext(req);
+    const startTime = Date.now();
+    await runAdapter(type, async () => {
       const adapter = await getAdapter(type);
-      return await adapter.getTables();
+      const result = await adapter.getTables();
+      auditEntry({ operation: "getTables", type, allowed: true, rowCount: result.rows?.length ?? 0, durationMs: Date.now() - startTime, ...ctx });
+      return result;
     }, res, req, { operationName: "getTables" });
   });
 
   router.get("/tables/:name/schema", requireScope("read"), async (req, res) => {
     const type = req.query.type;
-    const name = req.params.name;
-    const { actor, workspaceId, projectId } = extractContext(req);
-    await runAdapter(type, async (_signal) => {
+    const tableName = req.params.name;
+    const ctx = extractContext(req);
+    const startTime = Date.now();
+    await runAdapter(type, async () => {
       const adapter = await getAdapter(type);
-      return await adapter.getSchema(name);
+      const result = await adapter.getSchema(tableName);
+      auditEntry({ operation: "getSchema", type, table: tableName, allowed: true, durationMs: Date.now() - startTime, ...ctx });
+      return result;
     }, res, req, { operationName: "getSchema" });
   });
 
@@ -382,7 +614,7 @@ export function register(app) {
     const { actor, workspaceId, projectId } = extractContext(req);
     const startTime = Date.now();
 
-    await runAdapter(type, async (__signal) => {
+    await runAdapter(type, async () => {
       const adapter = await getAdapter(type);
       // MongoDB object queries
       if (typeof query === "object" && type === "mongodb") {
@@ -492,7 +724,7 @@ export function register(app) {
       return res.status(403).json(standardizeError(err).serialize(req.requestId));
     }
 
-    await runAdapter(data.type, async (_signal) => {
+    await runAdapter(data.type, async () => {
       const adapter = await getAdapter(data.type);
       const result = await adapter.insert(data.table, data.data);
       auditEntry({ operation: "insert", type: data.type, table: data.table, allowed: true, rowCount: result.rowCount, durationMs: Date.now() - startTime, correlationId, actor, workspaceId, projectId });
@@ -512,7 +744,7 @@ export function register(app) {
     const { actor, workspaceId, projectId } = extractContext(req);
     const startTime = Date.now();
 
-    await runAdapter(data.type, async (_signal) => {
+    await runAdapter(data.type, async () => {
       const adapter = await getAdapter(data.type);
       const result = await adapter.select(data.table, data.where, data.limit);
       auditEntry({ operation: "select", type: data.type, table: data.table, allowed: true, rowCount: result.rowCount, durationMs: Date.now() - startTime, correlationId, actor, workspaceId, projectId });
@@ -540,7 +772,7 @@ export function register(app) {
       return res.status(403).json(standardizeError(err).serialize(req.requestId));
     }
 
-    await runAdapter(data.type, async (_signal) => {
+    await runAdapter(data.type, async () => {
       const adapter = await getAdapter(data.type);
       const result = await adapter.update(data.table, data.where, data.data);
       auditEntry({ operation: "update", type: data.type, table: data.table, allowed: true, rowCount: result.rowCount, durationMs: Date.now() - startTime, correlationId, actor, workspaceId, projectId });
@@ -567,7 +799,7 @@ export function register(app) {
       return res.status(403).json(standardizeError(err).serialize(req.requestId));
     }
 
-    await runAdapter(data.type, async (_signal) => {
+    await runAdapter(data.type, async () => {
       const adapter = await getAdapter(data.type);
       const result = await adapter.delete(data.table, data.where);
       auditEntry({ operation: "delete", type: data.type, table: data.table, allowed: true, rowCount: result.rowCount, durationMs: Date.now() - startTime, correlationId, actor, workspaceId, projectId });

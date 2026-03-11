@@ -6,12 +6,7 @@
  */
 
 import { getRecentCommits, getProjectStructure, getOpenIssues } from "./repo.core.js";
-
-// Import llm_router dynamically to avoid circular deps
-async function getLLMRouter() {
-  const { routeTask } = await import("../llm-router/index.js");
-  return routeTask;
-}
+import { routeTask } from "../llm-router/index.js";
 
 /**
  * Analyze a repository comprehensively
@@ -87,7 +82,6 @@ Please analyze this repository and provide a structured response with:
 Format your response as JSON with these exact keys: summary, currentState, risks (string), nextSteps (array), techStack (array), roadmap (array).`;
 
   try {
-    const routeTask = await getLLMRouter();
     const llmResult = await routeTask("analysis", prompt, {
       temperature: 0.3,
       maxTokens: 4000,

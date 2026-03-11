@@ -7,7 +7,33 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import { readdir, stat, readFile } from "fs/promises";
-import { join, relative } from "path";
+import { join, relative, resolve } from "path";
+
+// ── Path safety ───────────────────────────────────────────────────────────────
+
+/**
+ * The root directory that all repo path requests must be confined to.
+ * Defaults to cwd(); override with REPO_PATH env var for production.
+ */
+export const BASE_REPO_PATH = resolve(process.env.REPO_PATH || process.cwd());
+
+/**
+ * Validate and resolve a requested repo path.
+ * Throws if the resolved path escapes BASE_REPO_PATH (path traversal prevention).
+ *
+ * @param {string} requestedPath - The path provided by the caller
+ * @returns {string} Resolved absolute path
+ */
+export function safeResolvePath(requestedPath) {
+  const resolved = resolve(requestedPath);
+  if (!resolved.startsWith(BASE_REPO_PATH)) {
+    throw Object.assign(
+      new Error(`Path "${requestedPath}" is outside the allowed base directory`),
+      { code: "path_traversal", base: BASE_REPO_PATH, requested: resolved }
+    );
+  }
+  return resolved;
+}
 
 const execAsync = promisify(exec);
 
@@ -40,6 +66,10 @@ async function git(args, cwd) {
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function getRecentCommits(repoPath, limit = 20) {
+  try { repoPath = safeResolvePath(repoPath); } catch (err) {
+    return { ok: false, error: { code: err.code || "path_error", message: err.message } };
+  }
+
   // Get commits with stats
   const format = '%H|%s|%an|%ae|%ad|%b';
   const result = await git(`log -${limit} --pretty=format:"${format}" --stat`, repoPath);
@@ -106,6 +136,10 @@ export async function getRecentCommits(repoPath, limit = 20) {
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function getProjectStructure(repoPath, options = {}) {
+  try { repoPath = safeResolvePath(repoPath); } catch (err) {
+    return { ok: false, error: { code: err.code || "path_error", message: err.message } };
+  }
+
   const maxDepth = options.maxDepth || 3;
   const exclude = options.exclude || [
     "node_modules", ".git", "dist", "build", ".next", 
@@ -289,6 +323,10 @@ function countDirs(structure) {
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function getOpenIssues(repoPath) {
+  try { repoPath = safeResolvePath(repoPath); } catch (err) {
+    return { ok: false, error: { code: err.code || "path_error", message: err.message } };
+  }
+
   const issues = [];
   const patterns = [
     { pattern: /TODO[\s:]*(.+?)$/gmi, type: "TODO" },

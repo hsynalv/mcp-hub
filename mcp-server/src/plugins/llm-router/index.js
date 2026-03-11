@@ -5,6 +5,7 @@
  * Supports multiple providers: OpenAI, Anthropic, Google, Mistral, Ollama
  */
 
+import { Router } from "express";
 import OpenAI from "openai";
 import { withResilience } from "../../core/resilience.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
@@ -35,14 +36,6 @@ export const metadata = createMetadata({
   since: "1.0.0",
   notes: "Routes tasks to specialized LLM providers based on capability, cost, and task type.",
 });
-
-// AbortController polyfill for Node.js < 18
-const _AbortController = typeof globalThis.AbortController !== "undefined" ? globalThis.AbortController : class AbortController {
-  constructor() {
-    this.signal = { aborted: false, addEventListener: () => {}, removeEventListener: () => {} };
-  }
-  abort() { this.signal.aborted = true; }
-};
 
 // Configuration
 const DEFAULT_LLM_TIMEOUT_MS = parseInt(process.env.LLM_TIMEOUT_MS, 10) || 60000; // 60s default
@@ -143,39 +136,52 @@ export const description = "Route tasks to specialized LLM providers";
 const PROVIDERS = {
   openai: {
     name: "OpenAI",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-    strengths: ["general", "coding", "analysis", "image-generation"],
+    models: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "o3-mini"],
+    strengths: ["general", "coding", "analysis", "image-generation", "reasoning"],
     costTier: "medium",
     requiresKey: "OPENAI_API_KEY",
   },
   anthropic: {
     name: "Anthropic",
-    models: ["claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"],
+    models: ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
     strengths: ["reasoning", "coding", "long-context", "analysis"],
     costTier: "high",
     requiresKey: "ANTHROPIC_API_KEY",
   },
   google: {
     name: "Google",
-    models: ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro"],
-    strengths: ["multilingual", "summarization", "general"],
+    models: ["gemini-2.0-flash", "gemini-2.0-pro-exp", "gemini-1.5-pro", "gemini-1.5-flash"],
+    strengths: ["multilingual", "summarization", "general", "vision"],
     costTier: "low",
     requiresKey: "GOOGLE_API_KEY",
   },
   mistral: {
     name: "Mistral",
-    models: ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
+    models: ["mistral-large-latest", "mistral-small-latest"],
     strengths: ["cost-effective", "general", "coding"],
     costTier: "low",
     requiresKey: "MISTRAL_API_KEY",
   },
   ollama: {
     name: "Ollama",
-    models: ["llama3", "codellama", "mistral", "phi3"],
+    models: ["llama3.3", "qwen2.5-coder", "deepseek-r1", "phi4"],
     strengths: ["local", "privacy", "cost-free"],
     costTier: "free",
-    requiresKey: null, // Local, no API key needed
+    requiresKey: null,
+    requiresUrl: null,
     baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
+  },
+  vllm: {
+    name: "vLLM (Custom)",
+    // Comma-separated model list: VLLM_MODELS="mistral-7b,llama-70b" or single VLLM_MODEL
+    models: (process.env.VLLM_MODELS || process.env.VLLM_MODEL || "custom-model")
+      .split(",").map(s => s.trim()).filter(Boolean),
+    strengths: ["custom", "specialized", "self-hosted", "privacy", "cost-effective"],
+    costTier: "custom",
+    requiresKey: null,
+    requiresUrl: "VLLM_BASE_URL", // must be set for provider to be available
+    baseUrl: process.env.VLLM_BASE_URL || null,
+    apiKey: process.env.VLLM_API_KEY || "not-needed",
   },
 };
 
@@ -184,50 +190,50 @@ const ROUTING_RULES = [
   {
     task: "coding",
     description: "Programming, code generation, debugging",
-    primary: { provider: "anthropic", model: "claude-3-opus-20240229" },
-    fallback: { provider: "openai", model: "gpt-4o" },
+    primary: { provider: "anthropic", model: "claude-sonnet-4-5" },
+    fallback: { provider: "openai", model: "gpt-4.1" },
     priority: 1,
   },
   {
     task: "analysis",
     description: "Data analysis, reasoning, complex problem solving",
-    primary: { provider: "openai", model: "gpt-4o" },
-    fallback: { provider: "anthropic", model: "claude-3-sonnet-20240229" },
+    primary: { provider: "openai", model: "gpt-4.1" },
+    fallback: { provider: "anthropic", model: "claude-sonnet-4-5" },
     priority: 1,
   },
   {
     task: "documentation",
     description: "Write docs, comments, explanations",
-    primary: { provider: "openai", model: "gpt-4o-mini" },
+    primary: { provider: "openai", model: "gpt-4.1-mini" },
     fallback: { provider: "mistral", model: "mistral-small-latest" },
     priority: 2,
   },
   {
     task: "fast",
     description: "Quick responses, simple queries",
-    primary: { provider: "google", model: "gemini-1.5-flash" },
+    primary: { provider: "google", model: "gemini-2.0-flash" },
     fallback: { provider: "openai", model: "gpt-4o-mini" },
     priority: 3,
   },
   {
     task: "local",
     description: "Local/self-hosted models via Ollama",
-    primary: { provider: "ollama", model: "llama3" },
+    primary: { provider: "ollama", model: "llama3.3" },
     fallback: null,
     priority: 3,
   },
   {
     task: "backend_api",
     description: "Backend API development, database schemas, server logic",
-    primary: { provider: "anthropic", model: "claude-3-opus-20240229" },
-    fallback: { provider: "openai", model: "gpt-4o" },
+    primary: { provider: "anthropic", model: "claude-opus-4-5" },
+    fallback: { provider: "openai", model: "gpt-4.1" },
     priority: 1,
   },
   {
     task: "frontend_component",
     description: "React/Vue components, UI implementation",
-    primary: { provider: "openai", model: "gpt-4o" },
-    fallback: { provider: "anthropic", model: "claude-3-sonnet-20240229" },
+    primary: { provider: "openai", model: "gpt-4.1" },
+    fallback: { provider: "anthropic", model: "claude-sonnet-4-5" },
     priority: 1,
   },
   {
@@ -240,29 +246,29 @@ const ROUTING_RULES = [
   {
     task: "code_review",
     description: "Review code for bugs, security, best practices",
-    primary: { provider: "anthropic", model: "claude-3-sonnet-20240229" },
-    fallback: { provider: "openai", model: "gpt-4o" },
+    primary: { provider: "anthropic", model: "claude-sonnet-4-5" },
+    fallback: { provider: "openai", model: "gpt-4.1" },
     priority: 1,
   },
   {
     task: "debugging",
     description: "Debug errors, analyze stack traces",
-    primary: { provider: "anthropic", model: "claude-3-opus-20240229" },
-    fallback: { provider: "openai", model: "gpt-4o" },
+    primary: { provider: "anthropic", model: "claude-opus-4-5" },
+    fallback: { provider: "openai", model: "gpt-4.1" },
     priority: 1,
   },
   {
     task: "refactoring",
     description: "Code refactoring, optimization",
-    primary: { provider: "anthropic", model: "claude-3-sonnet-20240229" },
-    fallback: { provider: "openai", model: "gpt-4o" },
+    primary: { provider: "anthropic", model: "claude-sonnet-4-5" },
+    fallback: { provider: "openai", model: "gpt-4.1" },
     priority: 2,
   },
   {
     task: "testing",
     description: "Write unit tests, test scenarios",
-    primary: { provider: "openai", model: "gpt-4o" },
-    fallback: { provider: "anthropic", model: "claude-3-haiku-20240307" },
+    primary: { provider: "openai", model: "gpt-4.1" },
+    fallback: { provider: "anthropic", model: "claude-haiku-4-5" },
     priority: 2,
   },
   {
@@ -275,15 +281,22 @@ const ROUTING_RULES = [
   {
     task: "complex_reasoning",
     description: "Complex analysis, architecture decisions",
-    primary: { provider: "anthropic", model: "claude-3-opus-20240229" },
-    fallback: { provider: "openai", model: "gpt-4o" },
+    primary: { provider: "anthropic", model: "claude-opus-4-5" },
+    fallback: { provider: "openai", model: "gpt-4.1" },
     priority: 1,
   },
   {
     task: "multilingual",
     description: "Tasks requiring non-English language support",
-    primary: { provider: "google", model: "gemini-1.5-pro" },
+    primary: { provider: "google", model: "gemini-2.0-flash" },
     fallback: { provider: "openai", model: "gpt-4o" },
+    priority: 2,
+  },
+  {
+    task: "custom",
+    description: "Route to self-hosted vLLM or any OpenAI-compatible custom endpoint",
+    primary: { provider: "vllm", model: process.env.VLLM_MODEL || "custom-model" },
+    fallback: { provider: "ollama", model: "llama3.3" },
     priority: 2,
   },
 ];
@@ -411,10 +424,29 @@ function getClient(provider) {
         },
       },
     };
+  } else if (provider === "vllm") {
+    // vLLM — OpenAI-compatible API (also works with LM Studio, LocalAI, any OpenAI-compat server)
+    if (!config.baseUrl) {
+      throw pluginError.validation(
+        "vLLM provider requires VLLM_BASE_URL to be configured (e.g. http://my-server:8000/v1)",
+        { code: "provider_unavailable" }
+      );
+    }
+    client = new OpenAI({
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl,
+    });
   }
 
   clients.set(provider, client);
   return client;
+}
+
+/**
+ * Invalidate cached vLLM client — call after runtime config change
+ */
+export function resetVllmClient() {
+  clients.delete("vllm");
 }
 
 /**
@@ -448,9 +480,18 @@ export async function routeTask(task, prompt, options = {}, context = {}) {
   // Find routing rule
   const rule = ROUTING_RULES.find(r => r.task === task) || ROUTING_RULES.find(r => r.task === "general");
 
-  // Determine which provider to use (primary or fallback)
+  // Determine which provider to use (targetProvider override > fallback > primary)
   const useFallback = options.useFallback || false;
-  const providerConfig = useFallback && rule.fallback ? rule.fallback : rule.primary;
+  let providerConfig;
+  if (options.targetProvider) {
+    const targetProviderData = PROVIDERS[options.targetProvider];
+    if (!targetProviderData) {
+      throw pluginError.validation(`Unknown provider: ${options.targetProvider}`, { code: "invalid_provider" });
+    }
+    providerConfig = { provider: options.targetProvider, model: targetProviderData.models[0] };
+  } else {
+    providerConfig = useFallback && rule.fallback ? rule.fallback : rule.primary;
+  }
   const { provider, model } = providerConfig;
   const config = PROVIDERS[provider];
 
@@ -479,41 +520,42 @@ export async function routeTask(task, prompt, options = {}, context = {}) {
   }
 
   const client = getClient(provider);
+  const timeoutMs = options.timeoutMs || DEFAULT_LLM_TIMEOUT_MS;
 
-  // Setup timeout abort controller
-  const abortController = new _AbortController();
-  const timeoutId = setTimeout(() => {
-    abortController.abort();
-  }, options.timeoutMs || DEFAULT_LLM_TIMEOUT_MS);
+  // Promise.race-based timeout — works for all providers (OpenAI, Anthropic, Google, Ollama)
+  const withLLMTimeout = (promise) => Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(Object.assign(new Error(`LLM timeout after ${timeoutMs}ms`), { code: "llm_timeout" })), timeoutMs)
+    ),
+  ]);
 
   // Special handling for image generation
   if (task === "image_generation") {
     if (provider !== "openai") {
-      clearTimeout(timeoutId);
       throw pluginError.validation("Image generation currently only supported with OpenAI provider", { code: "invalid_provider" });
     }
 
     try {
-      const result = await withResilience(`llm-${provider}-image`, async () => {
-        // Use OpenAI images API
-        const response = await client.images.generate({
-          model: model || "dall-e-3",
-          prompt: prompt,
-          n: options.n || 1,
-          size: options.size || "1024x1024",
-          quality: options.quality || "standard",
-        });
+      const result = await withLLMTimeout(
+        withResilience(`llm-${provider}-image`, async () => {
+          const response = await client.images.generate({
+            model: model || "dall-e-3",
+            prompt: prompt,
+            n: options.n || 1,
+            size: options.size || "1024x1024",
+            quality: options.quality || "standard",
+          });
+          return {
+            url: response.data?.[0]?.url,
+            revised_prompt: response.data?.[0]?.revised_prompt,
+          };
+        }, {
+          circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
+          retry: { maxAttempts: 2, backoffMs: 1000 },
+        })
+      );
 
-        return {
-          url: response.data?.[0]?.url,
-          revised_prompt: response.data?.[0]?.revised_prompt,
-        };
-      }, {
-        circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
-        retry: { maxAttempts: 2, backoffMs: 1000 },
-      });
-
-      clearTimeout(timeoutId);
       auditEntry({
         operation: "image_generation",
         provider,
@@ -541,7 +583,6 @@ export async function routeTask(task, prompt, options = {}, context = {}) {
         type: "image",
       };
     } catch (error) {
-      clearTimeout(timeoutId);
       auditEntry({
         operation: "image_generation",
         provider,
@@ -563,24 +604,24 @@ export async function routeTask(task, prompt, options = {}, context = {}) {
 
   // Call LLM with resilience (for chat/text tasks)
   try {
-    const result = await withResilience(`llm-${provider}`, async () => {
-      const response = await client.chat.completions.create({
-        model: model,
-        messages: [
-          { role: "system", content: getSystemPrompt(task) },
-          { role: "user", content: prompt },
-        ],
-        temperature: options.temperature ?? 0.7,
-        max_tokens: Math.min(options.maxTokens ?? 4096, MAX_OUTPUT_TOKENS),
-      }, { signal: abortController.signal });
+    const result = await withLLMTimeout(
+      withResilience(`llm-${provider}`, async () => {
+        const response = await client.chat.completions.create({
+          model: model,
+          messages: [
+            { role: "system", content: getSystemPrompt(task) },
+            { role: "user", content: prompt },
+          ],
+          temperature: options.temperature ?? 0.7,
+          max_tokens: Math.min(options.maxTokens ?? 4096, MAX_OUTPUT_TOKENS),
+        });
+        return response.choices[0].message.content;
+      }, {
+        circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
+        retry: { maxAttempts: 2, backoffMs: 1000 },
+      })
+    );
 
-      return response.choices[0].message.content;
-    }, {
-      circuit: { failureThreshold: 3, resetTimeoutMs: 30000 },
-      retry: { maxAttempts: 2, backoffMs: 1000 },
-    });
-
-    clearTimeout(timeoutId);
     const durationMs = Date.now() - startTime;
 
     auditEntry({
@@ -608,11 +649,10 @@ export async function routeTask(task, prompt, options = {}, context = {}) {
       usedFallback: useFallback,
     };
   } catch (error) {
-    clearTimeout(timeoutId);
     const durationMs = Date.now() - startTime;
 
-    // If primary fails and fallback exists, try fallback
-    if (!useFallback && rule.fallback) {
+    // If primary fails and fallback exists, try fallback (skip on targetProvider override)
+    if (!useFallback && !options.targetProvider && rule.fallback) {
       console.log(`[llm-router] Provider ${provider} failed: ${error.message}, trying fallback...`);
       retryCount++;
       auditEntry({
@@ -705,21 +745,44 @@ export async function compareLLMs(task, prompt, providers = ["openai", "anthropi
 }
 
 /**
+ * Check if a provider is available based on its requirements
+ */
+function isProviderAvailable(config) {
+  if (config.requiresKey && !process.env[config.requiresKey]) return false;
+  if (config.requiresUrl && !process.env[config.requiresUrl]) return false;
+  return true;
+}
+
+/**
  * List available models
  */
 export function listModels() {
   const available = [];
 
   for (const [key, config] of Object.entries(PROVIDERS)) {
-    const isAvailable = !config.requiresKey || process.env[config.requiresKey];
-    available.push({
+    const available_flag = isProviderAvailable(config);
+    const entry = {
       provider: key,
       name: config.name,
       models: config.models,
       strengths: config.strengths,
       costTier: config.costTier,
-      available: isAvailable,
-    });
+      available: available_flag,
+    };
+
+    if (key === "vllm") {
+      entry.baseUrl = config.baseUrl || null;
+      entry.configuredModels = available_flag ? config.models : [];
+      entry.setupHint = available_flag
+        ? `Connected to ${config.baseUrl}`
+        : "Set VLLM_BASE_URL=http://your-server:8000/v1 to enable";
+    }
+
+    if (key === "ollama") {
+      entry.baseUrl = config.baseUrl;
+    }
+
+    available.push(entry);
   }
 
   return available;
@@ -729,16 +792,22 @@ export function listModels() {
  * Estimate cost for a task
  */
 export function estimateCost(task, promptTokens = 1000, responseTokens = 2000) {
+  // Pricing per 1M tokens (USD) — updated 2026
   const pricing = {
-    "gpt-4o": { input: 5, output: 15 }, // per 1M tokens
-    "gpt-4o-mini": { input: 0.15, output: 0.6 },
-    "claude-3-opus": { input: 15, output: 75 },
-    "claude-3-sonnet": { input: 3, output: 15 },
-    "claude-3-haiku": { input: 0.25, output: 1.25 },
-    "gemini-1.5-pro": { input: 3.5, output: 10.5 },
-    "gemini-1.5-flash": { input: 0.35, output: 1.05 },
-    "mistral-large": { input: 2, output: 6 },
-    "mistral-small": { input: 0.2, output: 0.6 },
+    "gpt-4.1":          { input: 2.0,  output: 8.0  },
+    "gpt-4.1-mini":     { input: 0.4,  output: 1.6  },
+    "gpt-4o":           { input: 2.5,  output: 10.0 },
+    "gpt-4o-mini":      { input: 0.15, output: 0.6  },
+    "o3-mini":          { input: 1.1,  output: 4.4  },
+    "claude-opus-4-5":  { input: 15.0, output: 75.0 },
+    "claude-sonnet-4-5":{ input: 3.0,  output: 15.0 },
+    "claude-haiku-4-5": { input: 0.8,  output: 4.0  },
+    "gemini-2.0-flash": { input: 0.1,  output: 0.4  },
+    "gemini-2.0-pro-exp":{ input: 1.25, output: 5.0 },
+    "gemini-1.5-pro":   { input: 1.25, output: 5.0  },
+    "gemini-1.5-flash": { input: 0.075,output: 0.3  },
+    "mistral-large-latest": { input: 2.0, output: 6.0 },
+    "mistral-small-latest": { input: 0.2, output: 0.6 },
   };
 
   const rule = ROUTING_RULES.find(r => r.task === task);
@@ -1017,62 +1086,278 @@ export const tools = [
       };
     },
   },
+  {
+    name: "llm_route_custom",
+    description: "Send a prompt to a self-hosted vLLM or any OpenAI-compatible endpoint configured via VLLM_BASE_URL",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "The prompt to send to the custom model",
+        },
+        model: {
+          type: "string",
+          description: "Model name to use (must be deployed on the vLLM server, e.g. 'mistral-7b-instruct')",
+        },
+        explanation: {
+          type: "string",
+          description: "Explain why you are routing to the custom endpoint",
+        },
+        temperature: {
+          type: "number",
+          description: "Temperature (0-1)",
+          default: 0.7,
+        },
+        maxTokens: {
+          type: "number",
+          description: "Maximum tokens to generate",
+          default: 4096,
+        },
+      },
+      required: ["prompt", "explanation"],
+    },
+    handler: async ({ prompt, model, explanation, temperature, maxTokens }) => {
+      const vllmConfig = PROVIDERS.vllm;
+      if (!vllmConfig.baseUrl) {
+        return {
+          ok: false,
+          error: {
+            code: "provider_not_configured",
+            message: "VLLM_BASE_URL is not set. Configure it to use the custom endpoint.",
+          },
+        };
+      }
+      try {
+        const targetModel = model || vllmConfig.models[0];
+        const result = await routeTask("custom", prompt, {
+          targetProvider: "vllm",
+          temperature,
+          maxTokens,
+        });
+        return {
+          ok: true,
+          data: {
+            ...result,
+            model: targetModel,
+            endpoint: vllmConfig.baseUrl,
+            explanation,
+          },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: { code: "vllm_error", message: error.message },
+        };
+      }
+    },
+  },
+  {
+    name: "llm_list_providers",
+    description: "List all configured LLM providers including vLLM/custom endpoint status",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    handler: () => ({
+      ok: true,
+      data: listModels(),
+    }),
+  },
 ];
 
-// REST API Endpoints
+// REST API Endpoints — documented format (used by OpenAPI generator)
 export const endpoints = [
-  {
-    path: "/llm/route",
-    method: "POST",
-    handler: async (req, res) => {
-      try {
-        const context = extractContext(req);
-        const result = await routeTask(req.body.task, req.body.prompt, req.body.options, context);
-        res.json({ ok: true, data: result });
-      } catch (error) {
-        const statusCode = error.code === "prompt_limit_exceeded" ? 400 : error.code === "provider_unavailable" ? 503 : 500;
-        res.status(statusCode).json({ ok: false, error: { code: error.code, message: error.message } });
-      }
-    },
-  },
-  {
-    path: "/llm/compare",
-    method: "POST",
-    handler: async (req, res) => {
-      try {
-        const results = await compareLLMs(req.body.task, req.body.prompt, req.body.providers);
-        res.json({ ok: true, data: results });
-      } catch (error) {
-        res.status(500).json({ ok: false, error: { code: error.code, message: error.message } });
-      }
-    },
-  },
-  {
-    path: "/llm/models",
-    method: "GET",
-    handler: (req, res) => {
-      res.json({ ok: true, data: listModels() });
-    },
-  },
-  {
-    path: "/llm/estimate-cost",
-    method: "POST",
-    handler: (req, res) => {
-      const estimate = estimateCost(req.body.task, req.body.promptTokens, req.body.responseTokens);
-      res.json({ ok: true, data: estimate });
-    },
-  },
-  {
-    path: "/llm/audit",
-    method: "GET",
-    handler: (req, res) => {
-      const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-      res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
-    },
-  },
+  { method: "POST", path: "/llm/route",                    description: "Route a prompt to the best LLM provider",                       scope: "write" },
+  { method: "POST", path: "/llm/compare",                  description: "Compare responses from multiple LLM providers",                  scope: "write" },
+  { method: "GET",  path: "/llm/models",                   description: "List available LLM models and their availability",               scope: "read"  },
+  { method: "GET",  path: "/llm/providers",                description: "List all providers with config details (incl. vLLM status)",     scope: "read"  },
+  { method: "POST", path: "/llm/estimate-cost",            description: "Estimate cost for a task before running it",                     scope: "read"  },
+  { method: "GET",  path: "/llm/audit",                    description: "View recent LLM operation audit log",                            scope: "read"  },
+  { method: "GET",  path: "/llm/routing-rules",            description: "List all task routing rules",                                    scope: "read"  },
+  { method: "POST", path: "/llm/providers/vllm/test",      description: "Test connectivity to configured vLLM/custom endpoint",           scope: "write" },
+  { method: "GET",  path: "/llm/providers/vllm/models",    description: "Fetch loaded models from the vLLM server",                       scope: "read"  },
 ];
 
-// Plugin registration
-export function register(app, dependencies) {
-  console.log("[LLM Router] Registered with providers:", listModels().filter(m => m.available).map(m => m.provider).join(", "));
+// Plugin registration — mounts all routes
+export function register(app) {
+  const router = Router();
+
+  /**
+   * POST /llm/route
+   * Route a prompt to the optimal LLM provider based on task type.
+   * Body: { task, prompt, options?: { temperature, maxTokens, timeoutMs } }
+   */
+  router.post("/route", async (req, res) => {
+    const { task, prompt, options } = req.body;
+    if (!task || !prompt) {
+      return res.status(400).json({ ok: false, error: { code: "missing_fields", message: "task and prompt are required" } });
+    }
+    try {
+      const context = extractContext(req);
+      const result = await routeTask(task, prompt, options || {}, context);
+      res.json({ ok: true, data: result });
+    } catch (error) {
+      const statusCode =
+        error.code === "prompt_limit_exceeded" ? 400 :
+        error.code === "provider_unavailable"  ? 503 :
+        error.code === "llm_timeout"           ? 504 : 500;
+      res.status(statusCode).json({ ok: false, error: { code: error.code || "llm_error", message: error.message } });
+    }
+  });
+
+  /**
+   * POST /llm/compare
+   * Compare responses from multiple providers for the same prompt.
+   * Body: { task, prompt, providers?: string[] }
+   */
+  router.post("/compare", async (req, res) => {
+    const { task, prompt, providers } = req.body;
+    if (!task || !prompt) {
+      return res.status(400).json({ ok: false, error: { code: "missing_fields", message: "task and prompt are required" } });
+    }
+    try {
+      const results = await compareLLMs(task, prompt, providers);
+      res.json({ ok: true, data: results });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: { code: error.code || "compare_error", message: error.message } });
+    }
+  });
+
+  /**
+   * GET /llm/models
+   * List all providers and which models are available (based on configured API keys).
+   */
+  router.get("/models", (req, res) => {
+    res.json({ ok: true, data: listModels() });
+  });
+
+  /**
+   * POST /llm/estimate-cost
+   * Estimate cost for a task given approximate token counts.
+   * Body: { task, promptTokens?, responseTokens? }
+   */
+  router.post("/estimate-cost", (req, res) => {
+    const { task, promptTokens, responseTokens } = req.body;
+    if (!task) {
+      return res.status(400).json({ ok: false, error: { code: "missing_task", message: "task is required" } });
+    }
+    const estimate = estimateCost(task, promptTokens, responseTokens);
+    if (!estimate) {
+      return res.status(404).json({ ok: false, error: { code: "unknown_task", message: `No routing rule for task: ${task}` } });
+    }
+    res.json({ ok: true, data: estimate });
+  });
+
+  /**
+   * GET /llm/audit
+   * View recent LLM operation audit entries.
+   * Query: ?limit=50
+   */
+  router.get("/audit", async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const entries = await getAuditLogEntries(limit);
+    res.json({ ok: true, data: { count: entries.length, entries } });
+  });
+
+  /**
+   * GET /llm/routing-rules
+   * List all task types and their routing configuration.
+   */
+  router.get("/routing-rules", (req, res) => {
+    res.json({
+      ok: true,
+      data: ROUTING_RULES.map(r => ({
+        task: r.task,
+        description: r.description,
+        primary: r.primary,
+        fallback: r.fallback || null,
+        priority: r.priority,
+      })),
+    });
+  });
+
+  /**
+   * GET /llm/providers
+   * List all providers with availability and configuration details.
+   * Includes vLLM/custom endpoint status.
+   */
+  router.get("/providers", (req, res) => {
+    res.json({ ok: true, data: listModels() });
+  });
+
+  /**
+   * POST /llm/providers/vllm/test
+   * Test connectivity to the configured vLLM endpoint.
+   * Sends a minimal ping prompt and returns latency.
+   */
+  router.post("/providers/vllm/test", async (req, res) => {
+    const vllmConfig = PROVIDERS.vllm;
+    if (!vllmConfig.baseUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: "not_configured", message: "VLLM_BASE_URL is not set" },
+      });
+    }
+    const startTime = Date.now();
+    try {
+      const result = await routeTask("custom", req.body?.prompt || "Say hello in one word.", {
+        targetProvider: "vllm",
+        maxTokens: 10,
+        timeoutMs: 10000,
+      });
+      res.json({
+        ok: true,
+        data: {
+          endpoint: vllmConfig.baseUrl,
+          model: result.model,
+          latencyMs: Date.now() - startTime,
+          response: result.content,
+        },
+      });
+    } catch (error) {
+      res.status(502).json({
+        ok: false,
+        error: { code: "vllm_unreachable", message: error.message, endpoint: vllmConfig.baseUrl },
+      });
+    }
+  });
+
+  /**
+   * POST /llm/providers/vllm/models
+   * Fetch the list of models loaded on the vLLM server (via /v1/models endpoint).
+   */
+  router.get("/providers/vllm/models", async (req, res) => {
+    const vllmConfig = PROVIDERS.vllm;
+    if (!vllmConfig.baseUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: { code: "not_configured", message: "VLLM_BASE_URL is not set" },
+      });
+    }
+    try {
+      const response = await fetch(`${vllmConfig.baseUrl}/models`, {
+        headers: {
+          "Authorization": `Bearer ${vllmConfig.apiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`vLLM server returned ${response.status}`);
+      }
+      const data = await response.json();
+      const models = (data.data || []).map(m => ({ id: m.id, object: m.object }));
+      res.json({ ok: true, data: { endpoint: vllmConfig.baseUrl, models } });
+    } catch (error) {
+      res.status(502).json({
+        ok: false,
+        error: { code: "vllm_unreachable", message: error.message },
+      });
+    }
+  });
+
+  app.use("/llm", router);
+
+  const available = listModels().filter(m => m.available).map(m => m.provider);
+  console.log(`[llm-router] Registered — available providers: ${available.join(", ") || "none (no API keys configured)"}`);
 }

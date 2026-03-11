@@ -1,11 +1,11 @@
 {
   "name": "llm-router",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "stable",
-  "owner": "hsynalv",
+  "owner": "platform-team",
   "description": "Multi-LLM routing with cost optimization, fallback chains, and provider selection",
   "requiresAuth": false,
-  "supportsJobs": true,
+  "supportsJobs": false,
   "supportsStreaming": false,
   "testLevel": "unit",
   "resilience": {
@@ -14,7 +14,7 @@
     "circuitBreaker": true
   },
   "security": {
-    "scope": "read",
+    "scope": "write",
     "dangerousCombinations": [],
     "requiresApproval": false
   },
@@ -27,32 +27,74 @@
     "examples": true,
     "apiReference": true
   },
+  "providers": ["openai", "anthropic", "google", "mistral", "ollama", "vllm"],
+  "supportedTasks": [
+    "coding", "analysis", "documentation", "fast", "local",
+    "backend_api", "frontend_component", "image_generation",
+    "code_review", "debugging", "refactoring", "testing",
+    "general", "complex_reasoning", "multilingual"
+  ],
   "dependencies": [],
   "envVars": [
     {
       "name": "OPENAI_API_KEY",
       "required": false,
-      "description": "OpenAI API key for GPT models"
+      "description": "OpenAI API key — enables GPT-4.1, gpt-4o, o3-mini"
     },
     {
       "name": "ANTHROPIC_API_KEY",
       "required": false,
-      "description": "Anthropic API key for Claude models"
+      "description": "Anthropic API key — enables Claude Opus/Sonnet/Haiku"
     },
     {
       "name": "GOOGLE_API_KEY",
       "required": false,
-      "description": "Google API key for Gemini models"
+      "description": "Google API key — enables Gemini 2.0 Flash/Pro"
     },
     {
       "name": "MISTRAL_API_KEY",
       "required": false,
-      "description": "Mistral API key"
+      "description": "Mistral API key — enables Mistral Large/Small"
     },
     {
       "name": "OLLAMA_BASE_URL",
       "required": false,
-      "description": "Ollama local server URL"
+      "description": "Ollama local server URL (default: http://localhost:11434)"
+    },
+    {
+      "name": "LLM_TIMEOUT_MS",
+      "required": false,
+      "description": "Global LLM timeout in milliseconds (default: 60000)"
+    },
+    {
+      "name": "LLM_MAX_PROMPT_LENGTH",
+      "required": false,
+      "description": "Max prompt character length (default: 100000)"
+    },
+    {
+      "name": "LLM_MAX_OUTPUT_TOKENS",
+      "required": false,
+      "description": "Max output tokens per request (default: 4096)"
+    },
+    {
+      "name": "VLLM_BASE_URL",
+      "required": false,
+      "description": "vLLM or any OpenAI-compatible server URL (e.g. http://my-server:8000/v1)"
+    },
+    {
+      "name": "VLLM_API_KEY",
+      "required": false,
+      "description": "API key for the vLLM server if authentication is enabled (default: not-needed)"
+    },
+    {
+      "name": "VLLM_MODEL",
+      "required": false,
+      "description": "Default model name on the vLLM server (e.g. mistral-7b-instruct)"
+    },
+    {
+      "name": "VLLM_MODELS",
+      "required": false,
+      "description": "Comma-separated list of models on the vLLM server (e.g. mistral-7b,llama-70b)"
     }
   ]
 }
