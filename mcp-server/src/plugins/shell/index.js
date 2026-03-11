@@ -39,7 +39,7 @@ export const metadata = createMetadata({
   tags: ["execution", "shell", "commands", "system"],
   dependencies: [],
   since: "1.0.0",
-  notes: "Shell execution is highly restricted. All commands are audited and subject to policy checks. Pipes and compound operators are allowed when all referenced binaries are in the allowlist.",
+  notes: "Shell execution is highly restricted. Sessions allow stateful runs (same cwd, background commands). Pipes and compound operators allowed when all binaries are in the allowlist. SHELL_MAX_SESSIONS env limits concurrent sessions.",
 });
 
 const execAsync = promisify(exec);
@@ -88,6 +88,64 @@ const ALLOWED_WORKING_DIRS = (process.env.ALLOWED_WORKING_DIRS || "")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean);
+
+const MAX_SESSIONS = Math.max(1, parseInt(process.env.SHELL_MAX_SESSIONS, 10) || 10);
+const MAX_SESSION_OUTPUT_LINES = 500;
+
+// ── Session store (stateful shell — Manus pattern) ─────────────────────────────
+
+const sessions = new Map(); // sessionId -> { id, cwd, env, pid, outputLines[], lastCommand, createdAt }
+
+function generateSessionId() {
+  return `sh-${randomBytes(8).toString("hex")}`;
+}
+
+function createSession(cwd = process.cwd(), env = {}) {
+  if (sessions.size >= MAX_SESSIONS) {
+    return { ok: false, error: { code: "max_sessions", message: `Max sessions (${MAX_SESSIONS}) reached. Close one first.` } };
+  }
+  const resolvedCwd = resolve(cwd || process.cwd());
+  if (!validateWorkingDir(resolvedCwd)) {
+    return { ok: false, error: { code: "invalid_cwd", message: "Working directory not allowed" } };
+  }
+  const id = generateSessionId();
+  sessions.set(id, {
+    id,
+    cwd: resolvedCwd,
+    env: { ...env },
+    pid: null,
+    outputLines: [],
+    lastCommand: null,
+    createdAt: new Date().toISOString(),
+  });
+  return { ok: true, data: { session_id: id, cwd: resolvedCwd } };
+}
+
+function getSession(sessionId) {
+  return sessions.get(sessionId) || null;
+}
+
+function appendSessionOutput(session, stdout, stderr) {
+  if (!session) return;
+  const lines = [];
+  if (stdout) lines.push(...String(stdout).split("\n").filter(Boolean));
+  if (stderr) lines.push(...String(stderr).split("\n").filter(Boolean));
+  for (const line of lines) {
+    session.outputLines.push(line);
+    if (session.outputLines.length > MAX_SESSION_OUTPUT_LINES) session.outputLines.shift();
+  }
+}
+
+function closeSession(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) return { ok: false, error: { code: "not_found", message: `Session ${sessionId} not found` } };
+  if (session.pid) {
+    try { process.kill(session.pid, "SIGTERM"); } catch { /* already dead */ }
+    session.pid = null;
+  }
+  sessions.delete(sessionId);
+  return { ok: true, data: { session_id: sessionId, closed: true } };
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -349,6 +407,62 @@ async function executeCommandStream(command, options = {}) {
   return child;
 }
 
+/**
+ * Run command in background; output and pid stored in session.
+ * Session must exist. Policy and allowlist checked before spawn.
+ */
+async function executeCommandBackground(command, sessionId, options = {}) {
+  const session = getSession(sessionId);
+  if (!session) throw Errors.validation(`Session ${sessionId} not found`);
+  const { correlationId = generateCorrelationId(), actor = null } = options;
+
+  const allowedCheck = isCommandAllowed(command);
+  if (!allowedCheck.allowed) {
+    await auditEntry({ command, cwd: session.cwd, allowed: false, reason: allowedCheck.reason, correlationId, actor });
+    throw Errors.authorization(`Shell command denied: ${allowedCheck.reason}`);
+  }
+  if (!validateWorkingDir(session.cwd)) {
+    await auditEntry({ command, cwd: session.cwd, allowed: false, reason: "Invalid working directory", correlationId, actor });
+    throw Errors.validation("Working directory not allowed");
+  }
+
+  const policyManager = getPolicyManager();
+  if (policyManager) {
+    const policyResult = await canExecute({
+      actor: actor?.type === "api_key" ? `key:${actor.scopes?.join(",") || "read"}` : (actor || "unknown"),
+      workspaceId: session.cwd || "global",
+      command,
+      metadata: { background: true },
+    });
+    if (!policyResult.allowed) {
+      await auditEntry({ command, cwd: session.cwd, allowed: false, reason: policyResult.reason || "Policy denied", correlationId, actor });
+      throw Errors.authorization(`Policy denied: ${policyResult.reason}`);
+    }
+  }
+
+  const child = spawn(command, [], {
+    cwd: session.cwd,
+    env: { ...process.env, ...session.env },
+    shell: true,
+  });
+
+  session.pid = child.pid;
+  session.lastCommand = command;
+
+  child.stdout?.on("data", (data) => appendSessionOutput(session, data.toString(), null));
+  child.stderr?.on("data", (data) => appendSessionOutput(session, null, data.toString()));
+  child.on("close", (code) => {
+    session.pid = null;
+    auditEntry({ command, cwd: session.cwd, allowed: true, exitCode: code, correlationId, actor }).catch(() => {});
+  });
+  child.on("error", (err) => {
+    session.pid = null;
+    appendSessionOutput(session, null, `Error: ${err.message}`);
+  });
+
+  return { pid: child.pid, session_id: sessionId, command, cwd: session.cwd };
+}
+
 // ── Plugin exports ───────────────────────────────────────────────────────────
 
 export const name        = "shell";
@@ -358,11 +472,15 @@ export const capabilities = ["read", "write"];
 export const requires    = [];
 
 export const endpoints = [
-  { method: "POST", path: "/shell/execute",        description: "Execute a shell command",                   scope: "write" },
-  { method: "POST", path: "/shell/execute/stream", description: "Execute with streaming output (SSE)",       scope: "write" },
-  { method: "POST", path: "/shell/check",          description: "Check if a command would be allowed",       scope: "read"  },
-  { method: "GET",  path: "/shell/audit",          description: "Get shell execution audit log",             scope: "read"  },
-  { method: "GET",  path: "/shell/safety",         description: "Get safety configuration (allowlist etc.)", scope: "read"  },
+  { method: "POST", path: "/shell/execute",         description: "Execute a shell command (optional session_id, is_background)", scope: "write" },
+  { method: "POST", path: "/shell/execute/stream",  description: "Execute with streaming output (SSE)", scope: "write" },
+  { method: "POST", path: "/shell/session",        description: "Create a new shell session", scope: "write" },
+  { method: "GET",  path: "/shell/sessions",        description: "List active shell sessions", scope: "read"  },
+  { method: "GET",  path: "/shell/sessions/:id/output", description: "Get session output", scope: "read"  },
+  { method: "DELETE", path: "/shell/sessions/:id",   description: "Close a shell session", scope: "write" },
+  { method: "POST", path: "/shell/check",           description: "Check if a command would be allowed", scope: "read"  },
+  { method: "GET",  path: "/shell/audit",           description: "Get shell execution audit log", scope: "read"  },
+  { method: "GET",  path: "/shell/safety",          description: "Get safety configuration (allowlist etc.)", scope: "read"  },
 ];
 
 export const examples = [
@@ -377,28 +495,51 @@ export const examples = [
 export const tools = [
   {
     name: "shell_execute",
-    description: "Execute a shell command with safety controls. Pipes (|) and compound operators (&&, ||) are allowed when all referenced binaries are in the allowlist. Always explain what the command does.",
+    description: "Execute a shell command. Use session_id to run in a persistent session (same cwd). Use is_background=true to run long commands without waiting (output via shell_session_output).",
     tags: [ToolTags.WRITE, ToolTags.DESTRUCTIVE, ToolTags.LOCAL_FS],
     inputSchema: {
       type: "object",
       properties: {
-        command:     { type: "string", description: "Command to execute. Examples: 'ls -la', 'git status && git diff', 'cat package.json | jq .name'" },
-        cwd:         { type: "string", description: "Working directory (must be within project root or configured ALLOWED_WORKING_DIRS)" },
-        timeout:     { type: "number", default: 30000, description: "Timeout in ms (default: 30000, max: 300000)" },
-        env:         { type: "object", description: "Additional environment variables" },
-        explanation: { type: "string", description: "Explain what this command does and why you need to run it" },
+        command:     { type: "string", description: "Command to execute" },
+        cwd:         { type: "string", description: "Working directory (ignored if session_id is set)" },
+        session_id:  { type: "string", description: "Optional. Run in this session's cwd; output appended to session" },
+        is_background: { type: "boolean", default: false, description: "If true, run in background (requires session_id). Returns immediately." },
+        timeout:     { type: "number", default: 30000, description: "Timeout in ms (foreground only)" },
+        env:         { type: "object", description: "Additional env (session_id: merged with session env)" },
+        explanation: { type: "string", description: "Explain what this command does" },
       },
       required: ["command", "explanation"],
     },
     handler: async (args, context) => {
       try {
+        let cwd = args.cwd;
+        const session = args.session_id ? getSession(args.session_id) : null;
+        if (session) cwd = session.cwd;
+
+        if (args.is_background) {
+          if (!args.session_id) {
+            return { ok: false, error: { code: "session_required", message: "is_background requires session_id" } };
+          }
+          const result = await executeCommandBackground(args.command, args.session_id, {
+            correlationId: generateCorrelationId(),
+            actor: context?.actor || null,
+          });
+          return { ok: true, data: { ...result, message: "Running in background. Use shell_session_output to get output." } };
+        }
+
         const result = await executeCommand(args.command, {
-          cwd:          args.cwd,
-          timeout:      args.timeout || DEFAULT_TIMEOUT,
-          env:          args.env,
+          cwd,
+          timeout: args.timeout || DEFAULT_TIMEOUT,
+          env: session ? { ...session.env, ...args.env } : args.env,
           correlationId: generateCorrelationId(),
-          actor:        context?.actor || null,
+          actor: context?.actor || null,
         });
+
+        if (session) {
+          appendSessionOutput(session, result.stdout, result.stderr);
+          session.lastCommand = args.command;
+        }
+
         return {
           ok: true,
           data: {
@@ -408,6 +549,7 @@ export const tools = [
             stderr:        result.stderr,
             duration:      result.duration,
             correlationId: result.correlationId,
+            session_id:    args.session_id || null,
           },
         };
       } catch (err) {
@@ -423,6 +565,70 @@ export const tools = [
         };
       }
     },
+  },
+  {
+    name: "shell_session_create",
+    description: "Create a new shell session with a given working directory. Use the returned session_id in shell_execute to run commands in the same cwd.",
+    tags: [ToolTags.WRITE, ToolTags.LOCAL_FS],
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd:  { type: "string", description: "Working directory for this session", default: "." },
+        env:  { type: "object", description: "Environment variables for the session" },
+      },
+    },
+    handler: async (args) => {
+      const result = createSession(args.cwd, args.env || {});
+      if (!result.ok) return result;
+      return { ok: true, data: result.data };
+    },
+  },
+  {
+    name: "shell_session_list",
+    description: "List active shell sessions (id, cwd, pid, lastCommand).",
+    tags: [ToolTags.READ_ONLY],
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => {
+      const list = Array.from(sessions.values()).map((s) => ({
+        session_id: s.id,
+        cwd: s.cwd,
+        pid: s.pid,
+        lastCommand: s.lastCommand,
+        createdAt: s.createdAt,
+      }));
+      return { ok: true, data: { sessions: list, count: list.length, max_sessions: MAX_SESSIONS } };
+    },
+  },
+  {
+    name: "shell_session_output",
+    description: "Get the last N lines of output from a session (stdout/stderr from commands run in that session).",
+    tags: [ToolTags.READ_ONLY],
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: { type: "string", description: "Session ID" },
+        lines:      { type: "number", default: 50, description: "Number of lines (default 50)" },
+      },
+      required: ["session_id"],
+    },
+    handler: async ({ session_id, lines = 50 }) => {
+      const session = getSession(session_id);
+      if (!session) return { ok: false, error: { code: "not_found", message: `Session ${session_id} not found` } };
+      const n = Math.min(Math.max(1, lines), MAX_SESSION_OUTPUT_LINES);
+      const output = session.outputLines.slice(-n);
+      return { ok: true, data: { session_id, output, lineCount: output.length, pid: session.pid } };
+    },
+  },
+  {
+    name: "shell_session_close",
+    description: "Close a shell session. If a command is running in the background, it will be terminated.",
+    tags: [ToolTags.WRITE, ToolTags.LOCAL_FS],
+    inputSchema: {
+      type: "object",
+      properties: { session_id: { type: "string", description: "Session ID to close" } },
+      required: ["session_id"],
+    },
+    handler: async ({ session_id }) => closeSession(session_id),
   },
   {
     name: "shell_safety_check",
@@ -583,7 +789,6 @@ export function register(app) {
 
   /**
    * GET /shell/safety
-   * Returns the current allowlist and dangerous pattern list.
    */
   router.get("/safety", (_req, res) => {
     res.json({
@@ -594,9 +799,44 @@ export function register(app) {
         allowedDirectories: ALLOWED_WORKING_DIRS,
         defaultTimeout:   DEFAULT_TIMEOUT,
         maxTimeout:       MAX_TIMEOUT,
+        maxSessions:      MAX_SESSIONS,
         notes: "Pipes (|) and compound operators (&&, ||, ;) are allowed when all referenced binaries are in the allowlist.",
       },
     });
+  });
+
+  /** POST /shell/session — create session */
+  router.post("/session", requireScope("write"), (req, res) => {
+    const { cwd, env } = req.body || {};
+    const result = createSession(cwd, env);
+    res.status(result.ok ? 201 : 400).json(result);
+  });
+
+  /** GET /shell/sessions — list sessions */
+  router.get("/sessions", requireScope("read"), (_req, res) => {
+    const list = Array.from(sessions.values()).map((s) => ({
+      session_id: s.id,
+      cwd: s.cwd,
+      pid: s.pid,
+      lastCommand: s.lastCommand,
+      createdAt: s.createdAt,
+    }));
+    res.json({ ok: true, data: { sessions: list, count: list.length, max_sessions: MAX_SESSIONS } });
+  });
+
+  /** GET /shell/sessions/:id/output */
+  router.get("/sessions/:id/output", requireScope("read"), (req, res) => {
+    const session = getSession(req.params.id);
+    if (!session) return res.status(404).json({ ok: false, error: { code: "not_found", message: "Session not found" } });
+    const lines = Math.min(Math.max(1, parseInt(req.query.lines, 10) || 50), MAX_SESSION_OUTPUT_LINES);
+    const output = session.outputLines.slice(-lines);
+    res.json({ ok: true, data: { session_id: session.id, output, lineCount: output.length, pid: session.pid } });
+  });
+
+  /** DELETE /shell/sessions/:id — close session */
+  router.delete("/sessions/:id", requireScope("write"), (req, res) => {
+    const result = closeSession(req.params.id);
+    res.status(result.ok ? 200 : 404).json(result);
   });
 
   app.use("/shell", router);

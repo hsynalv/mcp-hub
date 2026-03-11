@@ -12,7 +12,7 @@ import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/inde
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { auditLog } from "../../core/audit/index.js";
 import { routeTask } from "../llm-router/index.js";
-import { getRecentCommits, getProjectStructure, getOpenIssues, BASE_REPO_PATH } from "./repo.core.js";
+import { getRecentCommits, getProjectStructure, getOpenIssues, getSimilarCommits, BASE_REPO_PATH } from "./repo.core.js";
 import { repoAnalyze } from "./repo.analyze.js";
 
 // ── Metadata ──────────────────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ export const metadata = createMetadata({
   endpoints: [
     { method: "GET",  path: "/repo/health",    description: "Plugin health",                             scope: "read" },
     { method: "GET",  path: "/repo/commits",   description: "Recent git commits with stats",             scope: "read" },
+    { method: "GET",  path: "/repo/commits/similar", description: "Commits similar to query (Augment-style)", scope: "read" },
     { method: "GET",  path: "/repo/issues",    description: "TODO/FIXME/BUG comments in codebase",       scope: "read" },
     { method: "GET",  path: "/repo/structure", description: "Project file structure",                    scope: "read" },
     { method: "POST", path: "/repo/analyze",   description: "AI-powered repo analysis with roadmap",    scope: "read" },
@@ -109,6 +110,19 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
     const result = await getRecentCommits(parsed.data.path, parsed.data.limit);
+    res.status(result.ok ? 200 : 500).json(result);
+  });
+
+  router.get("/commits/similar", async (req, res) => {
+    const parsed = z.object({
+      path:  z.string().optional().default("."),
+      query: z.string().min(1),
+      limit: z.coerce.number().int().min(1).max(20).optional().default(5),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
+    }
+    const result = await getSimilarCommits(parsed.data.path, parsed.data.query, { limit: parsed.data.limit });
     res.status(result.ok ? 200 : 500).json(result);
   });
 
@@ -256,6 +270,26 @@ function fallbackAnalysis(raw, fallbackType) {
 // ── MCP Tools ─────────────────────────────────────────────────────────────────
 
 export const tools = [
+  {
+    name: "repo_similar_commits",
+    description: "Find past commits similar to the current task (Augment-style). Use to see how similar changes were made before (e.g. 'add auth', 'fix memory leak').",
+    tags: [ToolTags.READ_ONLY, ToolTags.GIT],
+    inputSchema: {
+      type: "object",
+      properties: {
+        path:        { type: "string",  description: "Repository path (default: project root)", default: "." },
+        query:       { type: "string",  description: "What kind of change (e.g. 'add authentication', 'fix memory leak')" },
+        limit:       { type: "number", description: "Max commits to return (1-20, default: 5)" },
+        explanation: { type: "string", description: "Why you need similar commits" },
+      },
+      required: ["query"],
+    },
+    handler: async ({ path = ".", query, limit = 5, explanation }) => {
+      const result = await getSimilarCommits(path, query, { limit });
+      if (!result.ok) return result;
+      return { ok: true, data: { ...result.data, explanation } };
+    },
+  },
   {
     name: "repo_recent_commits",
     description: "Get recent git commits with file stats. Use to understand recent activity and change velocity.",

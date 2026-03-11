@@ -106,6 +106,21 @@ async function listProjects() {
   return raws.filter(Boolean).map(r => JSON.parse(r));
 }
 
+// ── Spec store (Kiro-style spec-first: write spec then plan from spec) ───────────
+
+const SPEC_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+
+async function getSpec(specId) {
+  const client = getRedis();
+  const raw = await client.get(`orch:spec:${specId}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function setSpec(specId, spec) {
+  const client = getRedis();
+  await client.setex(`orch:spec:${specId}`, SPEC_TTL_SECONDS, JSON.stringify(spec));
+}
+
 // ── Path safety for AI-generated file paths ───────────────────────────────────
 
 /**
@@ -180,6 +195,100 @@ Focus on MVP. Include 3-5 phases max.`;
   const plan = parseJSON(result.content);
   if (!plan) return { ok: false, error: { code: "parse_error", message: "Failed to parse AI plan" } };
   return { ok: true, plan };
+}
+
+/**
+ * Write a detailed specification document for a task (Kiro spec-first).
+ * Returns specId for use with project_plan_from_spec.
+ */
+async function writeSpecDocument(task, context = {}, outputFormat = "markdown") {
+  const contextStr = typeof context === "object" && context !== null
+    ? Object.entries(context).map(([k, v]) => `${k}: ${v}`).join("\n")
+    : String(context);
+
+  const prompt = `You are a technical spec author. Write a detailed specification for the following task.
+
+TASK: ${task}
+${contextStr ? `\nCONTEXT:\n${contextStr}` : ""}
+
+The spec should include:
+- Goals and scope
+- Key requirements (functional and non-functional)
+- Endpoints/APIs or modules (if applicable)
+- Security and validation considerations
+- Acceptance criteria
+
+Return the spec as ${outputFormat === "structured" ? "valid JSON: { \"title\": \"...\", \"sections\": [{ \"heading\": \"...\", \"content\": \"...\" }], \"acceptanceCriteria\": [] }" : "markdown text (no code fence around the whole response)."}`;
+
+  let result;
+  try {
+    result = await routeTask("analysis", prompt, { temperature: 0.3, maxTokens: 4000 });
+  } catch (err) {
+    return { ok: false, error: { code: "llm_error", message: err.message } };
+  }
+
+  const spec = {
+    task,
+    context: contextStr,
+    outputFormat,
+    content: result.content,
+    createdAt: new Date().toISOString(),
+  };
+  const specId = crypto.randomUUID();
+  await setSpec(specId, spec);
+  return { ok: true, specId, spec };
+}
+
+/**
+ * Generate an implementation plan from a stored spec (Kiro plan-from-spec).
+ */
+async function planFromSpecDocument(specId) {
+  const spec = await getSpec(specId);
+  if (!spec) return { ok: false, error: { code: "spec_not_found", message: `Spec ${specId} not found or expired` } };
+
+  const prompt = `You are a technical project planner. Given the following specification, produce an implementation plan.
+
+SPECIFICATION (task: ${spec.task}):
+${spec.content}
+
+Return ONLY valid JSON (no markdown):
+{
+  "title": "Project/spec title",
+  "description": "Brief description",
+  "complexity": "simple|medium|complex",
+  "estimatedHours": 0,
+  "phases": [
+    {
+      "name": "Phase name",
+      "description": "What this phase accomplishes",
+      "order": 1,
+      "tasks": [
+        {
+          "title": "Task title",
+          "description": "Task details",
+          "type": "setup|code|test|docs|deploy",
+          "estimatedMinutes": 60,
+          "targetFile": "path/to/file.js"
+        }
+      ]
+    }
+  ],
+  "filesToCreate": ["src/index.js"],
+  "dependencies": []
+}
+
+Focus on MVP. Include 3-5 phases. Match the spec's requirements and acceptance criteria.`;
+
+  let result;
+  try {
+    result = await routeTask("analysis", prompt, { temperature: 0.3, maxTokens: 3000 });
+  } catch (err) {
+    return { ok: false, error: { code: "llm_error", message: err.message } };
+  }
+
+  const plan = parseJSON(result.content);
+  if (!plan) return { ok: false, error: { code: "parse_error", message: "Failed to parse plan from spec" } };
+  return { ok: true, plan, specId };
 }
 
 async function generateDetailedPlanWithPatterns(idea, selectedArchitecture, patterns) {
@@ -659,6 +768,62 @@ export function register(app) {
 // ── MCP Tools ─────────────────────────────────────────────────────────────────
 
 export const tools = [
+  {
+    name: "project_write_spec",
+    description: "Write a detailed specification document before implementation (Kiro spec-first). Use when the task is complex or ambiguous. Returns specId for project_plan_from_spec.",
+    tags: [ToolTags.WRITE, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        task:        { type: "string", description: "Task or feature to specify (e.g. 'Add auth to the API')" },
+        context:     { type: "object", description: "Optional context (tech stack, constraints, existing modules)" },
+        outputFormat: { type: "string", enum: ["markdown", "structured"], default: "markdown", description: "Spec format" },
+        explanation: { type: "string", description: "Why you're writing this spec" },
+      },
+      required: ["task"],
+    },
+    handler: async ({ task, context = {}, outputFormat = "markdown", explanation }, ctx = {}) => {
+      const result = await writeSpecDocument(task, context, outputFormat);
+      if (!result.ok) return result;
+      await auditLog({
+        plugin: "project-orchestrator",
+        action: "project_write_spec",
+        userId: ctx.actor ?? "mcp-agent",
+        details: { specId: result.specId, task: task.slice(0, 100), ...(explanation && { reason: explanation }) },
+        risk: RiskLevel.HIGH,
+      }).catch(() => {});
+      return {
+        ok: true,
+        data: { specId: result.specId, spec: result.spec, explanation },
+      };
+    },
+  },
+  {
+    name: "project_plan_from_spec",
+    description: "Generate an implementation plan from a previously written spec (specId from project_write_spec). Returns phases and tasks ready for execution or project_init.",
+    tags: [ToolTags.READ, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        specId:      { type: "string", description: "Spec ID from project_write_spec" },
+        explanation: { type: "string", description: "Why you need a plan from this spec" },
+      },
+      required: ["specId"],
+    },
+    handler: async ({ specId, explanation }) => {
+      const result = await planFromSpecDocument(specId);
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        data: {
+          specId,
+          plan: result.plan,
+          phases: result.plan.phases?.map(p => ({ name: p.name, description: p.description, taskCount: p.tasks?.length ?? 0 })) ?? [],
+          explanation,
+        },
+      };
+    },
+  },
   {
     name: "project_init",
     description: "Create a new project from an idea. Analyzes the idea with AI, creates a Notion project page with phases and tasks, and initializes the codebase scaffold.",

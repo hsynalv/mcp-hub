@@ -128,6 +128,66 @@ export async function getRecentCommits(repoPath, limit = 20) {
 }
 
 /**
+ * Find commits similar to a query (Augment-style git-commit-retrieval).
+ * Uses keyword match on commit subject, body, and file names; no embeddings.
+ * @param {string} repoPath - Repository path
+ * @param {string} query - What kind of change (e.g. "add authentication", "fix memory leak")
+ * @param {{ limit?: number, fetchLimit?: number }} options - limit = max returned (default 5), fetchLimit = commits to scan (default 50)
+ * @returns {Promise<{ok: boolean, data?: { commits: Array }, error?: Object}>}
+ */
+export async function getSimilarCommits(repoPath, query, options = {}) {
+  try {
+    repoPath = safeResolvePath(repoPath);
+  } catch (err) {
+    return { ok: false, error: { code: err.code || "path_error", message: err.message } };
+  }
+
+  const limit = Math.min(options.limit ?? 5, 20);
+  const fetchLimit = Math.min(options.fetchLimit ?? 50, 200);
+
+  const result = await getRecentCommits(repoPath, fetchLimit);
+  if (!result.ok) return result;
+
+  const commits = result.data.commits;
+  const q = String(query).toLowerCase().trim();
+  const tokens = q.split(/\s+/).filter(Boolean);
+
+  function score(commit) {
+    const subject = (commit.subject || "").toLowerCase();
+    const body = (commit.body || "").toLowerCase();
+    const files = (commit.files || []).join(" ").toLowerCase();
+    const text = `${subject} ${body} ${files}`;
+    let score = 0;
+    for (const t of tokens) {
+      if (text.includes(t)) score += 1;
+      if (subject.includes(t)) score += 2;
+    }
+    return score;
+  }
+
+  const withScores = commits.map(c => ({ commit: c, score: score(c) }));
+  const filtered = withScores.filter(({ score: s }) => s > 0).sort((a, b) => b.score - a.score);
+  const top = filtered.slice(0, limit).map(({ commit }) => ({
+    hash: commit.hash,
+    fullHash: commit.fullHash,
+    subject: commit.subject,
+    author: commit.author,
+    date: commit.date,
+    files: commit.files || [],
+    stats: commit.stats,
+  }));
+
+  return {
+    ok: true,
+    data: {
+      query,
+      commits: top,
+      count: top.length,
+    },
+  };
+}
+
+/**
  * Get repository file structure
  * @param {string} repoPath - Repository path
  * @param {Object} options - Options

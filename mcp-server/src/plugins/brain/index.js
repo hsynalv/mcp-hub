@@ -36,6 +36,7 @@ import {
   registerProject, getProject, updateProject, listProjects, getProjectStats,
   clearSession,
   setFsSnapshot, getFsSnapshot,
+  pushThought,
   recallScore,
 } from "./brain.memory.js";
 
@@ -588,38 +589,61 @@ export const tools = [
   // ── brain_get_context ──────────────────────────────────────────────────────
   {
     name: "brain_get_context",
-    description: "Build a complete context block (user profile + project info + relevant memories sorted by decayed importance) ready to inject into an LLM system prompt.",
+    description: "Build a complete context block (user profile + project info + relevant memories sorted by decayed importance) ready to inject into an LLM system prompt. Optionally include recent reasoning (thoughts) via includeThoughts.",
     tags: [ToolTags.READ],
     inputSchema: {
       type: "object",
       properties: {
-        task:        { type: "string",  description: "Current task — helps filter relevant memories" },
-        projectId:   { type: "string",  description: "Active project slug (optional)" },
-        includeFs:   { type: "boolean", default: false, description: "Include file-system snapshot" },
-        maxMemories: { type: "number",  default: 20 },
-        compact:     { type: "boolean", default: false, description: "Return a single truncated string (for compact system prompts)" },
-        maxChars:    { type: "number",  default: 4000 },
+        task:           { type: "string",  description: "Current task — helps filter relevant memories" },
+        projectId:      { type: "string",  description: "Active project slug (optional)" },
+        includeFs:      { type: "boolean", default: false, description: "Include file-system snapshot" },
+        includeThoughts: { type: "boolean", default: false, description: "Include recent reasoning (brain_think scratchpad)" },
+        maxMemories:    { type: "number",  default: 20 },
+        maxThoughts:    { type: "number",  default: 5 },
+        compact:        { type: "boolean", default: false, description: "Return a single truncated string (for compact system prompts)" },
+        maxChars:       { type: "number",  default: 4000 },
       },
     },
     handler: async (args) => {
       try {
+        const opts = {
+          task: args.task, projectId: args.projectId,
+          includeFs: args.includeFs, includeThoughts: args.includeThoughts ?? false,
+          maxMemories: args.maxMemories ?? 20, maxThoughts: args.maxThoughts ?? 5,
+        };
         if (args.compact) {
           const block = await buildCompactContext({
-            task: args.task, projectId: args.projectId,
-            includeFs: args.includeFs, maxMemories: args.maxMemories,
-            maxChars: args.maxChars || 4_000,
+            ...opts, maxChars: args.maxChars || 4_000,
           });
           return { ok: true, data: { contextBlock: block } };
         }
-        const ctx = await buildContext({
-          task:        args.task,
-          projectId:   args.projectId,
-          includeFs:   args.includeFs   || false,
-          maxMemories: args.maxMemories || 20,
-        });
+        const ctx = await buildContext(opts);
         return { ok: true, data: ctx };
       } catch (err) {
         return { ok: false, error: { code: "brain_context_failed", message: err.message } };
+      }
+    },
+  },
+
+  // ── brain_think ────────────────────────────────────────────────────────────
+  {
+    name: "brain_think",
+    description: "Append a private reasoning step (Devin-style scratchpad). Not shown to the user; stored briefly and optionally included in 'Recent Reasoning' when building context. Use for step-by-step reasoning you want to reuse in the next turn.",
+    tags: [ToolTags.WRITE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        thought: { type: "string", description: "Short reasoning step or conclusion" },
+        context: { type: "string", description: "Optional label (e.g. task name) for this thought" },
+      },
+      required: ["thought"],
+    },
+    handler: async ({ thought, context }) => {
+      try {
+        await pushThought(thought, context);
+        return { ok: true, data: { saved: true } };
+      } catch (err) {
+        return { ok: false, error: { code: "brain_think_failed", message: err.message } };
       }
     },
   },

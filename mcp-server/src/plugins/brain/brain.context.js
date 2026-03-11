@@ -10,6 +10,7 @@ import {
   listProjects,
   getProject,
   getFsSnapshot,
+  getRecentThoughts,
   decayedImportance,
 } from "./brain.memory.js";
 
@@ -94,18 +95,29 @@ function formatFs(snapshot) {
  * @param {number}  [opts.maxMemories]  Max memory entries (default 20)
  * @returns {Promise<{ contextBlock, profile, projects, memories, hasData }>}
  */
+function formatThoughts(thoughts) {
+  if (!thoughts?.length) return null;
+  const lines = ["## Recent Reasoning"];
+  for (const t of thoughts) {
+    const ctx = t.context ? ` (${t.context})` : "";
+    lines.push(`- ${t.thought}${ctx}`);
+  }
+  return lines.join("\n");
+}
+
 export async function buildContext({
-  task        = "",
-  projectId   = null,
-  includeFs   = false,
-  maxMemories = 20,
+  task          = "",
+  projectId     = null,
+  includeFs     = false,
+  includeThoughts = false,
+  maxMemories   = 20,
+  maxThoughts   = 5,
 } = {}) {
   const [profile, allProjects] = await Promise.all([
     getProfile(),
     listProjects("active"),
   ]);
 
-  // Memory list is already sorted by decayed importance in listMemories()
   const memFilter  = projectId ? { projectId, limit: maxMemories } : { limit: maxMemories };
   const memories   = await listMemories(memFilter);
 
@@ -122,6 +134,12 @@ export async function buildContext({
   if (includeFs) {
     const snapshot = await getFsSnapshot();
     sections.push(formatFs(snapshot));
+  }
+
+  if (includeThoughts) {
+    const thoughts = await getRecentThoughts(maxThoughts);
+    const block = formatThoughts(thoughts);
+    if (block) sections.push(block);
   }
 
   const contextBlock = sections.filter(Boolean).join("\n\n");

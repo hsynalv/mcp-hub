@@ -34,6 +34,10 @@ export const memKey     = (id)   => `brain:${NS}:mem:${id}`;
 export const projectKey = (slug) => `brain:${NS}:project:${slug}`;
 export const sessionKey = (id)   => `brain:${NS}:session:${id}`;
 
+const THOUGHTS_LIST_KEY = `brain:${NS}:thoughts`;
+const THOUGHTS_MAX      = 10;
+const THOUGHTS_TTL_SEC  = 3600; // 1 hour
+
 // ── Importance decay ──────────────────────────────────────────────────────────
 
 /**
@@ -297,6 +301,37 @@ export async function getProjectStats() {
     byStatus[p.status] = (byStatus[p.status] || 0) + 1;
   }
   return { total: all.length, byStatus };
+}
+
+// ── Reasoning scratchpad (Devin-style <think>) ───────────────────────────────────
+
+/**
+ * Append a private thought (reasoning scratchpad). Not shown to user.
+ * Stored in Redis list with TTL; used by buildContext when includeThoughts is true.
+ */
+export async function pushThought(thought, context = "") {
+  const r = getRedis();
+  const entry = JSON.stringify({
+    thought: String(thought).slice(0, 2000),
+    context: String(context).slice(0, 200) || null,
+    at: new Date().toISOString(),
+  });
+  await r.rpush(THOUGHTS_LIST_KEY, entry);
+  await r.ltrim(THOUGHTS_LIST_KEY, -THOUGHTS_MAX, -1);
+  await r.expire(THOUGHTS_LIST_KEY, THOUGHTS_TTL_SEC);
+}
+
+/**
+ * Get the most recent thoughts (for LLM context injection).
+ */
+export async function getRecentThoughts(limit = 5) {
+  const r = getRedis();
+  const raw = await r.lrange(THOUGHTS_LIST_KEY, -limit, -1);
+  const out = [];
+  for (const s of raw) {
+    try { out.push(JSON.parse(s)); } catch { /* skip */ }
+  }
+  return out.reverse();
 }
 
 // ── Session Working Memory ────────────────────────────────────────────────────
