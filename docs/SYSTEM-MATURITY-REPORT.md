@@ -161,4 +161,56 @@ Not: “Var” = ilgili kategoride en az bir örnek var; “—” = yok veya il
 
 ---
 
+## 8. 20 Plugin: Core Bağlantı, Tutarlılık ve Tekrarlar
+
+Bu bölüm **sadece PLAN-V2'deki 20 plugin** için: core modüle bağlılık, aralarındaki tutarsızlıklar ve tekrar eden yapılar.
+
+### 8.1 Core Modüle Bağlantı
+
+Tüm 20 plugin **core'a bağlı**; farklı core bileşenleri kullanıyorlar:
+
+| Core bileşen | Kullanım | 20'de kullanan plugin'ler |
+|--------------|---------|----------------------------|
+| **auth** (`requireScope`) | REST route koruma | database, n8n-workflows, observability, tech-detector, code-review, shell, brain, rag, github-pattern-analyzer, secrets, http, prompt-registry, git, workspace |
+| **audit/index.js** (`auditLog`, `getAuditManager`, `generateCorrelationId`) | İşlem audit'i | git, shell, llm-router, prompt-registry, project-orchestrator, brain, repo-intelligence, n8n, n8n-workflows, github-pattern-analyzer, http, rag, notion, github, **workspace** (yerel audit kaldırıldı; core kullanıyor) |
+| **audit.js** (request log) | `getLogs`, `getStats` (sadece observability) | observability |
+| **plugins/index.js** (`createMetadata`, `PluginStatus`, `RiskLevel`) | Metadata | 20'nin tamamı createMetadata kullanıyor |
+| **error-standard.js** (`createPluginErrorHandler`, `Errors`) | Hata standardizasyonu | Çoğu (database, http, code-review, tech-detector, shell, brain, git, workspace, prompt-registry, n8n-workflows, github, notion, llm-router, rag, secrets, github-pattern-analyzer, repo-intelligence, project-orchestrator) |
+| **tool-registry.js** (`ToolTags`, `registerTool` via loader) | MCP tool tanımı | 20'nin hepsi (tools export edenler) |
+| **policy** (`canExecute`, `canAccessDatabase`, `canResolveSecret` vb.) | İzin kontrolü | shell, database, secrets |
+| **redis.js** | Bellek/state | brain, project-orchestrator, github-pattern-analyzer |
+| **jobs.js** | Arka plan işi | project-orchestrator |
+| **validate.js** | Body/query validasyonu | database, github, notion, http |
+| **config.js** | Konfig | http, n8n-workflows, n8n, notion |
+| **resilience.js** | withResilience | llm-router, notion |
+| **health/index.js** | HealthStatus, getHealthService | observability |
+
+**Özet:** 20 plugin core'a bağlı; hepsi en az bir core modülü (auth, audit, plugins, error-standard, tool-registry) kullanıyor. **Workspace** artık core audit kullanıyor: yerel in-memory audit kaldırıldı, `auditLog` / `getAuditManager` / `generateCorrelationId` core'dan alınıyor; audit kayıtları merkezi sink’lere gidiyor.
+
+### 8.2 Tutarsızlıklar (20 Plugin İçinde)
+
+| Konu | Durum | Açıklama |
+|------|--------|----------|
+| **Audit import path** | Düzeltildi | **github** `auditLog`'u `../../core/audit.js`'ten alıyordu; `audit.js` sadece request log (getLogs, getStats) export ediyor, `auditLog` yok. **Düzeltme:** `../../core/audit/index.js` kullanılacak şekilde güncellendi. |
+| **Workspace audit** | Düzeltildi | Workspace artık **core audit** kullanıyor; yerel `auditEntry`/`getAuditLogEntries` kaldırıldı, `auditLog` + `getAuditManager().getRecentEntries({ plugin: "workspace" })` kullanılıyor. |
+| **Observability import path** | Tutarlı | `getLogs`/`getStats` için `../../core/audit.js` doğru (request log). Metadata için `../../core/plugins/index.js`; `getPlugins` için `../../core/plugins.js` (loader) — iki farklı "plugins" modülü bilinçli. |
+| **createMetadata + name** | Kabul edilebilir | Birçok plugin hem `metadata` hem `export const name` veriyor. Loader `plugin.name \|\| plugin.metadata?.name \|\| dir` kullandığı için ikisi de destekleniyor. |
+| **Explanation/audit reason** | Kısmi | Sadece git, workspace, shell, prompt-registry, project-orchestrator write tool'larında var. notion, n8n, n8n-workflows, github, database, rag write'larında yok. |
+
+### 8.3 Tekrarlar (20 Plugin İçinde)
+
+| Tekrar | Nerede | Öneri |
+|--------|--------|--------|
+| **routeTask (LLM)** | brain, code-review, github-pattern-analyzer, project-orchestrator, repo-intelligence → `../llm-router/index.js` | Plugin-to-plugin; core'da değil. Hepsi llm-router'dan import ediyor; `result?.content` null-safety Phase 3'te eklendi. |
+| **Audit helper** | git: `gitAudit()`, github: `githubAudit()`, http: wrapper'lar | Her plugin ince wrapper; ortak core helper isteğe bağlı. |
+| **name + metadata.name** | Birçok plugin | Loader uyumluluğu için; tekrar işlevsel. |
+
+### 8.4 Sonuç (20 Plugin Özelinde)
+
+- **Core bağlantı:** 20 plugin core'a bağlı; workspace dosya audit'i de core üzerinden (core audit'e geçiş yapıldı).
+- **Tutarsızlık:** (1) Github audit import düzeltildi. (2) Workspace core audit'e taşındı. (3) Explanation/audit reason 20'nin tamamında write'larda yok.
+- **Tekrar:** routeTask tek kaynaktan; audit wrapper ve name+metadata tekrarları kabul edilebilir.
+
+---
+
 _Son güncelleme: 2026-03-11_

@@ -7,6 +7,7 @@
 import { Router } from "express";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { requireScope } from "../../core/auth.js";
+import { auditLog, getAuditManager, generateCorrelationId } from "../../core/audit/index.js";
 import {
   readFile,
   writeFile,
@@ -17,14 +18,30 @@ import {
   patchFile,
   validateWorkspacePath,
   extractContext,
-  auditEntry,
-  generateCorrelationId,
-  getAuditLogEntries,
 } from "./workspace.core.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const pluginError = createPluginErrorHandler("workspace");
+
+/** Emit workspace operation to core audit (no throw). */
+async function wsAudit(entry) {
+  await auditLog({
+    plugin: "workspace",
+    operation: entry.operation,
+    actor: entry.actor || "mcp",
+    workspaceId: entry.workspaceId || "global",
+    projectId: entry.projectId ?? null,
+    correlationId: entry.correlationId || generateCorrelationId(),
+    allowed: entry.allowed,
+    success: entry.success !== undefined ? entry.success : entry.allowed,
+    durationMs: entry.durationMs ?? 0,
+    ...(entry.reason && { reason: entry.reason }),
+    ...(entry.error && { error: entry.error }),
+    ...(entry.metadata && { metadata: entry.metadata }),
+    ...((entry.path || entry.resource) && { resource: entry.path || entry.resource }),
+  });
+}
 
 export const metadata = createMetadata({
   name:        "workspace",
@@ -67,7 +84,7 @@ export const tools = [
     },
     handler: async (args, context = {}) => {
       const result = await readFile(args.path, { maxSize: args.maxSize });
-      auditEntry({ operation: "read", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      await wsAudit({ operation: "read", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
       return result;
     },
   },
@@ -87,7 +104,7 @@ export const tools = [
     },
     handler: async (args, context = {}) => {
       const result = await writeFile(args.path, args.content, { createDirs: args.createDirs });
-      auditEntry({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      await wsAudit({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -105,7 +122,7 @@ export const tools = [
     },
     handler: async (args, context = {}) => {
       const result = await deleteFile(args.path);
-      auditEntry({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      await wsAudit({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -124,7 +141,7 @@ export const tools = [
     },
     handler: async (args, context = {}) => {
       const result = await moveFile(args.from, args.to);
-      auditEntry({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      await wsAudit({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -171,7 +188,7 @@ export const tools = [
     handler: async (args, context = {}) => {
       const patch  = `${args.search}===REPLACE===${args.replace}`;
       const result = await patchFile(args.path, patch, { mode: "search-replace" });
-      auditEntry({ operation: "patch", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      await wsAudit({ operation: "patch", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -187,7 +204,9 @@ export const tools = [
     },
     handler: async (args) => {
       const limit   = Math.min(args.limit || 50, 100);
-      const entries = getAuditLogEntries(limit);
+      const manager = getAuditManager();
+      if (!manager.initialized) await manager.init();
+      const entries = await manager.getRecentEntries({ plugin: "workspace", limit });
       return { ok: true, data: { audit: entries, total: entries.length } };
     },
   },
@@ -220,7 +239,7 @@ export function register(app) {
 
     if (!path) {
       const err = pluginError.validation("path query parameter required", { code: "missing_path" });
-      auditEntry({
+      await wsAudit({
         operation: "read",
         path: "(missing)",
         allowed: false,
@@ -236,7 +255,7 @@ export function register(app) {
 
     const result = await readFile(path, { maxSize: parseInt(req.query.maxSize, 10) || undefined });
 
-    auditEntry({
+    await wsAudit({
       operation: "read",
       path,
       allowed: result.ok,
@@ -263,7 +282,7 @@ export function register(app) {
 
     if (!path || content === undefined) {
       const err = pluginError.validation("path and content required", { code: "missing_fields" });
-      auditEntry({
+      await wsAudit({
         operation: "write",
         path: path || "(missing)",
         allowed: false,
@@ -279,7 +298,7 @@ export function register(app) {
 
     const result = await writeFile(path, content, { createDirs: createDirs !== false });
 
-    auditEntry({
+    await wsAudit({
       operation: "write",
       path,
       allowed: result.ok,
@@ -305,7 +324,7 @@ export function register(app) {
 
     const result = await listDirectory(path);
 
-    auditEntry({
+    await wsAudit({
       operation: "list",
       path,
       allowed: result.ok,
@@ -332,7 +351,7 @@ export function register(app) {
 
     if (!pattern) {
       const err = pluginError.validation("pattern query parameter required", { code: "missing_pattern" });
-      auditEntry({
+      await wsAudit({
         operation: "search",
         path: req.query.root || ".",
         allowed: false,
@@ -348,7 +367,7 @@ export function register(app) {
 
     const result = await searchFiles(pattern, { root: req.query.root });
 
-    auditEntry({
+    await wsAudit({
       operation: "search",
       path: req.query.root || ".",
       allowed: result.ok,
@@ -374,7 +393,7 @@ export function register(app) {
 
     if (!path || !search || replace === undefined) {
       const err = pluginError.validation("path, search, and replace required", { code: "missing_fields" });
-      auditEntry({
+      await wsAudit({
         operation: "patch",
         path: path || "(missing)",
         allowed: false,
@@ -391,7 +410,7 @@ export function register(app) {
     const patch = `${search}===REPLACE===${replace}`;
     const result = await patchFile(path, patch, { mode: "search-replace" });
 
-    auditEntry({
+    await wsAudit({
       operation: "patch",
       path,
       allowed: result.ok,
@@ -421,7 +440,7 @@ export function register(app) {
     }
 
     const result = await deleteFile(path);
-    auditEntry({ operation: "delete", path, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
+    await wsAudit({ operation: "delete", path, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
     res.status(result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400).json(result);
   });
 
@@ -437,14 +456,17 @@ export function register(app) {
     }
 
     const result = await moveFile(from, to);
-    auditEntry({ operation: "move", path: `${from} → ${to}`, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
+    await wsAudit({ operation: "move", path: `${from} → ${to}`, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
     res.status(result.ok ? 200 : 400).json(result);
   });
 
   // GET /workspace/audit
   router.get("/audit", requireScope("read"), async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
+    const manager = getAuditManager();
+    if (!manager.initialized) await manager.init();
+    const entries = await manager.getRecentEntries({ plugin: "workspace", limit });
+    res.json({ ok: true, data: { audit: entries } });
   });
 
   app.use("/workspace", router);

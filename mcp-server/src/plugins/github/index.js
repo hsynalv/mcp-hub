@@ -13,7 +13,7 @@ import {
 import { validateBody, validateQuery } from "../../core/validate.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
-import { auditLog } from "../../core/audit.js";
+import { auditLog } from "../../core/audit/index.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const pluginError = createPluginErrorHandler("github");
