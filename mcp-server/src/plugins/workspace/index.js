@@ -81,12 +81,13 @@ export const tools = [
         path:       { type: "string",  description: "Relative path to file" },
         content:    { type: "string",  description: "File content to write" },
         createDirs: { type: "boolean", description: "Create parent directories if missing", default: true },
+        explanation: { type: "string", description: "Optional: why you're writing this file (audit reason)" },
       },
       required: ["path", "content"],
     },
     handler: async (args, context = {}) => {
       const result = await writeFile(args.path, args.content, { createDirs: args.createDirs });
-      auditEntry({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      auditEntry({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -98,12 +99,13 @@ export const tools = [
       type: "object",
       properties: {
         path: { type: "string", description: "Relative path to file to delete" },
+        explanation: { type: "string", description: "Optional: why you're deleting (audit reason)" },
       },
       required: ["path"],
     },
     handler: async (args, context = {}) => {
       const result = await deleteFile(args.path);
-      auditEntry({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      auditEntry({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -116,12 +118,13 @@ export const tools = [
       properties: {
         from: { type: "string", description: "Source path (relative)" },
         to:   { type: "string", description: "Destination path (relative)" },
+        explanation: { type: "string", description: "Optional: why you're moving (audit reason)" },
       },
       required: ["from", "to"],
     },
     handler: async (args, context = {}) => {
       const result = await moveFile(args.from, args.to);
-      auditEntry({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      auditEntry({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -161,13 +164,14 @@ export const tools = [
         path:    { type: "string", description: "Path to file" },
         search:  { type: "string", description: "Text to search for" },
         replace: { type: "string", description: "Replacement text" },
+        explanation: { type: "string", description: "Optional: why you're patching (audit reason)" },
       },
       required: ["path", "search", "replace"],
     },
     handler: async (args, context = {}) => {
       const patch  = `${args.search}===REPLACE===${args.replace}`;
       const result = await patchFile(args.path, patch, { mode: "search-replace" });
-      auditEntry({ operation: "patch", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      auditEntry({ operation: "patch", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },

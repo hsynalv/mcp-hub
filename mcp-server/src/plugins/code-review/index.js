@@ -200,12 +200,12 @@ Format your response as JSON:
 
   try {
     const result = await routeTask("code_review", prompt, { maxTokens: 4000 });
-    // Parse JSON from response
-    const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+    const raw = result?.content ?? "";
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
-    return { error: "Failed to parse LLM response", raw: result.content };
+    return { error: "Failed to parse LLM response", raw };
   } catch (error) {
     return { error: error.message };
   }
@@ -297,7 +297,7 @@ Please provide a fix suggestion. Show the exact code change needed.`;
 
   try {
     const result = await routeTask("debugging", prompt, { maxTokens: 2000 });
-    return result.content;
+    return result?.content ?? "";
   } catch (error) {
     return `Error generating fix: ${error.message}`;
   }

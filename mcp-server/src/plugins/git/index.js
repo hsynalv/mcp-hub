@@ -56,7 +56,7 @@ export const metadata = createMetadata({
 
 // ── Audit helper ──────────────────────────────────────────────────────────────
 
-async function gitAudit({ operation, actor, repoPath, success, error }) {
+async function gitAudit({ operation, actor, repoPath, success, error, reason }) {
   try {
     await auditLog({
       plugin: "git",
@@ -66,6 +66,7 @@ async function gitAudit({ operation, actor, repoPath, success, error }) {
       success,
       error: error ? String(error) : undefined,
       repoPath,
+      ...(reason && { reason }),
     });
   } catch { /* never crash on audit failure */ }
 }
@@ -158,6 +159,7 @@ export const tools = [
         path: { type: "string", description: "Repository path", default: "." },
         name: { type: "string", description: "New branch name" },
         base: { type: "string", description: "Base branch (default: current)" },
+        explanation: { type: "string", description: "Optional: why you're creating this branch (audit reason)" },
       },
       required: ["name"],
     },
@@ -165,7 +167,7 @@ export const tools = [
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitBranchCreate(v.path, args.name, args.base);
-      await gitAudit({ operation: "branch_create", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: "branch_create", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
@@ -178,6 +180,7 @@ export const tools = [
       properties: {
         path:   { type: "string", description: "Repository path", default: "." },
         branch: { type: "string", description: "Branch name to checkout" },
+        explanation: { type: "string", description: "Optional: why you're checking out (audit reason)" },
       },
       required: ["branch"],
     },
@@ -185,7 +188,7 @@ export const tools = [
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitCheckout(v.path, args.branch);
-      await gitAudit({ operation: "checkout", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: "checkout", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
@@ -198,13 +201,14 @@ export const tools = [
       properties: {
         path:  { type: "string", description: "Repository path", default: "." },
         files: { type: "array", items: { type: "string" }, description: "Files to stage (default: all)", default: ["."] },
+        explanation: { type: "string", description: "Optional: why you're staging (audit reason)" },
       },
     },
     handler: async (args, context = {}) => {
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitAdd(v.path, args.files || ["."]);
-      await gitAudit({ operation: "add", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: "add", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
@@ -218,6 +222,7 @@ export const tools = [
         path:    { type: "string", description: "Repository path", default: "." },
         message: { type: "string", description: "Commit message" },
         files:   { type: "array", items: { type: "string" }, description: "Specific files to stage and commit" },
+        explanation: { type: "string", description: "Optional: why you're committing (audit reason)" },
       },
       required: ["message"],
     },
@@ -225,7 +230,7 @@ export const tools = [
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitCommit(v.path, args.message, { files: args.files });
-      await gitAudit({ operation: "commit", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: "commit", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
@@ -239,13 +244,14 @@ export const tools = [
         path:   { type: "string", description: "Repository path", default: "." },
         remote: { type: "string", description: "Remote name", default: "origin" },
         branch: { type: "string", description: "Branch to push (default: current)" },
+        explanation: { type: "string", description: "Optional: why you're pushing (audit reason)" },
       },
     },
     handler: async (args, context = {}) => {
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitPush(v.path, { remote: args.remote, branch: args.branch });
-      await gitAudit({ operation: "push", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: "push", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
@@ -259,13 +265,14 @@ export const tools = [
         path:   { type: "string", description: "Repository path", default: "." },
         remote: { type: "string", description: "Remote name", default: "origin" },
         branch: { type: "string", description: "Branch to pull (default: current)" },
+        explanation: { type: "string", description: "Optional: why you're pulling (audit reason)" },
       },
     },
     handler: async (args, context = {}) => {
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitPull(v.path, { remote: args.remote, branch: args.branch });
-      await gitAudit({ operation: "pull", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: "pull", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
@@ -279,13 +286,14 @@ export const tools = [
         path:    { type: "string",  description: "Repository path", default: "." },
         pop:     { type: "boolean", description: "Pop the most recent stash instead of pushing", default: false },
         message: { type: "string",  description: "Stash message (only for push)" },
+        explanation: { type: "string", description: "Optional: why you're stashing (audit reason)" },
       },
     },
     handler: async (args, context = {}) => {
       const v = validatedPath(args.path);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitStash(v.path, { pop: args.pop, message: args.message });
-      await gitAudit({ operation: args.pop ? "stash_pop" : "stash_push", actor: context.actor, repoPath: v.path, success: result.ok });
+      await gitAudit({ operation: args.pop ? "stash_pop" : "stash_push", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
       return result;
     },
   },
