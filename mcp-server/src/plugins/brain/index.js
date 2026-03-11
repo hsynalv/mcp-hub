@@ -432,7 +432,7 @@ async function summarizeAndSaveSession({ sessionId, messages, projectId }) {
   let summary = "";
   try {
     const llmResult = await routeTask("summarize", prompt, { maxTokens: 400 });
-    summary = typeof llmResult === "string" ? llmResult : "";
+    summary = llmResult?.content ?? "";
   } catch {
     summary = transcript.slice(0, 500) + (transcript.length > 500 ? "..." : "");
   }
@@ -1072,7 +1072,7 @@ ${memText.slice(0, 8_000)}`;
         let habits = [];
         try {
           const llmResult = await routeTask("analysis", prompt, { maxTokens: 800, temperature: 0.3 });
-          const raw = typeof llmResult === "string" ? llmResult : "";
+          const raw = llmResult?.content ?? "";
 
           // Extract JSON array from response
           const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -1195,7 +1195,7 @@ Synthesize this into a clear, structured response. If information is uncertain, 
         let answer = "";
         try {
           const llmResult = await routeTask("summarize", prompt, { maxTokens: 600 });
-          answer = typeof llmResult === "string" ? llmResult : "";
+          answer = llmResult?.content ?? "";
         } catch {
           // Fallback: just list the raw evidence
           answer = [memText, fsText, projText].filter(Boolean).join("\n\n");
