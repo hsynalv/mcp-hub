@@ -3,6 +3,7 @@ import { canResolveSecret, getPolicyManager } from "../../core/policy/index.js";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import {
   listSecrets,
@@ -16,24 +17,29 @@ import {
 
 const pluginError = createPluginErrorHandler("secrets");
 
-export const name = "secrets";
-export const version = "1.0.0";
-export const description = "Secret ref system — agents never see secret values";
-export const capabilities = ["read", "write"];
-export const requires = [];
-export const endpoints = [
-  { method: "GET",    path: "/secrets",          description: "List registered secret names (no values)", scope: "read"   },
-  { method: "POST",   path: "/secrets",          description: "Register a new secret name",               scope: "danger" },
-  { method: "DELETE", path: "/secrets/:name",    description: "Unregister a secret name",                 scope: "danger" },
-  { method: "POST",   path: "/secrets/resolve",  description: "Resolve template refs server-side",        scope: "write"  },
-  { method: "GET",    path: "/secrets/audit",    description: "View audit log (values never included)",    scope: "read"   },
-  { method: "GET",    path: "/secrets/health",   description: "Plugin health",                            scope: "read"   },
-];
-export const examples = [
-  "GET  /secrets",
-  'POST /secrets  body: {"name":"NOTION_API_KEY","description":"Notion integration secret"}',
-  'POST /secrets/resolve  body: {"template":"Bearer {{secret:NOTION_API_KEY}}"}',
-];
+export const metadata = createMetadata({
+  name:        "secrets",
+  version:     "1.0.0",
+  description: "Secret reference system — agents never see secret values, only {{secret:NAME}} refs",
+  status:      PluginStatus.STABLE,
+  riskLevel:   RiskLevel.HIGH,
+  capabilities: ["read", "write"],
+  requires:    [],
+  tags:        ["secrets", "security", "credentials"],
+  endpoints: [
+    { method: "GET",    path: "/secrets",          description: "List registered secret names (no values)", scope: "read"   },
+    { method: "POST",   path: "/secrets",          description: "Register a new secret name",               scope: "danger" },
+    { method: "DELETE", path: "/secrets/:name",    description: "Unregister a secret name",                 scope: "danger" },
+    { method: "POST",   path: "/secrets/resolve",  description: "Resolve template refs server-side",        scope: "write"  },
+    { method: "GET",    path: "/secrets/audit",    description: "View audit log (values never included)",    scope: "read"   },
+    { method: "GET",    path: "/secrets/health",   description: "Plugin health",                            scope: "read"   },
+  ],
+  examples: [
+    "GET  /secrets",
+    'POST /secrets  body: {"name":"NOTION_API_KEY","description":"Notion integration secret"}',
+    'POST /secrets/resolve  body: {"template":"Bearer {{secret:NOTION_API_KEY}}"}',
+  ],
+});
 
 const registerSchema = z.object({
   name:        z.string().regex(/^[A-Z0-9_]+$/, "Must be UPPER_SNAKE_CASE"),
@@ -62,49 +68,26 @@ function extractContext(req) {
   };
 }
 
-async function runWithAudit(operation, secretName, context, fn) {
-  const startTime = Date.now();
-  const correlationId = generateCorrelationId();
-
-  try {
-    const result = await fn();
-
-    auditEntry({
-      operation,
-      secretName,
-      allowed: true,
-      actor: context.actor,
-      workspaceId: context.workspaceId,
-      projectId: context.projectId,
-      correlationId,
-      durationMs: Date.now() - startTime,
-    });
-
-    return result;
-  } catch (err) {
-    auditEntry({
-      operation,
-      secretName,
-      allowed: false,
-      actor: context.actor,
-      workspaceId: context.workspaceId,
-      projectId: context.projectId,
-      correlationId,
-      durationMs: Date.now() - startTime,
-      error: err.message,
-      reason: err.code || "execution_error",
-    });
-    throw err;
-  }
-}
-
-function _unused() { runWithAudit; } // Prevent lint error, function used for future extension
 
 export function register(app) {
   const router = Router();
 
-  router.get("/health", requireScope("read"), (_req, res) => {
-    res.json({ ok: true, status: "healthy", plugin: name, version });
+  router.get("/health", async (_req, res) => {
+    try {
+      const secrets = listSecrets({});
+      res.json({
+        ok:      true,
+        plugin:  "secrets",
+        version: "1.0.0",
+        stats: {
+          registered: secrets.length,
+          withValue:  secrets.filter((s) => s.hasValue).length,
+          missing:    secrets.filter((s) => !s.hasValue).length,
+        },
+      });
+    } catch {
+      res.json({ ok: true, plugin: "secrets", version: "1.0.0" });
+    }
   });
 
   /**
@@ -238,20 +221,22 @@ export function register(app) {
     const resolved = [];
     const missing  = [];
 
-    // Policy check using core policy manager
+    // Policy check using core policy manager — checked per-secret
     const policyManager = getPolicyManager();
     if (policyManager) {
-      const policyResult = await canResolveSecret({
-        actor: context.actor || "unknown",
-        workspaceId: context.workspaceId || "global",
-        secretName: refs.join(","),
-      });
-      if (!policyResult.allowed) {
-        return res.status(403).json({
-          ok: false,
-          error: policyResult.code || "POLICY_DENIED",
-          message: policyResult.reason || "Secret resolution not authorized",
+      for (const ref of refs) {
+        const policyResult = await canResolveSecret({
+          actor:       context.actor || "unknown",
+          workspaceId: context.workspaceId || "global",
+          secretName:  ref,
         });
+        if (!policyResult.allowed) {
+          return res.status(403).json({
+            ok: false,
+            error: policyResult.code || "POLICY_DENIED",
+            message: `Secret "${ref}" resolution not authorized: ${policyResult.reason || "policy denied"}`,
+          });
+        }
       }
     }
 
@@ -276,18 +261,16 @@ export function register(app) {
     });
 
     // Return summary only — never return resolved values
+    // Preview replaces each {{secret:NAME}} ref with [RESOLVED] or [MISSING] in the template string
+    const preview = template.replace(/\{\{secret:([A-Z0-9_]+)\}\}/g, (_, n) =>
+      process.env[n] != null ? "[RESOLVED]" : `{{secret:${n}}} (MISSING)`
+    );
+
     res.json({
       ok: missing.length === 0,
       refs: { found: resolved, missing },
       hasUnresolved: missing.length > 0,
-      // Masked preview: replace found refs with *** for confirmation
-      preview: resolveTemplate(template).replace(
-        new RegExp(Object.keys(process.env)
-          .filter((k) => refs.includes(k))
-          .map((k) => escapeRegex(process.env[k]))
-          .join("|") || "(?!)", "g"),
-        "[RESOLVED]"
-      ),
+      preview,
     });
   });
 
@@ -303,6 +286,108 @@ export function register(app) {
   app.use("/secrets", router);
 }
 
-function escapeRegex(str) {
-  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+// ── MCP Tools ─────────────────────────────────────────────────────────────────
+
+export const tools = [
+  // ── secret_list ──────────────────────────────────────────────────────────
+  {
+    name: "secret_list",
+    description: "List all registered secret names. Returns names and whether each has a value in env — never the values themselves.",
+    tags: [ToolTags.READ],
+    inputSchema: { type: "object", properties: {} },
+    handler: async (_args, context = {}) => {
+      try {
+        const ctx     = { actor: context.actor || "anonymous", workspaceId: context.workspaceId || null };
+        const secrets = listSecrets(ctx);
+        return { ok: true, data: { count: secrets.length, secrets } };
+      } catch (err) {
+        return { ok: false, error: { code: "list_failed", message: err.message } };
+      }
+    },
+  },
+
+  // ── secret_register ──────────────────────────────────────────────────────
+  {
+    name: "secret_register",
+    description: "Register a secret name so it can be referenced as {{secret:NAME}} in any plugin. The actual value must already exist in process.env.",
+    tags: [ToolTags.WRITE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        name:        { type: "string", description: "UPPER_SNAKE_CASE secret name matching an env var" },
+        description: { type: "string", description: "Human-readable description of what this secret is for" },
+      },
+      required: ["name"],
+    },
+    handler: async (args, context = {}) => {
+      try {
+        if (!/^[A-Z0-9_]+$/.test(args.name)) {
+          return { ok: false, error: { code: "invalid_name", message: "Secret name must be UPPER_SNAKE_CASE" } };
+        }
+        const ctx   = { actor: context.actor || "anonymous", workspaceId: context.workspaceId || null };
+        const entry = registerSecret(args.name, args.description || "", ctx);
+        auditEntry({ operation: "register", secretName: args.name, allowed: true, actor: ctx.actor, correlationId: generateCorrelationId(), durationMs: 0 });
+        return { ok: true, data: { secret: entry } };
+      } catch (err) {
+        return { ok: false, error: { code: "register_failed", message: err.message } };
+      }
+    },
+  },
+
+  // ── secret_unregister ────────────────────────────────────────────────────
+  {
+    name: "secret_unregister",
+    description: "Unregister a secret name. Does not affect the actual env var — only removes the reference from the registry.",
+    tags: [ToolTags.WRITE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The secret name to unregister" },
+      },
+      required: ["name"],
+    },
+    handler: async (args, context = {}) => {
+      try {
+        const ctx     = { actor: context.actor || "anonymous", workspaceId: context.workspaceId || null };
+        const existed = unregisterSecret(args.name, ctx);
+        if (!existed) {
+          return { ok: false, error: { code: "not_found", message: `Secret "${args.name}" is not registered` } };
+        }
+        auditEntry({ operation: "unregister", secretName: args.name, allowed: true, actor: ctx.actor, correlationId: generateCorrelationId(), durationMs: 0 });
+        return { ok: true, data: { unregistered: args.name } };
+      } catch (err) {
+        return { ok: false, error: { code: "unregister_failed", message: err.message } };
+      }
+    },
+  },
+
+  // ── secret_resolve_check ─────────────────────────────────────────────────
+  {
+    name: "secret_resolve_check",
+    description: "Check whether all {{secret:NAME}} refs in a template string can be resolved. Returns which refs are found vs missing — never the actual values. Use before passing templates to http_request or other plugins.",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        template: { type: "string", description: "Template string with {{secret:NAME}} refs to check" },
+      },
+      required: ["template"],
+    },
+    handler: async (args) => {
+      try {
+        const refs     = [...args.template.matchAll(/\{\{secret:([A-Z0-9_]+)\}\}/g)].map((m) => m[1]);
+        const resolved = refs.filter((n) => process.env[n] != null);
+        const missing  = refs.filter((n) => process.env[n] == null);
+        const preview  = args.template.replace(/\{\{secret:([A-Z0-9_]+)\}\}/g, (_, n) =>
+          process.env[n] != null ? "[RESOLVED]" : `{{secret:${n}}} (MISSING)`
+        );
+        return {
+          ok: missing.length === 0,
+          data: { refs: { found: resolved, missing }, hasUnresolved: missing.length > 0, preview },
+        };
+      } catch (err) {
+        return { ok: false, error: { code: "resolve_check_failed", message: err.message } };
+      }
+    },
+  },
+];

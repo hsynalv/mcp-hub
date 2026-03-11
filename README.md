@@ -30,17 +30,35 @@ Auth etkinse panel, 6 haneli kısa ömürlü bir UI kodu ile `read` scope yetkis
 
 ## Plugin Maturity Matrix
 
-| Plugin | Owner | Status | Auth | Tests | Docs | Production Ready |
-|--------|-------|--------|------|-------|------|------------------|
-| github | @hsynalv | 🟢 stable | ✅ | unit | ✅ | Yes |
-| notion | @hsynalv | 🟢 stable | ✅ | unit | ✅ | Yes |
-| llm-router | @hsynalv | 🟢 stable | ❌ | unit | ✅ | Yes |
-| policy | @hsynalv | 🟢 stable | ✅ | unit | ✅ | Yes |
-| rag | @hsynalv | 🟡 beta | ❌ | unit | ✅ | No |
-| database | @hsynalv | 🟡 beta | ✅ | unit | ✅ | No |
-| shell | @hsynalv | 🔴 experimental | ✅ | none | ✅ | No |
-| file-storage | @hsynalv | 🟡 beta | ✅ | unit | ✅ | No |
-| workspace | @hsynalv | 🟡 beta | ❌ | unit | ✅ | No |
+### Phase 1 — Core AI Platform (11 plugins ✅)
+
+| Plugin | Status | Auth | MCP Tools | Notes |
+|--------|--------|------|-----------|-------|
+| llm-router | 🟢 stable | ✅ | ✅ | Multi-provider routing, vLLM support |
+| notion | 🟢 stable | ✅ | ✅ | Full DB management, pagination |
+| github | 🟢 stable | ✅ | ✅ | Repos, PRs, branches, comments |
+| database | 🟢 stable | ✅ | ✅ | SQL + MongoDB, safety controls |
+| shell | 🟢 stable | ✅ | ✅ | Allowlist, dangerous pattern blocking |
+| rag | 🟢 stable | ✅ | ✅ | OpenAI embeddings, semantic search |
+| brain | 🟢 stable | ✅ | ✅ (16) | Memory, habits, FS awareness |
+| github-pattern-analyzer | 🟢 stable | ✅ | ✅ | Pattern learning, Redis cache |
+| n8n | 🟢 stable | ✅ | ✅ (9) | Workflow CRUD + execute |
+| repo-intelligence | 🟢 stable | ✅ | ✅ | Git analysis, AI summaries |
+| project-orchestrator | 🟢 stable | ✅ | ✅ | AI planning, Notion, GitHub, Redis |
+
+### Phase 2 — Infrastructure & Tooling (9/9 complete ✅)
+
+| Plugin | Status | Auth | MCP Tools | Notes |
+|--------|--------|------|-----------|-------|
+| http | 🟢 stable | ✅ | ✅ (3) | SSRF, allowlist, rate limit, cache |
+| secrets | 🟢 stable | ✅ | ✅ (4) | `{{secret:NAME}}` ref system |
+| workspace | 🟢 stable | ✅ | ✅ (8) | Safe file CRUD, path traversal blocked |
+| git | 🟢 stable | ✅ | ✅ (11) | Full git ops, path validation |
+| prompt-registry | 🟡 beta | ⚠️ partial | ❌ | Sync I/O, race conditions |
+| observability | 🟢 stable | ✅ | ✅ (3) | Aggregate health, Prometheus, error log |
+| tech-detector | 🟢 stable | ✅ | ✅ (3) | ~50 tech patterns, path validation |
+| n8n-workflows | 🟢 stable | ✅ | ✅ (5) | Cached list, audit, graceful n8n-credentials |
+| code-review | 🟢 stable | ✅ | ✅ (4) | Security scan, quality, LLM review, path safety |
 
 **Legend:** 🟢 Stable | 🟡 Beta | 🔴 Experimental
 

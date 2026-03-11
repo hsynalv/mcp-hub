@@ -2,14 +2,15 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
 import { validateBody } from "../../core/validate.js";
-import { Errors, standardizeError } from "../../core/error-standard.js";
+import { Errors, standardizeError, createPluginErrorHandler } from "../../core/error-standard.js";
+import { ToolTags } from "../../core/tool-registry.js";
+import { auditLog, generateCorrelationId, getAuditManager } from "../../core/audit/index.js";
 import { resolveDeep } from "../secrets/secrets.store.js";
 import { isDomainAllowed, checkRateLimit, getPolicyInfo, getRateLimitState } from "./policy.js";
 import { getFromCache, setInCache, clearCache, getCacheStats } from "./http.cache.js";
 import { httpRequest } from "./http.client.js";
 import { validateUrlSafety } from "./security.js";
 import { config } from "../../core/config.js";
-import { randomBytes } from "crypto";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 // ── Plugin Metadata ──────────────────────────────────────────────────────────
@@ -36,41 +37,32 @@ export const metadata = createMetadata({
   notes: "HTTP client with built-in caching, rate limiting, and domain security controls.",
 });
 
-// ── Audit Log ────────────────────────────────────────────────────────────────
-const httpAuditLog = [];
-const MAX_AUDIT_LOG = 1000;
+const handleError = createPluginErrorHandler("http");
 
-function generateCorrelationId() {
-  return randomBytes(8).toString("hex");
+// ── Audit helper ──────────────────────────────────────────────────────────────
+
+async function httpAudit({ operation, actor, correlationId, durationMs, success, method, url, statusCode, error }) {
+  try {
+    await auditLog({
+      plugin: "http",
+      operation,
+      actor:         actor || "anonymous",
+      correlationId,
+      durationMs,
+      success,
+      error:         error ? String(error) : undefined,
+      method,
+      url,
+      statusCode,
+    });
+  } catch { /* never crash on audit failure */ }
 }
 
-function auditEntry({ method, url, allowed, reason, statusCode, durationMs, error, correlationId, actor }) {
-  const entry = {
-    timestamp: new Date().toISOString(),
-    method,
-    url,
-    allowed,
-    reason,
-    statusCode,
-    durationMs,
-    error: error ? String(error) : undefined,
-    correlationId,
-    actor: actor || "unknown",
-  };
-  httpAuditLog.unshift(entry);
-  if (httpAuditLog.length > MAX_AUDIT_LOG) httpAuditLog.pop();
-  return entry;
+async function getAuditLogEntries(limit = 100) {
+  const manager = getAuditManager();
+  return manager.getRecentEntries({ limit, plugin: "http" });
 }
 
-function getAuditLogEntries(limit = 100) {
-  return httpAuditLog.slice(0, Math.min(limit, MAX_AUDIT_LOG));
-}
-
-export const name = "http";
-export const version = "1.0.0";
-export const description = "Controlled outbound HTTP with allowlist, rate limiting, caching, and secret ref resolution";
-export const capabilities = ["write"];
-export const requires = [];
 export const endpoints = [
   { method: "POST",   path: "/http/request", description: "Make a controlled HTTP request",     scope: "write"  },
   { method: "GET",    path: "/http/cache",   description: "Cache stats",                        scope: "read"   },
@@ -144,8 +136,26 @@ function isMethodAllowedByConfig(method) {
 export function register(app) {
   const router = Router();
 
-  router.get("/health", requireScope("read"), (_req, res) => {
-    res.json({ ok: true, status: "healthy", plugin: name, version });
+  router.get("/health", async (_req, res) => {
+    try {
+      const policy = getPolicyInfo();
+      const cache  = getCacheStats();
+      res.json({
+        ok:      true,
+        plugin:  "http",
+        version: "1.0.0",
+        config: {
+          allowlistSize:  policy.allowlist?.length  ?? 0,
+          blocklistSize:  policy.blocklist?.length  ?? 0,
+          rateLimitRpm:   policy.rateLimit?.requestsPerMinute ?? null,
+          enabledMethods: policy.enabledMethods ?? ["GET", "HEAD", "OPTIONS"],
+          secretsEnabled: true,
+        },
+        cache: { entries: cache.entries ?? 0, hitRate: cache.hitRate ?? null },
+      });
+    } catch (err) {
+      res.status(500).json(handleError(err, "health"));
+    }
   });
 
   /**
@@ -192,28 +202,28 @@ export function register(app) {
     const data = req.validatedBody;
     const { method, url, headers, body: reqBody, cache: useCache, cacheTtl } = data;
     const correlationId = generateCorrelationId();
-    const actor = req.actor || null;
-    const startTime = Date.now();
+    const actor         = req.user?.sub || "anonymous";
+    const startTime     = Date.now();
 
-    // SSRF Protection - Check for private/internal hosts
+    // SSRF Protection
     const ssrfCheck = validateUrlSafety(url);
     if (!ssrfCheck.allowed) {
-      auditEntry({ method, url, allowed: false, reason: ssrfCheck.reason, correlationId, actor });
+      await httpAudit({ operation: "request", actor, correlationId, durationMs: 0, success: false, method, url, error: ssrfCheck.reason });
       const err = Errors.authorization(`SSRF protection: ${ssrfCheck.reason}`);
       return res.status(403).json(standardizeError(err).serialize(req.requestId));
     }
 
-    // HTTP Method Governance - Check destructive methods
+    // HTTP Method Governance
     const methodCheck = isMethodAllowedByConfig(method);
     if (!methodCheck.allowed) {
-      auditEntry({ method, url, allowed: false, reason: methodCheck.reason, correlationId, actor });
+      await httpAudit({ operation: "request", actor, correlationId, durationMs: 0, success: false, method, url, error: methodCheck.reason });
       const err = Errors.authorization(methodCheck.message || `Method ${method} not allowed`);
       return res.status(403).json(standardizeError(err).serialize(req.requestId));
     }
 
     // Allowlist check
     if (!isDomainAllowed(url)) {
-      auditEntry({ method, url, allowed: false, reason: "domain_not_allowed", correlationId, actor });
+      await httpAudit({ operation: "request", actor, correlationId, durationMs: 0, success: false, method, url, error: "domain_not_allowed" });
       const err = Errors.authorization("Domain not in allowlist");
       return res.status(403).json(standardizeError(err).serialize(req.requestId));
     }
@@ -221,7 +231,7 @@ export function register(app) {
     // Rate limit check
     const rateCheck = checkRateLimit(url);
     if (!rateCheck.allowed) {
-      auditEntry({ method, url, allowed: false, reason: rateCheck.reason, correlationId, actor });
+      await httpAudit({ operation: "request", actor, correlationId, durationMs: 0, success: false, method, url, error: rateCheck.reason });
       const err = Errors.rateLimit(rateCheck.reason, rateCheck.resetInSeconds);
       return res.status(429).json(standardizeError(err).serialize(req.requestId));
     }
@@ -234,7 +244,7 @@ export function register(app) {
     if (useCache && method.toUpperCase() === "GET") {
       const cached = getFromCache(method, url, null);
       if (cached) {
-        auditEntry({ method, url, allowed: true, statusCode: cached.status, durationMs: Date.now() - startTime, correlationId, actor });
+        await httpAudit({ operation: "request", actor, correlationId, durationMs: Date.now() - startTime, success: true, method, url, statusCode: cached.status });
         return res.json({ ok: true, cached: true, ageSeconds: cached.ageSeconds, correlationId, ...cached });
       }
     }
@@ -242,15 +252,10 @@ export function register(app) {
     // Make the request
     let result;
     try {
-      result = await httpRequest({
-        method,
-        url,
-        headers: resolvedHeaders,
-        body:    resolvedBody,
-      });
+      result = await httpRequest({ method, url, headers: resolvedHeaders, body: resolvedBody });
     } catch (err) {
       const durationMs = Date.now() - startTime;
-      auditEntry({ method, url, allowed: true, durationMs, error: err.message, correlationId, actor });
+      await httpAudit({ operation: "request", actor, correlationId, durationMs, success: false, method, url, error: err.message });
       const standardized = standardizeError(err, "http_request");
       return res.status(standardized.statusCode || 502).json(standardized.serialize(req.requestId));
     }
@@ -258,7 +263,7 @@ export function register(app) {
     const durationMs = Date.now() - startTime;
 
     if (!result.ok && result.error) {
-      auditEntry({ method, url, allowed: true, statusCode: result.status, durationMs, error: result.error, correlationId, actor });
+      await httpAudit({ operation: "request", actor, correlationId, durationMs, success: false, method, url, statusCode: result.status, error: result.error });
       const err = Errors.externalError("http", result.error);
       return res.status(result.status ?? 502).json({
         ...standardizeError(err).serialize(req.requestId),
@@ -269,15 +274,10 @@ export function register(app) {
     // Store in cache
     if (useCache && method.toUpperCase() === "GET" && result.status < 400) {
       const ttl = cacheTtl ?? config.http?.cacheTtlSeconds ?? 300;
-      setInCache(method, url, null, {
-        status:  result.status,
-        headers: result.headers,
-        body:    result.body,
-        size:    result.size,
-      }, ttl);
+      setInCache(method, url, null, { status: result.status, headers: result.headers, body: result.body, size: result.size }, ttl);
     }
 
-    auditEntry({ method, url, allowed: true, statusCode: result.status, durationMs, correlationId, actor });
+    await httpAudit({ operation: "request", actor, correlationId, durationMs, success: true, method, url, statusCode: result.status });
 
     res.json({
       ok:         true,
@@ -295,12 +295,141 @@ export function register(app) {
 
   /**
    * GET /http/audit
-   * Returns HTTP request audit log.
+   * Returns HTTP request audit log from core audit manager.
    */
-  router.get("/audit", requireScope("read"), (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
-    res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
+  router.get("/audit", requireScope("read"), async (req, res) => {
+    try {
+      const limit   = Math.min(parseInt(req.query.limit) || 50, 100);
+      const entries = await getAuditLogEntries(limit);
+      res.json({ ok: true, data: { audit: entries, total: entries.length } });
+    } catch (err) {
+      res.status(500).json(handleError(err, "audit"));
+    }
   });
 
   app.use("/http", router);
 }
+
+// ── MCP Tools ─────────────────────────────────────────────────────────────────
+
+export const tools = [
+  // ── http_request ─────────────────────────────────────────────────────────
+  {
+    name: "http_request",
+    description: "Make a controlled outbound HTTP request. Enforces SSRF protection, domain allowlist, rate limits. Supports {{secret:NAME}} refs in headers/body so secrets are never exposed.",
+    tags: [ToolTags.WRITE, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+    inputSchema: {
+      type: "object",
+      properties: {
+        method:   { type: "string", enum: ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"], default: "GET" },
+        url:      { type: "string", description: "Full URL including protocol (e.g. https://api.example.com/data)" },
+        headers:  { type: "object", description: "Request headers. Use {{secret:NAME}} to inject secrets.", additionalProperties: { type: "string" } },
+        body:     { description: "Request body (object or string). Use {{secret:NAME}} for secret values." },
+        cache:    { type: "boolean", default: false, description: "Cache GET responses" },
+        cacheTtl: { type: "number", description: "Cache TTL in seconds (default 300)" },
+      },
+      required: ["url"],
+    },
+    handler: async (args, context = {}) => {
+      try {
+        const correlationId = generateCorrelationId();
+        const actor         = context.actor || "anonymous";
+        const method        = (args.method || "GET").toUpperCase();
+        const url           = args.url;
+        const startTime     = Date.now();
+
+        const ssrfCheck = validateUrlSafety(url);
+        if (!ssrfCheck.allowed) {
+          await httpAudit({ operation: "mcp_request", actor, correlationId, durationMs: 0, success: false, method, url, error: ssrfCheck.reason });
+          return { ok: false, error: { code: "ssrf_blocked", message: `SSRF protection: ${ssrfCheck.reason}` } };
+        }
+
+        const methodCheck = isMethodAllowedByConfig(method);
+        if (!methodCheck.allowed) {
+          return { ok: false, error: { code: "method_not_allowed", message: methodCheck.message || `Method ${method} not allowed` } };
+        }
+
+        if (!isDomainAllowed(url)) {
+          await httpAudit({ operation: "mcp_request", actor, correlationId, durationMs: 0, success: false, method, url, error: "domain_not_allowed" });
+          return { ok: false, error: { code: "domain_not_allowed", message: "Domain not in allowlist" } };
+        }
+
+        const rateCheck = checkRateLimit(url);
+        if (!rateCheck.allowed) {
+          return { ok: false, error: { code: "rate_limited", message: rateCheck.reason, resetInSeconds: rateCheck.resetInSeconds } };
+        }
+
+        const resolvedHeaders = resolveDeep(args.headers ?? {});
+        const resolvedBody    = resolveDeep(args.body);
+
+        if (args.cache && method === "GET") {
+          const cached = getFromCache(method, url, null);
+          if (cached) {
+            return { ok: true, cached: true, status: cached.status, headers: cached.headers, body: cached.body };
+          }
+        }
+
+        const result = await httpRequest({ method, url, headers: resolvedHeaders, body: resolvedBody });
+        const durationMs = Date.now() - startTime;
+
+        await httpAudit({ operation: "mcp_request", actor, correlationId, durationMs, success: result.ok, method, url, statusCode: result.status });
+
+        if (!result.ok) {
+          return { ok: false, error: { code: "request_failed", message: result.error, status: result.status } };
+        }
+
+        if (args.cache && method === "GET" && result.status < 400) {
+          const ttl = args.cacheTtl ?? config.http?.cacheTtlSeconds ?? 300;
+          setInCache(method, url, null, { status: result.status, headers: result.headers, body: result.body, size: result.size }, ttl);
+        }
+
+        return { ok: true, cached: false, status: result.status, headers: result.headers, body: result.body, durationMs: result.durationMs, truncated: result.truncated };
+      } catch (err) {
+        return { ok: false, error: { code: "http_request_failed", message: err.message } };
+      }
+    },
+  },
+
+  // ── http_cache_clear ──────────────────────────────────────────────────────
+  {
+    name: "http_cache_clear",
+    description: "Clear the HTTP response cache. Optionally clear only entries for a specific domain.",
+    tags: [ToolTags.WRITE],
+    inputSchema: {
+      type: "object",
+      properties: {
+        domain: { type: "string", description: "Clear cache only for this domain (optional). If omitted, clears entire cache." },
+      },
+    },
+    handler: async (args) => {
+      try {
+        const cleared = clearCache(args.domain || null);
+        return { ok: true, data: { cleared, domain: args.domain || "all" } };
+      } catch (err) {
+        return { ok: false, error: { code: "cache_clear_failed", message: err.message } };
+      }
+    },
+  },
+
+  // ── http_policy_info ─────────────────────────────────────────────────────
+  {
+    name: "http_policy_info",
+    description: "Get the current HTTP policy: allowed domains, blocked domains, rate limit settings, and enabled HTTP methods.",
+    tags: [ToolTags.READ],
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => {
+      try {
+        return {
+          ok: true,
+          data: {
+            policy:         getPolicyInfo(),
+            rateLimitState: getRateLimitState(),
+            cacheStats:     getCacheStats(),
+          },
+        };
+      } catch (err) {
+        return { ok: false, error: { code: "policy_info_failed", message: err.message } };
+      }
+    },
+  },
+];

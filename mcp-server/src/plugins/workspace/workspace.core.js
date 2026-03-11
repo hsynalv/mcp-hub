@@ -407,3 +407,53 @@ export async function patchFile(filePath, patch, options = {}) {
     return { ok: false, error: { code: "patch_error", message: err.message } };
   }
 }
+
+/**
+ * Delete a file within the workspace.
+ */
+export async function deleteFile(filePath) {
+  const validation = validateWorkspacePath(filePath);
+  if (!validation.valid) {
+    return { ok: false, error: { code: "invalid_path", message: validation.error } };
+  }
+
+  try {
+    const stat = await fs.stat(validation.path);
+    if (stat.isDirectory()) {
+      return { ok: false, error: { code: "is_directory", message: "Path is a directory. Use delete on files only." } };
+    }
+    await fs.unlink(validation.path);
+    return { ok: true, data: { deleted: validation.relative } };
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { ok: false, error: { code: "file_not_found", message: "File does not exist" } };
+    }
+    return { ok: false, error: { code: "delete_error", message: err.message } };
+  }
+}
+
+/**
+ * Move or rename a file within the workspace.
+ */
+export async function moveFile(srcPath, dstPath) {
+  const srcValidation = validateWorkspacePath(srcPath);
+  if (!srcValidation.valid) {
+    return { ok: false, error: { code: "invalid_source_path", message: srcValidation.error } };
+  }
+
+  const dstValidation = validateWorkspacePath(dstPath);
+  if (!dstValidation.valid) {
+    return { ok: false, error: { code: "invalid_destination_path", message: dstValidation.error } };
+  }
+
+  try {
+    await fs.mkdir(dirname(dstValidation.path), { recursive: true });
+    await fs.rename(srcValidation.path, dstValidation.path);
+    return { ok: true, data: { from: srcValidation.relative, to: dstValidation.relative } };
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { ok: false, error: { code: "file_not_found", message: "Source file does not exist" } };
+    }
+    return { ok: false, error: { code: "move_error", message: err.message } };
+  }
+}

@@ -1,36 +1,36 @@
-import { readFileSync, existsSync } from "fs";
+import { existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { Router } from "express";
 import { requireScope } from "../../core/auth.js";
 import { getLogs, getStats } from "../../core/audit.js";
 import { getPlugins } from "../../core/plugins.js";
-import { getJobStats } from "../../core/jobs.js";
 import { getHealthService, HealthStatus } from "../../core/health/index.js";
+import { ToolTags } from "../../core/tool-registry.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const name = "observability";
-export const version = "1.0.0";
-export const description = "Health aggregation, Prometheus metrics, and error log surfacing";
-export const capabilities = ["read"];
-export const requires = [];
-export const endpoints = [
-  { method: "GET", path: "/observability/health",  description: "Aggregate health of all plugins", scope: "read" },
-  { method: "GET", path: "/observability/health/detailed", description: "Detailed health with dependencies", scope: "read" },
-  { method: "GET", path: "/observability/metrics", description: "Prometheus-format metrics",        scope: "read" },
-  { method: "GET", path: "/observability/errors",  description: "Recent errors from audit log",     scope: "read" },
-  { method: "GET", path: "/observability/dashboard", description: "Web dashboard for monitoring",    scope: "read" },
-  { method: "GET", path: "/observability/dashboard/app.js", description: "Dashboard JS (static)",       scope: "read" },
-  { method: "GET", path: "/observability/dashboard/styles.css", description: "Dashboard CSS (static)",  scope: "read" },
-];
-export const examples = [
-  "GET /observability/health",
-  "GET /observability/health/detailed",
-  "GET /observability/metrics",
-  "GET /observability/errors?limit=20",
-  "GET /observability/dashboard",
-];
+export const metadata = createMetadata({
+  name:        "observability",
+  version:     "1.0.0",
+  description: "Aggregate health, Prometheus metrics, error surfacing, and runtime dashboard for all plugins.",
+  status:      PluginStatus.STABLE,
+  riskLevel:   RiskLevel.LOW,
+  capabilities: ["read"],
+  requires:    [],
+  tags:        ["observability", "health", "metrics", "monitoring"],
+  endpoints: [
+    { method: "GET", path: "/observability/health",              description: "Aggregate health of all plugins",  scope: "read" },
+    { method: "GET", path: "/observability/health/detailed",     description: "Detailed health with dependencies", scope: "read" },
+    { method: "GET", path: "/observability/metrics",             description: "Prometheus-format metrics",         scope: "read" },
+    { method: "GET", path: "/observability/errors",              description: "Recent errors from audit log",      scope: "read" },
+    { method: "GET", path: "/observability/dashboard",           description: "Web dashboard",                     scope: "read" },
+    { method: "GET", path: "/observability/dashboard/app.js",    description: "Dashboard JS",                      scope: "read" },
+    { method: "GET", path: "/observability/dashboard/styles.css",description: "Dashboard CSS",                     scope: "read" },
+  ],
+  notes: "Prometheus metrics available at /observability/metrics. Sentry optional via SENTRY_DSN env.",
+});
 
 // Optional Sentry integration
 let sentryInitialized = false;
@@ -52,10 +52,6 @@ export function register(app) {
   initSentry();
 
   const router = Router();
-
-  router.get("/health", requireScope("read"), (_req, res) => {
-    res.json({ ok: true, status: "healthy", plugin: name, version });
-  });
 
   /**
    * GET /observability/health
@@ -280,3 +276,113 @@ function formatUptime(seconds) {
   const s = seconds % 60;
   return [d && `${d}d`, h && `${h}h`, m && `${m}m`, `${s}s`].filter(Boolean).join(" ");
 }
+
+// ── MCP Tools ─────────────────────────────────────────────────────────────────
+
+export const tools = [
+  {
+    name: "observability_health",
+    description: "Get aggregate health status of all loaded plugins including uptime, memory, and per-plugin error stats.",
+    tags: [ToolTags.READ],
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => {
+      try {
+        const plugins = getPlugins();
+        const stats   = getStats();
+        const uptime  = Math.floor(process.uptime());
+        const mem     = process.memoryUsage();
+
+        const pluginHealth = plugins.map((p) => {
+          const ps = stats.byPlugin?.[p.name] ?? {};
+          return { name: p.name, version: p.version, calls: ps.total ?? 0, errors: ps.errors ?? 0 };
+        });
+
+        return {
+          ok: true,
+          data: {
+            status:  pluginHealth.some((p) => p.errors > 0) ? "degraded" : "healthy",
+            uptime:  { seconds: uptime, human: formatUptime(uptime) },
+            memory:  {
+              heapUsedMb:  Math.round(mem.heapUsed  / 1024 / 1024 * 10) / 10,
+              heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024 * 10) / 10,
+              rssMb:       Math.round(mem.rss       / 1024 / 1024 * 10) / 10,
+            },
+            plugins: pluginHealth,
+            audit: {
+              totalCalls:  stats.total  ?? 0,
+              totalErrors: stats.errors ?? 0,
+              errorRate:   stats.total ? Math.round((stats.errors / stats.total) * 100) : 0,
+            },
+          },
+        };
+      } catch (err) {
+        return { ok: false, error: { code: "health_failed", message: err.message } };
+      }
+    },
+  },
+
+  {
+    name: "observability_metrics",
+    description: "Get current runtime metrics: request counts, error counts, memory usage, uptime — per plugin.",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        plugin: { type: "string", description: "Filter metrics to a specific plugin (optional)" },
+      },
+    },
+    handler: async (args) => {
+      try {
+        const stats   = getStats();
+        const plugins = getPlugins();
+        const uptime  = Math.floor(process.uptime());
+        const mem     = process.memoryUsage();
+
+        const filtered = args.plugin
+          ? plugins.filter((p) => p.name === args.plugin)
+          : plugins;
+
+        return {
+          ok: true,
+          data: {
+            uptime:      { seconds: uptime, human: formatUptime(uptime) },
+            memory:      { heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024 * 10) / 10, rssMb: Math.round(mem.rss / 1024 / 1024 * 10) / 10 },
+            totalCalls:  stats.total  ?? 0,
+            totalErrors: stats.errors ?? 0,
+            plugins:     filtered.map((p) => {
+              const ps = stats.byPlugin?.[p.name] ?? {};
+              return { name: p.name, calls: ps.total ?? 0, errors: ps.errors ?? 0 };
+            }),
+          },
+        };
+      } catch (err) {
+        return { ok: false, error: { code: "metrics_failed", message: err.message } };
+      }
+    },
+  },
+
+  {
+    name: "observability_errors",
+    description: "Get recent errors from the audit log. Useful for diagnosing what went wrong across plugins.",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit:  { type: "number", description: "Max errors to return (default 20, max 100)", default: 20 },
+        plugin: { type: "string", description: "Filter errors to a specific plugin (optional)" },
+      },
+    },
+    handler: async (args) => {
+      try {
+        const limit   = Math.min(args.limit || 20, 100);
+        const allLogs = getLogs({ limit: limit * 2, plugin: args.plugin });
+        const errors  = allLogs
+          .filter((e) => e.status === "client_error" || e.status === "server_error")
+          .slice(0, limit);
+        return { ok: true, data: { count: errors.length, errors } };
+      } catch (err) {
+        return { ok: false, error: { code: "errors_failed", message: err.message } };
+      }
+    },
+  },
+];

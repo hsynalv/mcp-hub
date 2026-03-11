@@ -6,11 +6,44 @@
  */
 
 import { readdir, readFile, stat } from "fs/promises";
-import { join, extname, basename } from "path";
+import { join, extname, basename, resolve, relative } from "path";
+import { homedir } from "os";
+import { Router } from "express";
+import { requireScope } from "../../core/auth.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { ToolTags } from "../../core/tool-registry.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
-export const name = "tech-detector";
-export const version = "1.0.0";
-export const description = "Auto-detect project technologies and stack";
+const handleError = createPluginErrorHandler("tech-detector");
+
+const WORKSPACE_BASE = process.env.WORKSPACE_BASE || process.env.WORKSPACE_ROOT || join(homedir(), "Projects");
+
+function safePath(requestedPath) {
+  const resolved = resolve(requestedPath || process.cwd());
+  const rel      = relative(WORKSPACE_BASE, resolved);
+  if (rel.startsWith("..") || rel.includes("../")) {
+    return { valid: false, error: `Path is outside allowed workspace: ${requestedPath}` };
+  }
+  return { valid: true, path: resolved };
+}
+
+export const metadata = createMetadata({
+  name:        "tech-detector",
+  version:     "1.0.0",
+  description: "Detect project technology stack: languages, frameworks, databases, CI/CD, and infrastructure.",
+  status:      PluginStatus.STABLE,
+  riskLevel:   RiskLevel.LOW,
+  capabilities: ["read"],
+  requires:    [],
+  tags:        ["tech", "stack", "detection", "analysis"],
+  endpoints: [
+    { method: "GET",  path: "/tech/health",    description: "Plugin health",                   scope: "read"  },
+    { method: "POST", path: "/tech/detect",    description: "Detect project tech stack",        scope: "read"  },
+    { method: "POST", path: "/tech/recommend", description: "Recommend stack for new project",  scope: "read"  },
+    { method: "POST", path: "/tech/compare",   description: "Compare two technologies",         scope: "read"  },
+  ],
+  notes: "Paths are validated against WORKSPACE_BASE. No external API calls — purely file-based analysis.",
+});
 
 // Detection patterns for various technologies
 const DETECTION_PATTERNS = {
@@ -633,39 +666,31 @@ export function compareTech(optionA, optionB, criteria) {
 export const tools = [
   {
     name: "tech_detect",
-    description: "Analyze a project directory to detect technologies and stack",
-    parameters: {
+    description: "Analyze a project directory to detect its technology stack: languages, frameworks, databases, CI/CD, and infrastructure.",
+    tags: [ToolTags.READ_ONLY, ToolTags.LOCAL_FS],
+    inputSchema: {
       type: "object",
       properties: {
-        path: {
-          type: "string",
-          description: "Path to the project directory",
-        },
+        path: { type: "string", description: "Path to the project directory (must be inside WORKSPACE_BASE)" },
       },
       required: ["path"],
     },
     handler: async ({ path }) => {
+      const v = safePath(path);
+      if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       try {
-        const stack = await detectStack(path);
-        return {
-          ok: true,
-          data: stack,
-        };
+        const stack = await detectStack(v.path);
+        return { ok: true, data: stack };
       } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "detection_failed",
-            message: error.message,
-          },
-        };
+        return { ok: false, error: { code: "detection_failed", message: error.message } };
       }
     },
   },
   {
     name: "tech_recommend",
-    description: "Get tech stack recommendations for a new project",
-    parameters: {
+    description: "Get tech stack recommendations for a new project based on project type, scale, team size, and priorities.",
+    tags: [ToolTags.READ_ONLY],
+    inputSchema: {
       type: "object",
       properties: {
         type: {
@@ -685,10 +710,7 @@ export const tools = [
         },
         priorities: {
           type: "array",
-          items: {
-            type: "string",
-            enum: ["performance", "developer-experience", "cost", "ai-features", "seo"],
-          },
+          items: { type: "string", enum: ["performance", "developer-experience", "cost", "ai-features", "seo"] },
           description: "Project priorities",
         },
       },
@@ -696,80 +718,69 @@ export const tools = [
     },
     handler: ({ type, scale = "medium", team = "small", priorities = [] }) => {
       const recommendations = recommendStack({ type, scale, team, priorities });
-      return {
-        ok: true,
-        data: recommendations,
-      };
+      return { ok: true, data: recommendations };
     },
   },
   {
     name: "tech_compare",
-    description: "Compare two technology options",
-    parameters: {
+    description: "Compare two technologies or frameworks across given criteria (performance, ecosystem, learning curve, etc.).",
+    tags: [ToolTags.READ_ONLY],
+    inputSchema: {
       type: "object",
       properties: {
-        optionA: {
-          type: "string",
-          description: "First technology option",
-        },
-        optionB: {
-          type: "string",
-          description: "Second technology option",
-        },
-        criteria: {
-          type: "array",
-          items: { type: "string" },
-          description: "Comparison criteria",
-        },
+        optionA:  { type: "string", description: "First technology" },
+        optionB:  { type: "string", description: "Second technology" },
+        criteria: { type: "array", items: { type: "string" }, description: "Comparison criteria (optional)" },
       },
       required: ["optionA", "optionB"],
     },
     handler: ({ optionA, optionB, criteria = [] }) => {
       const comparison = compareTech(optionA, optionB, criteria);
-      return {
-        ok: true,
-        data: comparison,
-      };
-    },
-  },
-];
-
-// REST API Endpoints
-export const endpoints = [
-  {
-    path: "/tech/detect",
-    method: "POST",
-    handler: async (req, res) => {
-      const { path } = req.body;
-      try {
-        const stack = await detectStack(path || process.cwd());
-        res.json({ ok: true, data: stack });
-      } catch (error) {
-        res.status(500).json({ ok: false, error: error.message });
-      }
-    },
-  },
-  {
-    path: "/tech/recommend",
-    method: "POST",
-    handler: (req, res) => {
-      const { type, scale, team, priorities } = req.body;
-      const recommendations = recommendStack({ type, scale, team, priorities });
-      res.json({ ok: true, data: recommendations });
-    },
-  },
-  {
-    path: "/tech/compare",
-    method: "POST",
-    handler: (req, res) => {
-      const { optionA, optionB, criteria } = req.body;
-      const comparison = compareTech(optionA, optionB, criteria);
-      res.json({ ok: true, data: comparison });
+      return { ok: true, data: comparison };
     },
   },
 ];
 
 // Plugin registration
-export function register(app, dependencies) {
-  console.log("[Tech Detector] Registered");
+export function register(app) {
+  const router = Router();
+
+  router.get("/health", (_req, res) => {
+    res.json({ ok: true, plugin: "tech-detector", version: "1.0.0", status: "healthy" });
+  });
+
+  router.post("/detect", requireScope("read"), async (req, res) => {
+    const v = safePath(req.body.path || process.cwd());
+    if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
+    try {
+      const stack = await detectStack(v.path);
+      res.json({ ok: true, data: stack });
+    } catch (err) {
+      res.status(500).json(handleError(err, "detect"));
+    }
+  });
+
+  router.post("/recommend", requireScope("read"), (req, res) => {
+    try {
+      const { type, scale, team, priorities } = req.body;
+      if (!type) return res.status(400).json({ ok: false, error: { code: "missing_type", message: "Project type required" } });
+      const recommendations = recommendStack({ type, scale, team, priorities });
+      res.json({ ok: true, data: recommendations });
+    } catch (err) {
+      res.status(500).json(handleError(err, "recommend"));
+    }
+  });
+
+  router.post("/compare", requireScope("read"), (req, res) => {
+    try {
+      const { optionA, optionB, criteria } = req.body;
+      if (!optionA || !optionB) return res.status(400).json({ ok: false, error: { code: "missing_options", message: "optionA and optionB required" } });
+      const comparison = compareTech(optionA, optionB, criteria);
+      res.json({ ok: true, data: comparison });
+    } catch (err) {
+      res.status(500).json(handleError(err, "compare"));
+    }
+  });
+
+  app.use("/tech", router);
 }

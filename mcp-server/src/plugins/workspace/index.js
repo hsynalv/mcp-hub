@@ -6,9 +6,12 @@
 
 import { Router } from "express";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { requireScope } from "../../core/auth.js";
 import {
   readFile,
   writeFile,
+  deleteFile,
+  moveFile,
   listDirectory,
   searchFiles,
   patchFile,
@@ -24,41 +27,28 @@ import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/inde
 const pluginError = createPluginErrorHandler("workspace");
 
 export const metadata = createMetadata({
-  name: "workspace",
-  version: "1.0.0",
-  description: "File operations within configured workspace root with audit logging",
-  status: PluginStatus.STABLE,
-  productionReady: true,
-  scopes: ["read", "write"],
-  capabilities: ["read", "write", "delete", "file", "search", "audit"],
-  requiresAuth: true,
-  supportsAudit: true,
-  supportsPolicy: true,
-  supportsWorkspaceIsolation: true,
-  hasTests: true,
-  hasDocs: true,
-  riskLevel: RiskLevel.MEDIUM,
-  owner: "platform-team",
-  tags: ["workspace", "files", "filesystem", "local"],
-  dependencies: [],
-  since: "1.0.0",
-  notes: "All file operations are constrained to workspace root directory.",
+  name:        "workspace",
+  version:     "1.0.0",
+  description: "Safe file CRUD within a configured workspace root. All paths are validated against WORKSPACE_ROOT.",
+  status:      PluginStatus.STABLE,
+  riskLevel:   RiskLevel.MEDIUM,
+  capabilities: ["read", "write"],
+  requires:    [],
+  tags:        ["workspace", "files", "filesystem", "local"],
+  endpoints: [
+    { method: "GET",    path: "/workspace/health", description: "Plugin health",               scope: "read"  },
+    { method: "GET",    path: "/workspace/read",   description: "Read file contents",          scope: "read"  },
+    { method: "POST",   path: "/workspace/write",  description: "Write file contents",         scope: "write" },
+    { method: "DELETE", path: "/workspace/file",   description: "Delete a file",               scope: "write" },
+    { method: "POST",   path: "/workspace/move",   description: "Move/rename a file",          scope: "write" },
+    { method: "GET",    path: "/workspace/list",   description: "List directory contents",     scope: "read"  },
+    { method: "GET",    path: "/workspace/search", description: "Search files by pattern",     scope: "read"  },
+    { method: "POST",   path: "/workspace/patch",  description: "Apply search/replace patch",  scope: "write" },
+    { method: "GET",    path: "/workspace/audit",  description: "View audit log",              scope: "read"  },
+  ],
+  notes: "All file operations are constrained to WORKSPACE_ROOT. Path traversal is blocked.",
 });
 
-export const name = "workspace";
-export const version = "1.0.0";
-export const description = "File operations within workspace root";
-export const capabilities = ["read", "write"];
-export const requires = [];
-
-export const endpoints = [
-  { method: "GET", path: "/workspace/read", description: "Read file contents", scope: "read" },
-  { method: "POST", path: "/workspace/write", description: "Write file contents", scope: "write" },
-  { method: "GET", path: "/workspace/list", description: "List directory contents", scope: "read" },
-  { method: "GET", path: "/workspace/search", description: "Search files by pattern", scope: "read" },
-  { method: "POST", path: "/workspace/patch", description: "Apply patch to file", scope: "write" },
-  { method: "GET", path: "/workspace/audit", description: "View audit log", scope: "read" },
-];
 
 // ── MCP Tools ────────────────────────────────────────────────────────────────
 
@@ -75,7 +65,11 @@ export const tools = [
       },
       required: ["path"],
     },
-    handler: async (args) => readFile(args.path, { maxSize: args.maxSize }),
+    handler: async (args, context = {}) => {
+      const result = await readFile(args.path, { maxSize: args.maxSize });
+      auditEntry({ operation: "read", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      return result;
+    },
   },
   {
     name: "workspace_write_file",
@@ -84,17 +78,56 @@ export const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Relative path to file" },
-        content: { type: "string", description: "File content to write" },
+        path:       { type: "string",  description: "Relative path to file" },
+        content:    { type: "string",  description: "File content to write" },
         createDirs: { type: "boolean", description: "Create parent directories if missing", default: true },
       },
       required: ["path", "content"],
     },
-    handler: async (args) => writeFile(args.path, args.content, { createDirs: args.createDirs }),
+    handler: async (args, context = {}) => {
+      const result = await writeFile(args.path, args.content, { createDirs: args.createDirs });
+      auditEntry({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      return result;
+    },
+  },
+  {
+    name: "workspace_delete_file",
+    description: "Delete a file within the workspace. Cannot delete directories.",
+    tags: [ToolTags.WRITE, ToolTags.LOCAL_FS],
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Relative path to file to delete" },
+      },
+      required: ["path"],
+    },
+    handler: async (args, context = {}) => {
+      const result = await deleteFile(args.path);
+      auditEntry({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      return result;
+    },
+  },
+  {
+    name: "workspace_move_file",
+    description: "Move or rename a file within the workspace. Both source and destination must be inside the workspace root.",
+    tags: [ToolTags.WRITE, ToolTags.LOCAL_FS],
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Source path (relative)" },
+        to:   { type: "string", description: "Destination path (relative)" },
+      },
+      required: ["from", "to"],
+    },
+    handler: async (args, context = {}) => {
+      const result = await moveFile(args.from, args.to);
+      auditEntry({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      return result;
+    },
   },
   {
     name: "workspace_list",
-    description: "List contents of a directory",
+    description: "List contents of a directory within the workspace",
     tags: [ToolTags.READ, ToolTags.LOCAL_FS],
     inputSchema: {
       type: "object",
@@ -106,13 +139,13 @@ export const tools = [
   },
   {
     name: "workspace_search",
-    description: "Search files by name pattern",
+    description: "Search files by name pattern within the workspace",
     tags: [ToolTags.READ, ToolTags.LOCAL_FS, ToolTags.BULK],
     inputSchema: {
       type: "object",
       properties: {
         pattern: { type: "string", description: "Search pattern (substring match)" },
-        root: { type: "string", description: "Search root directory", default: "." },
+        root:    { type: "string", description: "Search root directory", default: "." },
       },
       required: ["pattern"],
     },
@@ -120,20 +153,38 @@ export const tools = [
   },
   {
     name: "workspace_patch",
-    description: "Apply search/replace patch to file",
+    description: "Apply a search/replace patch to a file within the workspace",
     tags: [ToolTags.WRITE, ToolTags.LOCAL_FS],
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Path to file" },
-        search: { type: "string", description: "Text to search for" },
+        path:    { type: "string", description: "Path to file" },
+        search:  { type: "string", description: "Text to search for" },
         replace: { type: "string", description: "Replacement text" },
       },
       required: ["path", "search", "replace"],
     },
+    handler: async (args, context = {}) => {
+      const patch  = `${args.search}===REPLACE===${args.replace}`;
+      const result = await patchFile(args.path, patch, { mode: "search-replace" });
+      auditEntry({ operation: "patch", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      return result;
+    },
+  },
+  {
+    name: "workspace_audit",
+    description: "View the workspace operation audit log (reads, writes, deletes, patches).",
+    tags: [ToolTags.READ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max entries to return (default 50, max 100)", default: 50 },
+      },
+    },
     handler: async (args) => {
-      const patch = `${args.search}===REPLACE===${args.replace}`;
-      return patchFile(args.path, patch, { mode: "search-replace" });
+      const limit   = Math.min(args.limit || 50, 100);
+      const entries = getAuditLogEntries(limit);
+      return { ok: true, data: { audit: entries, total: entries.length } };
     },
   },
 ];
@@ -143,8 +194,21 @@ export const tools = [
 export function register(app) {
   const router = Router();
 
+  router.get("/health", async (_req, res) => {
+    try {
+      const { homedir } = await import("os");
+      const { join }    = await import("path");
+      const root = process.env.WORKSPACE_ROOT || join(homedir(), "Projects");
+      let rootExists = false;
+      try { await (await import("fs/promises")).access(root); rootExists = true; } catch { /* noop */ }
+      res.json({ ok: true, plugin: "workspace", version: "1.0.0", root, rootExists });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // GET /workspace/read?path=...
-  router.get("/read", async (req, res) => {
+  router.get("/read", requireScope("read"), async (req, res) => {
     const path = req.query.path;
     const context = extractContext(req);
     const startTime = Date.now();
@@ -187,7 +251,7 @@ export function register(app) {
   });
 
   // POST /workspace/write
-  router.post("/write", async (req, res) => {
+  router.post("/write", requireScope("write"), async (req, res) => {
     const { path, content, createDirs } = req.body;
     const context = extractContext(req);
     const startTime = Date.now();
@@ -229,7 +293,7 @@ export function register(app) {
   });
 
   // GET /workspace/list?path=...
-  router.get("/list", async (req, res) => {
+  router.get("/list", requireScope("read"), async (req, res) => {
     const path = req.query.path || ".";
     const context = extractContext(req);
     const startTime = Date.now();
@@ -256,7 +320,7 @@ export function register(app) {
   });
 
   // GET /workspace/search?pattern=...&root=...
-  router.get("/search", async (req, res) => {
+  router.get("/search", requireScope("read"), async (req, res) => {
     const pattern = req.query.pattern;
     const context = extractContext(req);
     const startTime = Date.now();
@@ -298,7 +362,7 @@ export function register(app) {
   });
 
   // POST /workspace/patch
-  router.post("/patch", async (req, res) => {
+  router.post("/patch", requireScope("write"), async (req, res) => {
     const { path, search, replace } = req.body;
     const context = extractContext(req);
     const startTime = Date.now();
@@ -341,8 +405,40 @@ export function register(app) {
     res.status(statusCode).json(result);
   });
 
+  // DELETE /workspace/file?path=...
+  router.delete("/file", requireScope("write"), async (req, res) => {
+    const path    = req.query.path;
+    const context = extractContext(req);
+    const correlationId = generateCorrelationId();
+    const startTime = Date.now();
+
+    if (!path) {
+      return res.status(400).json({ ok: false, error: { code: "missing_path", message: "path query parameter required" } });
+    }
+
+    const result = await deleteFile(path);
+    auditEntry({ operation: "delete", path, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
+    res.status(result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400).json(result);
+  });
+
+  // POST /workspace/move
+  router.post("/move", requireScope("write"), async (req, res) => {
+    const { from, to } = req.body;
+    const context = extractContext(req);
+    const correlationId = generateCorrelationId();
+    const startTime = Date.now();
+
+    if (!from || !to) {
+      return res.status(400).json({ ok: false, error: { code: "missing_fields", message: "from and to required" } });
+    }
+
+    const result = await moveFile(from, to);
+    auditEntry({ operation: "move", path: `${from} → ${to}`, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
+    res.status(result.ok ? 200 : 400).json(result);
+  });
+
   // GET /workspace/audit
-  router.get("/audit", async (req, res) => {
+  router.get("/audit", requireScope("read"), async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     res.json({ ok: true, data: { audit: getAuditLogEntries(limit) } });
   });

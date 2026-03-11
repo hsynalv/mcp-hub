@@ -125,7 +125,7 @@ export async function loadPlugins(app) {
         try {
           registerTool({
             ...tool,
-            plugin: plugin.name || dir,
+            plugin: plugin.name || plugin.metadata?.name || dir,
           });
           stats.toolsRegistered++;
           pluginToolsRegistered++;
@@ -137,19 +137,23 @@ export async function loadPlugins(app) {
       }
     }
 
+    // Prefer flat exports; fall back to plugin.metadata for standardized plugins
+    // that use createMetadata() and don't duplicate flat-level exports.
+    const pm = plugin.metadata || {};
+
     const manifest = {
-      name:         plugin.name        ?? dir,
-      version:      plugin.version     ?? "0.0.0",
-      description:  plugin.description ?? "",
-      capabilities: plugin.capabilities ?? [],
-      endpoints:    plugin.endpoints    ?? [],
+      name:         plugin.name        ?? pm.name        ?? dir,
+      version:      plugin.version     ?? pm.version     ?? "0.0.0",
+      description:  plugin.description ?? pm.description ?? "",
+      capabilities: plugin.capabilities ?? pm.capabilities ?? [],
+      endpoints:    plugin.endpoints    ?? pm.endpoints   ?? [],
       tools:        plugin.tools?.map(t => ({
         name: t.name,
         description: t.description,
         inputSchema: t.inputSchema || { type: "object" },
       })) ?? [],
-      requires:     plugin.requires     ?? [],
-      examples:     plugin.examples     ?? [],
+      requires:     plugin.requires     ?? pm.requires    ?? [],
+      examples:     plugin.examples     ?? pm.examples    ?? [],
       // Include metadata from plugin.meta.json
       status:       pluginMeta.status,
       owner:        pluginMeta.owner,

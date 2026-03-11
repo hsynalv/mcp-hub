@@ -6,9 +6,24 @@
 
 import { exec } from "child_process";
 import { promisify } from "util";
-import { join } from "path";
+import { join, resolve, relative } from "path";
+import { homedir } from "os";
 
 const execAsync = promisify(exec);
+
+const WORKSPACE_BASE = process.env.WORKSPACE_BASE || process.env.WORKSPACE_ROOT || join(homedir(), "Projects");
+
+/**
+ * Validate that a repo path is within the allowed workspace base.
+ */
+export function safeRepoPath(requestedPath) {
+  const resolved = resolve(requestedPath);
+  const rel      = relative(WORKSPACE_BASE, resolved);
+  if (rel.startsWith("..") || rel.includes("../")) {
+    return { valid: false, error: `Repository path is outside allowed workspace: ${requestedPath}` };
+  }
+  return { valid: true, path: resolved };
+}
 
 /**
  * Execute git command in workspace
@@ -276,17 +291,56 @@ export async function gitPush(repoPath, options = {}) {
   const remote = options.remote || "origin";
   const branch = options.branch || "";
 
-  const args = branch ? `${remote} ${branch}` : remote;
+  const args   = branch ? `${remote} ${branch}` : remote;
   const result = await git(`push ${args}`, repoPath);
 
   if (!result.ok) return result;
 
-  return {
-    ok: true,
-    data: {
-      pushed: true,
-      remote,
-      branch: branch || "current",
-    },
-  };
+  return { ok: true, data: { pushed: true, remote, branch: branch || "current" } };
+}
+
+/**
+ * Pull from remote
+ */
+export async function gitPull(repoPath, options = {}) {
+  const remote = options.remote || "origin";
+  const branch = options.branch || "";
+  const args   = branch ? `${remote} ${branch}` : remote;
+  const result = await git(`pull ${args}`, repoPath);
+
+  if (!result.ok) return result;
+  return { ok: true, data: { pulled: true, output: result.stdout } };
+}
+
+/**
+ * List branches (local and/or remote)
+ */
+export async function gitBranchList(repoPath, options = {}) {
+  const flag   = options.remote ? "-r" : options.all ? "-a" : "";
+  const result = await git(`branch ${flag} --format="%(refname:short) %(HEAD)"`, repoPath);
+
+  if (!result.ok) return result;
+
+  const branches = result.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const parts   = line.trim().split(" ");
+      const current = parts[1] === "*";
+      return { name: parts[0], current };
+    });
+
+  return { ok: true, data: { branches, count: branches.length } };
+}
+
+/**
+ * Stash changes (push or pop)
+ */
+export async function gitStash(repoPath, options = {}) {
+  const action  = options.pop ? "pop" : "push";
+  const message = (!options.pop && options.message) ? `--message "${options.message}"` : "";
+  const result  = await git(`stash ${action} ${message}`.trim(), repoPath);
+
+  if (!result.ok) return result;
+  return { ok: true, data: { action, output: result.stdout } };
 }

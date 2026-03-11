@@ -5,11 +5,45 @@
  */
 
 import { readFile } from "fs/promises";
+import { resolve, relative } from "path";
+import { homedir } from "os";
+import { Router } from "express";
+import { requireScope } from "../../core/auth.js";
+import { createPluginErrorHandler } from "../../core/error-standard.js";
+import { ToolTags } from "../../core/tool-registry.js";
+import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import { routeTask } from "../llm-router/index.js";
 
-export const name = "code-review";
-export const version = "1.0.0";
-export const description = "Automated code review and quality checks";
+const handleError = createPluginErrorHandler("code-review");
+
+const WORKSPACE_BASE = process.env.WORKSPACE_BASE || process.env.WORKSPACE_ROOT || `${homedir()}/Projects`;
+
+function safePath(requestedPath) {
+  const resolved = resolve(requestedPath);
+  const rel      = relative(WORKSPACE_BASE, resolved);
+  if (rel.startsWith("..") || rel.includes("../")) {
+    return { valid: false, error: `Path is outside allowed workspace: ${requestedPath}` };
+  }
+  return { valid: true, path: resolved };
+}
+
+export const metadata = createMetadata({
+  name:        "code-review",
+  version:     "1.0.0",
+  description: "Automated code review: security scanning, quality checks, and LLM-powered analysis.",
+  status:      PluginStatus.STABLE,
+  riskLevel:   RiskLevel.MEDIUM,
+  capabilities: ["read"],
+  requires:    [],
+  tags:        ["code-review", "security", "quality", "llm"],
+  endpoints: [
+    { method: "GET",  path: "/code-review/health",   description: "Plugin health",                    scope: "read" },
+    { method: "POST", path: "/code-review/file",     description: "Review a single file",             scope: "read" },
+    { method: "POST", path: "/code-review/pr",       description: "Review multiple files (PR style)", scope: "read" },
+    { method: "POST", path: "/code-review/security", description: "Security-only scan of code",       scope: "read" },
+  ],
+  notes: "File paths validated against WORKSPACE_BASE. LLM review requires llm-router plugin.",
+});
 
 // Security patterns to detect
 const SECURITY_PATTERNS = [
@@ -273,54 +307,34 @@ Please provide a fix suggestion. Show the exact code change needed.`;
 export const tools = [
   {
     name: "code_review_file",
-    description: "Review a single code file",
-    parameters: {
+    description: "Review a single code file: security scan, quality checks, and LLM-powered analysis. File must be inside WORKSPACE_BASE.",
+    tags: [ToolTags.READ_ONLY, ToolTags.LOCAL_FS],
+    inputSchema: {
       type: "object",
       properties: {
-        path: {
-          type: "string",
-          description: "Path to the file to review",
-        },
-        security: {
-          type: "boolean",
-          description: "Run security scan",
-          default: true,
-        },
-        quality: {
-          type: "boolean",
-          description: "Run quality checks",
-          default: true,
-        },
-        llm: {
-          type: "boolean",
-          description: "Run LLM review",
-          default: true,
-        },
+        path:     { type: "string",  description: "Path to the file to review (must be inside WORKSPACE_BASE)" },
+        security: { type: "boolean", description: "Run security scan", default: true },
+        quality:  { type: "boolean", description: "Run quality checks", default: true },
+        llm:      { type: "boolean", description: "Run LLM-powered review (slower)", default: true },
       },
       required: ["path"],
     },
     handler: async ({ path, security, quality, llm }) => {
+      const v = safePath(path);
+      if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       try {
-        const result = await reviewFile(path, { security, quality, llm });
-        return {
-          ok: true,
-          data: result,
-        };
+        const result = await reviewFile(v.path, { security, quality, llm });
+        return { ok: true, data: result };
       } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "review_error",
-            message: error.message,
-          },
-        };
+        return { ok: false, error: { code: "review_error", message: error.message } };
       }
     },
   },
   {
     name: "code_review_pr",
-    description: "Review multiple files like a PR review",
-    parameters: {
+    description: "Review multiple files like a PR review. Returns per-file issues and a summary with severity counts.",
+    tags: [ToolTags.READ_ONLY, ToolTags.LOCAL_FS],
+    inputSchema: {
       type: "object",
       properties: {
         files: {
@@ -328,139 +342,121 @@ export const tools = [
           items: {
             type: "object",
             properties: {
-              path: { type: "string" },
+              path:   { type: "string" },
               status: { type: "string", enum: ["added", "modified", "deleted"] },
             },
           },
-          description: "Files to review",
+          description: "Files to review (each must be inside WORKSPACE_BASE)",
         },
-        context: {
-          type: "object",
-          description: "Additional context (PR description, related issues)",
-        },
+        context: { type: "object", description: "Additional context (PR description, related issues)" },
       },
       required: ["files"],
     },
     handler: async ({ files, context }) => {
+      const validated = [];
+      for (const f of files) {
+        const p = f.path || f;
+        const v = safePath(p);
+        if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
+        validated.push({ ...f, path: v.path });
+      }
       try {
-        const result = await reviewPR(files, { context });
-        return {
-          ok: true,
-          data: result,
-        };
+        const result = await reviewPR(validated, { context });
+        return { ok: true, data: result };
       } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "pr_review_error",
-            message: error.message,
-          },
-        };
+        return { ok: false, error: { code: "pr_review_error", message: error.message } };
       }
     },
   },
   {
     name: "code_review_security",
-    description: "Security-only scan of code",
-    parameters: {
+    description: "Run a fast regex-based security scan on a code snippet. Detects hardcoded secrets, SQL injection, eval, innerHTML, and more.",
+    tags: [ToolTags.READ_ONLY],
+    inputSchema: {
       type: "object",
       properties: {
-        code: {
-          type: "string",
-          description: "Code to scan",
-        },
-        filename: {
-          type: "string",
-          description: "Filename for context",
-        },
+        code:     { type: "string", description: "Code snippet to scan" },
+        filename: { type: "string", description: "Filename for context (optional)" },
       },
       required: ["code"],
     },
     handler: ({ code, filename = "unnamed" }) => {
       const issues = securityScan(code, filename);
-      return {
-        ok: true,
-        data: {
-          issues,
-          passed: issues.length === 0,
-        },
-      };
+      return { ok: true, data: { issues, passed: issues.length === 0, count: issues.length } };
     },
   },
   {
     name: "code_review_suggest_fix",
-    description: "Get AI suggestion for fixing an issue",
-    parameters: {
+    description: "Ask the LLM to suggest a fix for a specific code issue. Returns a diff-style suggestion.",
+    tags: [ToolTags.READ_ONLY, ToolTags.EXTERNAL_API],
+    inputSchema: {
       type: "object",
       properties: {
-        issue: {
-          type: "object",
-          description: "Issue details",
-        },
-        code: {
-          type: "string",
-          description: "Code snippet with the issue",
-        },
+        issue: { type: "object", description: "Issue details (id, severity, message)" },
+        code:  { type: "string", description: "Code snippet containing the issue" },
       },
       required: ["issue", "code"],
     },
     handler: async ({ issue, code }) => {
       try {
         const fix = await generateFix(issue, code);
-        return {
-          ok: true,
-          data: { fix },
-        };
+        return { ok: true, data: { fix } };
       } catch (error) {
-        return {
-          ok: false,
-          error: {
-            code: "fix_error",
-            message: error.message,
-          },
-        };
+        return { ok: false, error: { code: "fix_error", message: error.message } };
       }
-    },
-  },
-];
-
-// REST API Endpoints
-export const endpoints = [
-  {
-    path: "/code-review/file",
-    method: "POST",
-    handler: async (req, res) => {
-      try {
-        const result = await reviewFile(req.body.path, req.body.options);
-        res.json({ ok: true, data: result });
-      } catch (error) {
-        res.status(500).json({ ok: false, error: error.message });
-      }
-    },
-  },
-  {
-    path: "/code-review/pr",
-    method: "POST",
-    handler: async (req, res) => {
-      try {
-        const result = await reviewPR(req.body.files, req.body.options);
-        res.json({ ok: true, data: result });
-      } catch (error) {
-        res.status(500).json({ ok: false, error: error.message });
-      }
-    },
-  },
-  {
-    path: "/code-review/security",
-    method: "POST",
-    handler: (req, res) => {
-      const issues = securityScan(req.body.code, req.body.filename || "unnamed");
-      res.json({ ok: true, data: { issues, passed: issues.length === 0 } });
     },
   },
 ];
 
 // Plugin registration
-export function register(app, dependencies) {
-  console.log("[Code Review] Registered with security patterns:", SECURITY_PATTERNS.length);
+export function register(app) {
+  const router = Router();
+
+  router.get("/health", (_req, res) => {
+    res.json({ ok: true, plugin: "code-review", version: "1.0.0", securityPatterns: SECURITY_PATTERNS.length, qualityRules: QUALITY_RULES.length });
+  });
+
+  router.post("/file", requireScope("read"), async (req, res) => {
+    const v = safePath(req.body.path);
+    if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
+    try {
+      const result = await reviewFile(v.path, req.body.options || {});
+      res.json({ ok: true, data: result });
+    } catch (err) {
+      res.status(500).json(handleError(err, "file"));
+    }
+  });
+
+  router.post("/pr", requireScope("read"), async (req, res) => {
+    const files = req.body.files;
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ ok: false, error: { code: "missing_files", message: "files array required" } });
+    }
+    const validated = [];
+    for (const f of files) {
+      const p = f.path || f;
+      const v = safePath(p);
+      if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
+      validated.push({ ...f, path: v.path });
+    }
+    try {
+      const result = await reviewPR(validated, req.body.options || {});
+      res.json({ ok: true, data: result });
+    } catch (err) {
+      res.status(500).json(handleError(err, "pr"));
+    }
+  });
+
+  router.post("/security", requireScope("read"), (req, res) => {
+    try {
+      const { code, filename = "unnamed" } = req.body;
+      if (!code) return res.status(400).json({ ok: false, error: { code: "missing_code", message: "code is required" } });
+      const issues = securityScan(code, filename);
+      res.json({ ok: true, data: { issues, passed: issues.length === 0, count: issues.length } });
+    } catch (err) {
+      res.status(500).json(handleError(err, "security"));
+    }
+  });
+
+  app.use("/code-review", router);
 }

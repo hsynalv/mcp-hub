@@ -1,132 +1,91 @@
 # Plugin Maturity Matrix
 
-This document provides a comprehensive overview of all MCP Hub plugins and their production readiness.
+Comprehensive overview of all MCP Hub plugins and their production readiness.
 
-## Overview
+_Last updated: 2026-03-11_
 
-| Plugin | Description | Status | Auth | Tests | Docs |
-|--------|-------------|--------|------|-------|------|
-| github | GitHub repo read/analyze | 🟢 stable | yes | yes | yes |
-| notion | Notion pages/databases | 🟢 stable | yes | yes | yes |
-| llm-router | LLM routing & cost tracking | 🟢 stable | no | yes | yes |
-| slack | Slack messaging/bots | 🟢 stable | yes | yes | yes |
-| git | Git operations | 🟢 stable | no | yes | yes |
-| database | MSSQL/PostgreSQL/MongoDB | � stable | no | yes | yes |
-| file-storage | S3/GDrive/local files | � stable | no | yes | yes |
-| rag | Document indexing/search | � stable | no | yes | yes |
-| http | Controlled outbound HTTP | � stable | no | yes | yes |
-| policy | Policy engine/guardrails | � stable | no | yes | yes |
-| secrets | Secret reference system | � stable | no | yes | yes |
-| workspace | File operations | � stable | no | yes | yes |
-| observability | Health/metrics/dashboard | 🟡 beta | no | no | yes |
-| n8n | n8n workflow management | 🟡 beta | yes | no | yes |
-| docker | Container management | 🟡 beta | yes | no | yes |
-| shell | Shell command execution | � stable | yes | yes | yes |
-| email | SMTP/IMAP email | 🔴 experimental | yes | no | yes |
-| openapi | OpenAPI spec analyzer | 🔴 experimental | no | no | yes |
-| brain | Knowledge memory | 🔴 experimental | no | no | yes |
-| code-review | Automated code review | 🔴 experimental | no | no | yes |
-| file-watcher | File change monitoring | 🔴 experimental | no | no | yes |
-| github-pattern-analyzer | Pattern detection | 🔴 experimental | no | no | yes |
-| image-gen | Image generation | 🔴 experimental | yes | no | yes |
-| local-sidecar | Local service bridge | 🔴 experimental | no | no | yes |
-| marketplace | Plugin marketplace | 🔴 experimental | no | no | yes |
-| n8n-credentials | n8n credential mgmt | 🔴 experimental | yes | no | yes |
-| n8n-workflows | n8n workflow templates | 🔴 experimental | no | no | yes |
-| notifications | Multi-channel notifications | 🔴 experimental | yes | no | yes |
-| project-orchestrator | Project automation | 🔴 experimental | no | no | yes |
-| projects | Project management | 🔴 experimental | no | no | yes |
-| prompt-registry | Prompt templates | 🔴 experimental | no | no | yes |
-| repo-intelligence | Repo analysis | 🔴 experimental | no | no | yes |
-| tech-detector | Technology detection | 🔴 experimental | no | no | yes |
-| tests | Test runner plugin | 🔴 experimental | no | no | yes |
-| video-gen | Video generation | 🔴 experimental | yes | no | yes |
+---
+
+## Phase 1 — Core AI Platform (11/11 complete ✅)
+
+| Plugin | Description | Status | Auth | MCP Tools | Risk |
+|--------|-------------|--------|------|-----------|------|
+| llm-router | Multi-provider LLM routing (OpenAI, Anthropic, Google, Mistral, Ollama, vLLM) | 🟢 stable | ✅ | ✅ | LOW |
+| notion | Notion pages, databases, templates, pagination | 🟢 stable | ✅ | ✅ | LOW |
+| github | GitHub repos, PRs, branches, issues, comments | 🟢 stable | ✅ | ✅ | MEDIUM |
+| database | SQL + MongoDB with safety controls, query timeout | 🟢 stable | ✅ | ✅ | HIGH |
+| shell | Shell execution with allowlist and dangerous pattern blocking | 🟢 stable | ✅ | ✅ | HIGH |
+| rag | Document indexing + semantic search (OpenAI embeddings) | 🟢 stable | ✅ | ✅ | LOW |
+| brain | Personal AI memory: episodic, projects, habits, FS awareness | 🟢 stable | ✅ | ✅ (16) | MEDIUM |
+| github-pattern-analyzer | Coding pattern learning from repos, LLM analysis, Redis cache | 🟢 stable | ✅ | ✅ | LOW |
+| n8n | n8n workflow create/update/execute, catalog, deployment | 🟢 stable | ✅ | ✅ (9) | MEDIUM |
+| repo-intelligence | Git commit/structure analysis, AI summaries, path safety | 🟢 stable | ✅ | ✅ | LOW |
+| project-orchestrator | AI project planning, Notion+GitHub integration, Redis state | 🟢 stable | ✅ | ✅ | HIGH |
+
+---
+
+## Phase 2 — Infrastructure & Tooling (9/9 complete ✅)
+
+| Plugin | Description | Status | Auth | MCP Tools | Risk |
+|--------|-------------|--------|------|-----------|------|
+| http | SSRF-protected outbound HTTP, allowlist, rate limit, cache | 🟢 stable | ✅ | ✅ (3) | HIGH |
+| secrets | `{{secret:NAME}}` reference system — values never exposed | 🟢 stable | ✅ | ✅ (4) | HIGH |
+| workspace | Safe file CRUD (WORKSPACE_ROOT isolation, path traversal blocked) | 🟢 stable | ✅ | ✅ (8) | MEDIUM |
+| git | Full git ops: status/diff/add/commit/push/pull/stash/branch | 🟢 stable | ✅ | ✅ (11) | HIGH |
+| prompt-registry | Centralized prompt template management with versioning | 🟡 beta | ⚠️ partial | ❌ | LOW |
+| observability | Aggregate health, Prometheus metrics, error log surfacing, web dashboard | 🟢 stable | ✅ | ✅ (3) | LOW |
+| tech-detector | Detect 50+ languages/frameworks/infra from project files, recommend & compare | 🟢 stable | ✅ | ✅ (3) | LOW |
+| n8n-workflows | n8n workflow CRUD, search, activate/deactivate, disk cache | 🟢 stable | ✅ | ✅ (5) | HIGH |
+| code-review | Regex security scan + quality checks + LLM PR review | 🟢 stable | ✅ | ✅ (4) | MEDIUM |
+
+---
+
+## Other Plugins (outside current roadmap)
+
+| Plugin | Description | Status |
+|--------|-------------|--------|
+| policy | Policy engine and approval guardrails | 🟢 stable |
+| file-storage | S3/GDrive/local file operations | 🟡 beta |
+| docker | Container lifecycle management | 🔴 experimental |
+| email | SMTP/IMAP email send/receive | 🔴 experimental |
+| slack | Slack messaging and bots | 🔴 experimental |
+| image-gen | AI image generation | 🔴 experimental |
+| video-gen | AI video generation | 🔴 experimental |
+| openapi | OpenAPI spec analysis | 🔴 experimental |
+| n8n-credentials | n8n credential store management | 🔴 experimental |
+| marketplace | Plugin marketplace | 🔴 experimental |
+| notifications | Multi-channel notifications | 🔴 experimental |
+| local-sidecar | Local service bridge | 🔴 experimental |
+| projects | Project management | 🔴 experimental |
+| file-watcher | File change monitoring | 🔴 experimental |
+
+---
 
 ## Status Legend
 
-- 🟢 **stable** - Production ready, well tested, documented
-- 🟡 **beta** - Functional but may have edge cases
-- 🔴 **experimental** - Early development, use with caution
+- 🟢 **stable** — Production ready, auth enforced, MCP tools exposed
+- 🟡 **beta** — Functional but has known issues in queue
+- 🔴 **experimental** — Early development, use with caution
 
-## Plugin Categories
+## Risk Levels
 
-### Core / Production Ready (🟢 stable)
+- **LOW** — Read-only or sandboxed operations
+- **MEDIUM** — Write operations with validation
+- **HIGH** — System-level writes, external API calls, destructive ops
 
-These plugins have comprehensive documentation, tests, and metadata:
+## Standardization Checklist
 
-| Plugin | Use Case |
-|--------|----------|
-| github | Repository analysis, PR management |
-| notion | Knowledge base integration |
-| llm-router | Cost-effective LLM routing |
-| slack | Team notifications |
-| git | Repository operations |
-| database | Multi-database queries |
-| file-storage | Cloud/local file operations |
-| rag | Document search |
-| http | Controlled API calls |
-| policy | Guardrails & approval flows |
-| secrets | Secure credential management |
-| workspace | Project file operations |
-| shell | Command execution (sandboxed) |
+Every stable plugin passes:
 
-### Beta (🟡 beta)
-
-Functional plugins needing more testing or documentation:
-
-| Plugin | Use Case |
-|--------|----------|
-| observability | Monitoring & metrics |
-| n8n | Workflow automation |
-| docker | Container management |
-
-### Experimental (🔴 experimental)
-
-Early stage plugins:
-
-| Plugin | Use Case |
-|--------|----------|
-| shell | Command execution (dangerous) |
-| email | Email automation |
-| openapi | API spec analysis |
-| image-gen | AI image generation |
-| video-gen | AI video generation |
-| brain | Knowledge memory |
-| code-review | Automated reviews |
-| All others | Various specialized functions |
-
-## Authentication Requirements
-
-Plugins marked **yes** in the Auth column require environment variables to be set:
-
-- **github** - `GITHUB_TOKEN`
-- **notion** - `NOTION_API_KEY`
-- **slack** - `SLACK_BOT_TOKEN`
-- **database** - Connection strings per DB type
-- **n8n** - `N8N_API_KEY`
-- **docker** - `DOCKER_HOST`
-- **shell** - None (but sandboxed)
-- **email** - `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`
-- **image-gen** - Provider API keys
-- **video-gen** - Provider API keys
-- **n8n-credentials** - `N8N_API_KEY`
-- **notifications** - Various service tokens
-
-## Using This Matrix
-
-When selecting plugins for production:
-
-1. **Start with stable plugins** - They have the most testing
-2. **Check auth requirements** - Ensure env vars are configured
-3. **Review docs** - Each plugin has a README with examples
-4. **Test beta plugins** - In staging before production
-5. **Avoid experimental** - Unless you need specific features
-
-## Contributing
-
-To improve a plugin's maturity status:
-
-1. Add `plugin.meta.json` following the schema
-2. Create comprehensive tests
-3. Update README with examples
-4. Submit PR for review
+```
+✅ createMetadata() — PluginStatus, RiskLevel, endpoints[]
+✅ createPluginErrorHandler(pluginName)
+✅ auditLog() — all write operations (REST + MCP)
+✅ requireScope("read"|"write") — all REST routes
+✅ ToolTags correctly assigned on each MCP tool
+✅ inputSchema (not parameters) on MCP tools
+✅ register(app) actually mounts routes
+✅ No self-HTTP calls — uses callTool() or direct imports
+✅ GET /<plugin>/health endpoint
+✅ At least 3 MCP tools
+```
