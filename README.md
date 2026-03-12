@@ -67,7 +67,7 @@ Aynı Bearer token (read scope) ile erişilir.
 | secrets | 🟢 stable | ✅ | ✅ (4) | `{{secret:NAME}}` ref system |
 | workspace | 🟢 stable | ✅ | ✅ (8) | Safe file CRUD, path traversal blocked |
 | git | 🟢 stable | ✅ | ✅ (11) | Full git ops, path validation |
-| prompt-registry | 🟡 beta | ⚠️ partial | ❌ | Sync I/O, race conditions |
+| prompt-registry | 🟢 stable | ✅ | ✅ (9) | Section-based composition, {{slots}}, version history |
 | observability | 🟢 stable | ✅ | ✅ (3) | Aggregate health, Prometheus, error log |
 | tech-detector | 🟢 stable | ✅ | ✅ (3) | ~50 tech patterns, path validation |
 | n8n-workflows | 🟢 stable | ✅ | ✅ (5) | Cached list, audit, graceful n8n-credentials |

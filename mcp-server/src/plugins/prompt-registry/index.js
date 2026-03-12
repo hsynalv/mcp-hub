@@ -12,7 +12,7 @@ import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { auditLog, generateCorrelationId } from "../../core/audit/index.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
-import { loadPrompts, savePrompts } from "./prompts.store.js";
+import { loadPrompts, withStore } from "./prompts.store.js";
 import { resolveSlots } from "./prompts.slots.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -222,35 +222,39 @@ export const tools = [
     },
     handler: async (args, ctx = {}) => {
       const { name, description, content, sections: sec, mode = "agent", contextSlots = [], toolsBundle = [], tags = [], isDefault = false, explanation } = args;
-      const data = await loadPrompts();
-      if (data.prompts.some((p) => p.name === name)) {
+      const created = await withStore((store) => {
+        if (store.prompts.some((p) => p.name === name)) {
+          return { data: store, result: null };
+        }
+        const id = generateId();
+        const now = new Date().toISOString();
+        const sections = sec && typeof sec === "object" && Object.keys(sec).length > 0
+          ? sec
+          : (content != null ? { identity: content } : { identity: "" });
+        const prompt = {
+          id,
+          name,
+          description,
+          mode,
+          contextSlots,
+          toolsBundle,
+          tags,
+          isDefault,
+          version: 1,
+          sections,
+          createdAt: now,
+          updatedAt: now,
+        };
+        store.prompts.push(prompt);
+        if (!store.versions[id]) store.versions[id] = {};
+        store.versions[id][1] = { ...prompt };
+        return { data: store, result: { id, name, version: 1 } };
+      });
+      if (!created) {
         return { ok: false, error: { code: "duplicate_name", message: `Prompt '${name}' already exists` } };
       }
-      const id = generateId();
-      const now = new Date().toISOString();
-      const sections = sec && typeof sec === "object" && Object.keys(sec).length > 0
-        ? sec
-        : (content != null ? { identity: content } : { identity: "" });
-      const prompt = {
-        id,
-        name,
-        description,
-        mode,
-        contextSlots,
-        toolsBundle,
-        tags,
-        isDefault,
-        version: 1,
-        sections,
-        createdAt: now,
-        updatedAt: now,
-      };
-      data.prompts.push(prompt);
-      if (!data.versions[id]) data.versions[id] = {};
-      data.versions[id][1] = { ...prompt };
-      await savePrompts(data);
-      await audit("create", ctx.actor, { promptId: id, name, ...(explanation && { reason: explanation }) }, true);
-      return { ok: true, data: { id, name, version: 1 } };
+      await audit("create", ctx.actor, { promptId: created.id, name, ...(explanation && { reason: explanation }) }, true);
+      return { ok: true, data: created };
     },
   },
 
@@ -277,36 +281,39 @@ export const tools = [
     },
     handler: async (args, ctx = {}) => {
       const { id, name, description, content, sections: sec, mode, contextSlots, toolsBundle, tags, isDefault, explanation } = args;
-      const data = await loadPrompts();
-      const idx = data.prompts.findIndex((p) => p.id === id);
-      if (idx === -1) return { ok: false, error: { code: "not_found", message: `Prompt ${id} not found` } };
-      const existing = data.prompts[idx];
-      if (name && name !== existing.name && data.prompts.some((p) => p.name === name)) {
-        return { ok: false, error: { code: "duplicate_name", message: `Prompt '${name}' already exists` } };
-      }
-      const newVersion = existing.version + 1;
-      const mergedSections = { ...(existing.sections || {}) };
-      if (content !== undefined) mergedSections.identity = content;
-      if (sec && typeof sec === "object") Object.assign(mergedSections, sec);
-      const updated = {
-        ...existing,
-        name: name ?? existing.name,
-        description: description ?? existing.description,
-        mode: mode ?? existing.mode ?? "agent",
-        contextSlots: contextSlots ?? existing.contextSlots ?? [],
-        toolsBundle: toolsBundle ?? existing.toolsBundle ?? [],
-        tags: tags ?? existing.tags ?? [],
-        isDefault: isDefault !== undefined ? isDefault : existing.isDefault,
-        sections: mergedSections,
-        version: newVersion,
-        updatedAt: new Date().toISOString(),
-      };
-      data.prompts[idx] = updated;
-      data.versions[id] = data.versions[id] || {};
-      data.versions[id][newVersion] = { ...updated };
-      await savePrompts(data);
-      await audit("update", ctx.actor, { promptId: id, newVersion, ...(explanation && { reason: explanation }) }, true);
-      return { ok: true, data: { id, name: updated.name, previousVersion: existing.version, newVersion } };
+      const updated = await withStore((store) => {
+        const idx = store.prompts.findIndex((p) => p.id === id);
+        if (idx === -1) return { data: store, result: { error: "not_found" } };
+        const existing = store.prompts[idx];
+        if (name && name !== existing.name && store.prompts.some((p) => p.name === name)) {
+          return { data: store, result: { error: "duplicate_name", name } };
+        }
+        const newVersion = existing.version + 1;
+        const mergedSections = { ...(existing.sections || {}) };
+        if (content !== undefined) mergedSections.identity = content;
+        if (sec && typeof sec === "object") Object.assign(mergedSections, sec);
+        const prompt = {
+          ...existing,
+          name: name ?? existing.name,
+          description: description ?? existing.description,
+          mode: mode ?? existing.mode ?? "agent",
+          contextSlots: contextSlots ?? existing.contextSlots ?? [],
+          toolsBundle: toolsBundle ?? existing.toolsBundle ?? [],
+          tags: tags ?? existing.tags ?? [],
+          isDefault: isDefault !== undefined ? isDefault : existing.isDefault,
+          sections: mergedSections,
+          version: newVersion,
+          updatedAt: new Date().toISOString(),
+        };
+        store.prompts[idx] = prompt;
+        store.versions[id] = store.versions[id] || {};
+        store.versions[id][newVersion] = { ...prompt };
+        return { data: store, result: { id, name: prompt.name, previousVersion: existing.version, newVersion } };
+      });
+      if (updated.error === "not_found") return { ok: false, error: { code: "not_found", message: `Prompt ${id} not found` } };
+      if (updated.error === "duplicate_name") return { ok: false, error: { code: "duplicate_name", message: `Prompt '${updated.name}' already exists` } };
+      await audit("update", ctx.actor, { promptId: id, newVersion: updated.newVersion, ...(explanation && { reason: explanation }) }, true);
+      return { ok: true, data: updated };
     },
   },
 
@@ -323,12 +330,14 @@ export const tools = [
       required: ["id"],
     },
     handler: async ({ id, explanation }, ctx = {}) => {
-      const data = await loadPrompts();
-      const idx = data.prompts.findIndex((p) => p.id === id);
-      if (idx === -1) return { ok: false, error: { code: "not_found", message: `Prompt ${id} not found` } };
-      const deleted = data.prompts.splice(idx, 1)[0];
-      delete data.versions[id];
-      await savePrompts(data);
+      const deleted = await withStore((store) => {
+        const idx = store.prompts.findIndex((p) => p.id === id);
+        if (idx === -1) return { data: store, result: null };
+        const [removed] = store.prompts.splice(idx, 1);
+        delete store.versions[id];
+        return { data: store, result: { id, name: removed.name } };
+      });
+      if (!deleted) return { ok: false, error: { code: "not_found", message: `Prompt ${id} not found` } };
       await audit("delete", ctx.actor, { promptId: id, name: deleted.name, ...(explanation && { reason: explanation }) }, true);
       return { ok: true, data: { id, name: deleted.name, deleted: true } };
     },
@@ -375,20 +384,21 @@ export const tools = [
       required: ["id", "version"],
     },
     handler: async ({ id, version, explanation }, ctx = {}) => {
-      const data = await loadPrompts();
-      const idx = data.prompts.findIndex((p) => p.id === id);
-      if (idx === -1) return { ok: false, error: { code: "not_found", message: `Prompt ${id} not found` } };
-      const vMap = data.versions[id];
-      if (!vMap || !vMap[version]) {
-        return { ok: false, error: { code: "version_not_found", message: `Version ${version} not found` } };
-      }
-      const newVersion = data.prompts[idx].version + 1;
-      const restored = { ...vMap[version], version: newVersion, updatedAt: new Date().toISOString() };
-      data.prompts[idx] = restored;
-      vMap[newVersion] = { ...restored };
-      await savePrompts(data);
-      await audit("restore", ctx.actor, { promptId: id, fromVersion: version, newVersion, ...(explanation && { reason: explanation }) }, true);
-      return { ok: true, data: { id, restoredFrom: version, newVersion } };
+      const restored = await withStore((store) => {
+        const idx = store.prompts.findIndex((p) => p.id === id);
+        if (idx === -1) return { data: store, result: { error: "not_found" } };
+        const vMap = store.versions[id];
+        if (!vMap || !vMap[version]) return { data: store, result: { error: "version_not_found" } };
+        const newVersion = store.prompts[idx].version + 1;
+        const prompt = { ...vMap[version], version: newVersion, updatedAt: new Date().toISOString() };
+        store.prompts[idx] = prompt;
+        vMap[newVersion] = { ...prompt };
+        return { data: store, result: { id, restoredFrom: version, newVersion } };
+      });
+      if (restored.error === "not_found") return { ok: false, error: { code: "not_found", message: `Prompt ${id} not found` } };
+      if (restored.error === "version_not_found") return { ok: false, error: { code: "version_not_found", message: `Version ${version} not found` } };
+      await audit("restore", ctx.actor, { promptId: id, fromVersion: version, newVersion: restored.newVersion, ...(explanation && { reason: explanation }) }, true);
+      return { ok: true, data: restored };
     },
   },
 ];

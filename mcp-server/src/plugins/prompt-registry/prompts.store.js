@@ -1,10 +1,11 @@
 /**
- * Async prompt store with single-writer queue to prevent race conditions.
- * Uses fs/promises. Supports v2 schema (sections) and migrates v1 (content) on load.
+ * Async prompt store with a promise-based mutex that covers the full
+ * load → modify → save cycle, preventing read-modify-write race conditions.
+ * Uses fs/promises exclusively (no sync fs calls).
+ * Supports v2 schema (sections) and migrates v1 (content) on load.
  */
 
-import { readFile, writeFile, mkdir } from "fs/promises";
-import { existsSync } from "fs";
+import { readFile, writeFile, mkdir, access } from "fs/promises";
 import { join } from "path";
 
 const DEFAULT_DIR = process.env.CATALOG_CACHE_DIR || "./cache";
@@ -14,16 +15,16 @@ let storePath = null;
 
 function getStorePath() {
   if (storePath) return storePath;
-  const dir = DEFAULT_DIR;
-  storePath = join(dir, FILENAME);
+  storePath = join(DEFAULT_DIR, FILENAME);
   return storePath;
 }
 
-/** Ensure cache directory exists */
+/** Ensure cache directory exists (fully async) */
 async function ensureDir() {
-  const dir = DEFAULT_DIR;
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
+  try {
+    await access(DEFAULT_DIR);
+  } catch {
+    await mkdir(DEFAULT_DIR, { recursive: true });
   }
 }
 
@@ -57,40 +58,65 @@ function migrateStore(data) {
   return { prompts, versions };
 }
 
-let writeQueue = Promise.resolve();
+// ─── Mutex (covers full load → modify → save cycle) ─────────────────────────
+
+let storeLock = Promise.resolve();
 
 /**
- * Load store from disk (async). Migrates v1 to v2 on read.
- * @returns {Promise<{ prompts: Array, versions: Object }>}
+ * Serialize any async operation against the store.
+ * Failures do NOT poison the lock — future callers always get a chance to run.
  */
-export async function loadPrompts() {
+function withLock(fn) {
+  const next = storeLock.then(fn);
+  storeLock = next.catch(() => {});
+  return next;
+}
+
+// ─── Internal (unlocked) helpers ─────────────────────────────────────────────
+
+async function readStoreRaw() {
   await ensureDir();
   const p = getStorePath();
-  if (!existsSync(p)) {
-    return { prompts: [], versions: {} };
-  }
   try {
     const raw = await readFile(p, "utf8");
-    const data = JSON.parse(raw);
-    return migrateStore(data);
+    return migrateStore(JSON.parse(raw));
   } catch (err) {
     if (err.code === "ENOENT") return { prompts: [], versions: {} };
     throw err;
   }
 }
 
-/**
- * Save store to disk. Queued to avoid concurrent writes.
- * @param {{ prompts: Array, versions: Object }} data
- */
-export async function savePrompts(data) {
+async function writeStoreRaw(data) {
   await ensureDir();
-  const p = getStorePath();
-  writeQueue = writeQueue
-    .then(() => writeFile(p, JSON.stringify(data, null, 2), "utf8"))
-    .catch((err) => {
-      console.error("[prompt-registry] savePrompts error:", err.message);
-      throw err;
-    });
-  await writeQueue;
+  await writeFile(getStorePath(), JSON.stringify(data, null, 2), "utf8");
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Load store from disk (async, serialized under lock for consistency).
+ * Safe to call from read-only paths; does not modify on-disk state.
+ * @returns {Promise<{ prompts: Array, versions: Object }>}
+ */
+export function loadPrompts() {
+  return withLock(readStoreRaw);
+}
+
+/**
+ * Atomically load, transform, and save the store.
+ * The callback receives the current store data and must return
+ * `{ data, result }` — `data` is written to disk, `result` is returned to the caller.
+ * All concurrent calls are fully serialized so no read-modify-write races occur.
+ *
+ * @template T
+ * @param {(store: { prompts: Array, versions: Object }) => Promise<{ data: object, result: T }>} fn
+ * @returns {Promise<T>}
+ */
+export function withStore(fn) {
+  return withLock(async () => {
+    const store = await readStoreRaw();
+    const { data, result } = await fn(store);
+    await writeStoreRaw(data);
+    return result;
+  });
 }

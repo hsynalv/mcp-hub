@@ -35,7 +35,7 @@ Bu 20 plugin = “eksiksiz AI geliştirme platformu” hedefi. Repoda toplam **3
 
 | Plugin | Yapılan | createMetadata | Explanation + audit | routeTask güvenli | Not |
 |--------|---------|----------------|--------------------|-------------------|-----|
-| **prompt-registry** | v2: sections, slots, render, async store, migration | ✅ | ✅ (create/update/delete/restore) | — | Çekirdek agent prompt altyapısı |
+| **prompt-registry** | v2: sections, slots, render, async store, migration; mutex ile race condition giderildi, existsSync → async access() | ✅ | ✅ (create/update/delete/restore) | — | Çekirdek agent prompt altyapısı |
 | **shell** | Session’lar, session_id, is_background, shell_session_* | ✅ | ✅ (zaten vardı) | — | Manus pattern |
 | **brain** | brain_think, includeThoughts, llmResult fix | ✅ | — (think private) | ✅ content | Devin pattern |
 | **repo-intelligence** | getSimilarCommits, repo_similar_commits, REST | ✅ | — | ✅ | Augment pattern |
@@ -143,6 +143,8 @@ Not: “Var” = ilgili kategoride en az bir örnek var; “—” = yok veya il
 - **Zayıf / Risk:**  
   - 20’nin içinde dokunulmayan 12 plugin’de (ve 20 dışındakilerde) routeTask kullanan başka yer varsa `result?.content` benzeri hatalar kalabilir (şu an bilinen örnekler düzeltildi).  
   - “20 plugin” artık net: PLAN-V2 Final 20-Plugin listesi (Bölüm 0); docker, slack, marketplace vb. bu 20’de yok.
+
+> **Güncelleme (2026-03-12):** `prompt-registry` v2.0.0 tamamen stable hale getirildi. `existsSync` sync çağrısı `fs/promises.access()` ile değiştirildi; read-modify-write race condition `withStore(fn)` mutex pattern’i (tüm write handler’lar atomik) ile giderildi. 9 MCP tool’u aktif. Önceki “beta / race condition / sync I/O” notları artık geçersiz.
 
 ---
 
