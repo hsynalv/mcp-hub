@@ -28,6 +28,19 @@ Sunucu çalışırken web panel:
 
 Auth etkinse panel, 6 haneli kısa ömürlü bir UI kodu ile `read` scope yetkisi alabilir (localhost üzerinden `POST /ui/token`). Detaylar: `mcp-server/README.md`.
 
+## Admin Panel (/admin)
+
+20 plugin (PLAN-V2) yönetimi, detaylı loglar ve plugin kontrolü:
+
+`http://localhost:8787/admin`
+
+- **20 Plugins:** PLAN-V2 listesi, katman (AI Zeka / Kod & Git / Proje / Altyapı), yüklü mü, tool sayısı, health/audit linkleri.
+- **İşlem audit:** Core audit kayıtları (plugin, işlem, actor, izin, süre); plugin/operation filtre, satıra tıklayınca detay JSON.
+- **İstek logu:** HTTP istek logu (method, path, plugin, status, süre).
+- **Jobs:** Job istatistikleri ve son job listesi.
+
+Aynı Bearer token (read scope) ile erişilir.
+
 ## Plugin Maturity Matrix
 
 ### Phase 1 — Core AI Platform (11 plugins ✅)

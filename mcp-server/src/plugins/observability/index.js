@@ -218,32 +218,34 @@ export function register(app) {
   });
 
   /**
-   * GET /observability/dashboard
-   * Web-based monitoring dashboard
+   * GET /observability/dashboard — static HTML (no auth so page loads; API calls from page use Bearer)
    */
-  router.get("/dashboard", requireScope("read"), (_req, res) => {
+  router.get("/dashboard", (_req, res) => {
     const dashboardPath = join(__dirname, "dashboard", "index.html");
     if (!existsSync(dashboardPath)) {
       return res.status(404).json({ ok: false, error: "Dashboard not found" });
     }
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(dashboardPath);
   });
 
-  router.get("/dashboard/styles.css", requireScope("read"), (_req, res) => {
+  router.get("/dashboard/styles.css", (_req, res) => {
     const cssPath = join(__dirname, "dashboard", "styles.css");
     if (!existsSync(cssPath)) {
       return res.status(404).json({ ok: false, error: "CSS not found" });
     }
     res.setHeader("Content-Type", "text/css");
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(cssPath);
   });
 
-  router.get("/dashboard/app.js", requireScope("read"), (_req, res) => {
+  router.get("/dashboard/app.js", (_req, res) => {
     const jsPath = join(__dirname, "dashboard", "app.js");
     if (!existsSync(jsPath)) {
       return res.status(404).json({ ok: false, error: "JS not found" });
     }
     res.setHeader("Content-Type", "application/javascript");
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(jsPath);
   });
 

@@ -25,7 +25,7 @@
             <div class="hidden md:flex items-center gap-2">
               <input id="apiKeyInput" type="password" placeholder="UI code / API key" class="w-56 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-700" />
               <button id="saveKeyBtn" class="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm font-medium hover:bg-slate-900">Save</button>
-              <button id="requestTokenBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700">Request token</button>
+              <button id="requestTokenBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700">Token al</button>
             </div>
             <button id="refreshBtn" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium hover:bg-slate-700">Refresh</button>
           </div>
@@ -658,16 +658,23 @@
         reqBtn.addEventListener('click', async () => {
           try {
             reqBtn.disabled = true;
-            reqBtn.textContent = 'Requesting…';
+            reqBtn.textContent = 'İstek…';
             const data = await apiPost('/ui/token');
-            const exp = data?.expiresAt ? new Date(data.expiresAt).toLocaleTimeString() : 'soon';
-            if (keyInput && data?.token) keyInput.value = String(data.token);
-            setBanner('warn', `UI code generated. Click Save to use it. Expires around: ${exp}`);
+            const token = data?.token ? String(data.token) : '';
+            if (token) {
+              localStorage.setItem('mcpHubApiKey', token);
+              if (keyInput) keyInput.value = token;
+              const exp = data?.expiresAt ? new Date(data.expiresAt).toLocaleTimeString() : '';
+              setBanner('warn', `Token alındı (admin). Bildirimdeki 6 hane: ${token}. Geçerli: ~${exp}`);
+              refreshAll();
+            } else {
+              setBanner('warn', 'Token dönmedi.');
+            }
           } catch (e) {
-            setBanner('warn', `Token request failed: ${e.message}`);
+            setBanner('warn', `Token alınamadı: ${e.message}. Sadece localhost\'tan çalışır.`);
           } finally {
             reqBtn.disabled = false;
-            reqBtn.textContent = 'Request token';
+            reqBtn.textContent = 'Token al';
           }
         });
       }
@@ -678,9 +685,11 @@
           const existing = localStorage.getItem('mcpHubApiKey') || '';
           if (existing) return;
           const data = await apiPost('/ui/token');
-          if (keyInput && data?.token) {
-            keyInput.value = String(data.token);
-            setBanner('warn', 'A short-lived UI code was generated. Click Save to use it.');
+          const token = data?.token ? String(data.token) : '';
+          if (token && keyInput) {
+            localStorage.setItem('mcpHubApiKey', token);
+            keyInput.value = token;
+            setBanner('warn', '6 haneli token bildirimde. Otomatik kaydedildi (admin).');
           }
         } catch {
           // ignore

@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP-Hub Admin — 20 Plugin Yönetimi</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="min-h-screen flex flex-col">
+    <header class="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/90 backdrop-blur">
+      <div class="mx-auto max-w-7xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <a href="/admin" class="text-lg font-semibold">MCP-Hub Admin</a>
+          <span class="text-xs text-slate-500">20 plugin · loglar · kontrol</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="apiKey" type="password" placeholder="API key / 6 hane" class="w-44 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-600" />
+          <button type="button" id="saveKey" class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm hover:bg-slate-700">Kaydet</button>
+          <button type="button" id="tokenAl" class="rounded-lg bg-violet-800/60 px-3 py-1.5 text-sm font-medium hover:bg-violet-700/60">Token al</button>
+          <a href="/ui" class="rounded-lg border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">Panel</a>
+          <a href="/observability/dashboard" class="rounded-lg border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">Dashboard</a>
+          <button type="button" id="refresh" class="rounded-lg bg-emerald-800/60 px-3 py-1.5 text-sm font-medium hover:bg-emerald-700/60">Yenile</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 mx-auto w-full max-w-7xl px-4 py-6">
+      <nav class="flex flex-wrap gap-2 mb-6">
+        <button data-tab="plugins" class="adminTab rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium hover:bg-slate-700">20 Plugins</button>
+        <button data-tab="ops" class="adminTab rounded-lg bg-slate-900/60 px-4 py-2 text-sm font-medium hover:bg-slate-800">İşlem audit</button>
+        <button data-tab="requests" class="adminTab rounded-lg bg-slate-900/60 px-4 py-2 text-sm font-medium hover:bg-slate-800">İstek logu</button>
+        <button data-tab="jobs" class="adminTab rounded-lg bg-slate-900/60 px-4 py-2 text-sm font-medium hover:bg-slate-800">Jobs</button>
+        <button data-tab="about" class="adminTab rounded-lg bg-slate-900/60 px-4 py-2 text-sm font-medium hover:bg-slate-800">Hakkında</button>
+      </nav>
+
+      <div id="banner" class="hidden mb-4 rounded-lg border border-amber-700/50 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"></div>
+
+      <!-- 20 Plugins -->
+      <section id="section-plugins" class="adminSection">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">20 Plugin (PLAN-V2)</h2>
+          <div class="text-xs text-slate-400">Health: /observability/health/detailed</div>
+        </div>
+        <div id="pluginsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
+      </section>
+
+      <!-- Operation Audit -->
+      <section id="section-ops" class="adminSection hidden">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <h2 class="text-lg font-semibold">İşlem audit (core)</h2>
+          <select id="filterPlugin" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm">
+            <option value="">Tüm plugin</option>
+          </select>
+          <input id="filterOperation" type="text" placeholder="operation" class="w-32 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm placeholder:text-slate-500" />
+          <select id="limitOps" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+          <button type="button" id="loadOps" class="rounded-lg bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600">Yükle</button>
+        </div>
+        <div class="overflow-x-auto rounded-xl border border-slate-800">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-900/80">
+              <tr>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Zaman</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Plugin</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">İşlem</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Actor</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">İzin</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Başarı</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Süre</th>
+              </tr>
+            </thead>
+            <tbody id="opsTbody" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+        <p id="opsMeta" class="mt-2 text-xs text-slate-500">—</p>
+      </section>
+
+      <!-- Request Log -->
+      <section id="section-requests" class="adminSection hidden">
+        <div class="flex flex-wrap items-center gap-3 mb-4">
+          <h2 class="text-lg font-semibold">İstek logu (HTTP)</h2>
+          <select id="filterReqPlugin" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm">
+            <option value="">Tüm plugin</option>
+          </select>
+          <select id="limitReqs" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+          </select>
+          <button type="button" id="loadReqs" class="rounded-lg bg-slate-700 px-3 py-1.5 text-sm hover:bg-slate-600">Yükle</button>
+        </div>
+        <div class="overflow-x-auto rounded-xl border border-slate-800">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-900/80">
+              <tr>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Zaman</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Method</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Path</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Plugin</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Status</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-300">Süre</th>
+              </tr>
+            </thead>
+            <tbody id="reqsTbody" class="divide-y divide-slate-800"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Jobs -->
+      <section id="section-jobs" class="adminSection hidden">
+        <h2 class="text-lg font-semibold mb-4">Job kuyruğu</h2>
+        <div id="jobsStats" class="rounded-xl border border-slate-800 bg-slate-900/30 p-4 mb-4 text-sm">Yükleniyor…</div>
+        <div id="jobsList" class="rounded-xl border border-slate-800 overflow-hidden">—</div>
+      </section>
+
+      <!-- About -->
+      <section id="section-about" class="adminSection hidden">
+        <div class="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-sm space-y-2">
+          <p><strong>Admin panel</strong> — 20 plugin (PLAN-V2) yönetimi, işlem audit ve istek logları.</p>
+          <p><strong>API uçları:</strong> <code class="text-slate-300">/plugins</code>, <code class="text-slate-300">/observability/health/detailed</code>, <code class="text-slate-300">/audit/operations</code>, <code class="text-slate-300">/audit/logs</code>, <code class="text-slate-300">/jobs</code>.</p>
+          <p class="text-slate-400">Auth: Bearer token (read scope). Panel ile aynı API key kullanılır.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const PLAN_V2_PLUGINS = [
+      { name: "llm-router", layer: "AI Zeka" },
+      { name: "brain", layer: "AI Zeka" },
+      { name: "rag", layer: "AI Zeka" },
+      { name: "prompt-registry", layer: "AI Zeka" },
+      { name: "github", layer: "Kod & Git" },
+      { name: "git", layer: "Kod & Git" },
+      { name: "shell", layer: "Kod & Git" },
+      { name: "workspace", layer: "Kod & Git" },
+      { name: "code-review", layer: "Kod & Git" },
+      { name: "repo-intelligence", layer: "Kod & Git" },
+      { name: "github-pattern-analyzer", layer: "Kod & Git" },
+      { name: "project-orchestrator", layer: "Proje & Otomasyon" },
+      { name: "n8n", layer: "Proje & Otomasyon" },
+      { name: "n8n-workflows", layer: "Proje & Otomasyon" },
+      { name: "notion", layer: "Proje & Otomasyon" },
+      { name: "tech-detector", layer: "Proje & Otomasyon" },
+      { name: "database", layer: "Altyapı & Güvenlik" },
+      { name: "secrets", layer: "Altyapı & Güvenlik" },
+      { name: "http", layer: "Altyapı & Güvenlik" },
+      { name: "observability", layer: "Altyapı & Güvenlik" },
+    ];
+
+    const LAYER_COLOR = {
+      "AI Zeka": "bg-violet-900/40 border-violet-700/50 text-violet-200",
+      "Kod & Git": "bg-sky-900/40 border-sky-700/50 text-sky-200",
+      "Proje & Otomasyon": "bg-amber-900/40 border-amber-700/50 text-amber-200",
+      "Altyapı & Güvenlik": "bg-emerald-900/40 border-emerald-700/50 text-emerald-200",
+    };
+
+    function getKey() {
+      return localStorage.getItem("mcpHubApiKey") || "";
+    }
+
+    async function apiGet(path) {
+      const headers = { Accept: "application/json" };
+      if (getKey()) headers["Authorization"] = "Bearer " + getKey();
+      const res = await fetch(path, { headers });
+      const text = await res.text();
+      let json;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(text.slice(0, 200));
+      }
+      if (!res.ok) {
+        const msg = json?.error?.message || json?.message || json?.error?.code || res.statusText;
+        throw new Error(msg);
+      }
+      if (json && typeof json === "object" && json.ok === true && "data" in json) return json.data;
+      return json;
+    }
+
+    function setBanner(msg) {
+      const el = document.getElementById("banner");
+      if (!msg) {
+        el.classList.add("hidden");
+        el.textContent = "";
+        return;
+      }
+      el.classList.remove("hidden");
+      el.textContent = msg;
+    }
+
+    function renderPlugins(plugins, healthDetail) {
+      const pluginMap = {};
+      (plugins || []).forEach((p) => { pluginMap[p.name] = p; });
+      const healthByPlugin = {};
+      (healthDetail?.plugins || []).forEach((p) => { healthByPlugin[p.name] = p; });
+
+      const grid = document.getElementById("pluginsGrid");
+      grid.innerHTML = "";
+
+      for (const def of PLAN_V2_PLUGINS) {
+        const p = pluginMap[def.name];
+        const h = healthByPlugin[def.name];
+        const loaded = !!p;
+        const status = h?.status || (loaded ? "loaded" : "—");
+        const toolsCount = (p?.tools || []).length;
+        const layerCls = LAYER_COLOR[def.layer] || "bg-slate-800 text-slate-300";
+
+        const card = document.createElement("div");
+        card.className = "rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col gap-2";
+        card.innerHTML = `
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="font-semibold text-sm">${escapeHtml(def.name)}</div>
+              <span class="inline-block mt-1 rounded border px-2 py-0.5 text-[10px] ${layerCls}">${escapeHtml(def.layer)}</span>
+            </div>
+            <div class="text-right text-xs">
+              <div class="${loaded ? "text-emerald-400" : "text-slate-500"}">${loaded ? "yüklü" : "yok"}</div>
+              <div class="text-slate-400">${toolsCount} tool</div>
+            </div>
+          </div>
+          <div class="text-xs text-slate-400">${escapeHtml(p?.version || "—")} · ${escapeHtml(String(status))}</div>
+          <div class="flex flex-wrap gap-1 mt-1">
+            ${h ? `<a href="/observability/health/detailed" class="text-[11px] text-sky-400 hover:underline">Health</a>` : ""}
+            ${["shell","workspace","http","database","rag","secrets","llm-router","file-storage","git"].includes(def.name) ? `<a href="/${def.name}/audit" class="text-[11px] text-sky-400 hover:underline">Audit</a>` : ""}
+          </div>
+        `;
+        grid.appendChild(card);
+      }
+    }
+
+    function renderOps(entries) {
+      const tbody = document.getElementById("opsTbody");
+      tbody.innerHTML = "";
+      if (!entries || entries.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='7' class='px-3 py-4 text-slate-500 text-center'>Kayıt yok</td></tr>";
+        document.getElementById("opsMeta").textContent = "0 kayıt";
+        return;
+      }
+      for (const e of entries) {
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-slate-900/50 cursor-pointer";
+        const time = e.timestamp ? new Date(e.timestamp).toLocaleString("tr-TR") : "—";
+        tr.innerHTML = `
+          <td class="px-3 py-2 text-slate-300">${escapeHtml(time)}</td>
+          <td class="px-3 py-2 font-medium">${escapeHtml(e.plugin || "—")}</td>
+          <td class="px-3 py-2">${escapeHtml(e.operation || "—")}</td>
+          <td class="px-3 py-2 text-slate-400">${escapeHtml((e.actor || "—").slice(0, 20))}</td>
+          <td class="px-3 py-2">${e.allowed ? "<span class='text-emerald-400'>evet</span>" : "<span class='text-rose-400'>hayır</span>"}</td>
+          <td class="px-3 py-2">${e.success ? "<span class='text-emerald-400'>evet</span>" : "<span class='text-rose-400'>hayır</span>"}</td>
+          <td class="px-3 py-2 text-slate-400">${e.durationMs != null ? e.durationMs + " ms" : "—"}</td>
+        `;
+        tr.addEventListener("click", () => {
+          const next = tr.nextElementSibling;
+          if (next && next.dataset.detail === "1") {
+            next.remove();
+            return;
+          }
+          const detail = document.createElement("tr");
+          detail.dataset.detail = "1";
+          detail.className = "bg-slate-900/80";
+          const td = document.createElement("td");
+          td.colSpan = 7;
+          td.className = "px-3 py-2";
+          td.innerHTML = "<pre class='text-xs text-slate-300 overflow-auto max-h-48'>" + escapeHtml(JSON.stringify(e, null, 2)) + "</pre>";
+          detail.appendChild(td);
+          tr.after(detail);
+        });
+        tbody.appendChild(tr);
+      }
+      document.getElementById("opsMeta").textContent = entries.length + " kayıt";
+    }
+
+    function renderReqs(logs) {
+      const tbody = document.getElementById("reqsTbody");
+      tbody.innerHTML = "";
+      if (!logs || logs.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='6' class='px-3 py-4 text-slate-500 text-center'>Kayıt yok</td></tr>";
+        return;
+      }
+      for (const e of logs) {
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-slate-900/50";
+        const time = e.timestamp ? new Date(e.timestamp).toLocaleString("tr-TR") : "—";
+        const statusCls = e.status === "success" ? "text-emerald-400" : "text-rose-400";
+        tr.innerHTML = `
+          <td class="px-3 py-2 text-slate-300">${escapeHtml(time)}</td>
+          <td class="px-3 py-2 font-mono text-xs">${escapeHtml(e.method || "—")}</td>
+          <td class="px-3 py-2 text-slate-300 truncate max-w-[200px]" title="${escapeHtml(e.path || "")}">${escapeHtml(e.path || "—")}</td>
+          <td class="px-3 py-2">${escapeHtml(e.plugin || "—")}</td>
+          <td class="px-3 py-2 ${statusCls}">${escapeHtml(e.status || "—")} ${e.statusCode || ""}</td>
+          <td class="px-3 py-2 text-slate-400">${e.duration != null ? e.duration + " ms" : "—"}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function renderJobs(stats, list) {
+      const statsEl = document.getElementById("jobsStats");
+      const listEl = document.getElementById("jobsList");
+      if (!stats) {
+        statsEl.textContent = "İstatik yok";
+      } else {
+        statsEl.innerHTML = `<pre class="text-slate-300 text-xs">${escapeHtml(JSON.stringify(stats, null, 2))}</pre>`;
+      }
+      if (!list || !list.jobs || list.jobs.length === 0) {
+        listEl.innerHTML = "<div class='p-4 text-slate-500 text-sm'>Job yok</div>";
+      } else {
+        listEl.innerHTML = "<table class='min-w-full text-sm'><thead class='bg-slate-900/80'><tr><th class='px-3 py-2 text-left'>ID</th><th class='px-3 py-2 text-left'>Type</th><th class='px-3 py-2 text-left'>State</th><th class='px-3 py-2 text-left'>Created</th></tr></thead><tbody class='divide-y divide-slate-800'>" +
+          list.jobs.map((j) => `<tr><td class="px-3 py-2">${escapeHtml(j.id)}</td><td class="px-3 py-2">${escapeHtml(j.type)}</td><td class="px-3 py-2">${escapeHtml(j.state)}</td><td class="px-3 py-2 text-slate-400">${j.createdAt ? new Date(j.createdAt).toLocaleString("tr-TR") : "—"}</td></tr>`).join("") +
+          "</tbody></table>";
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function setTab(name) {
+      document.querySelectorAll(".adminSection").forEach((el) => el.classList.add("hidden"));
+      document.querySelectorAll(".adminTab").forEach((btn) => {
+        const on = btn.dataset.tab === name;
+        btn.classList.toggle("bg-slate-800", on);
+        btn.classList.toggle("bg-slate-900/60", !on);
+      });
+      const section = document.getElementById("section-" + name);
+      if (section) section.classList.remove("hidden");
+    }
+
+    async function loadOps() {
+      const plugin = document.getElementById("filterPlugin").value;
+      const operation = document.getElementById("filterOperation").value.trim();
+      const limit = document.getElementById("limitOps").value;
+      let path = "/audit/operations?limit=" + limit;
+      if (plugin) path += "&plugin=" + encodeURIComponent(plugin);
+      if (operation) path += "&operation=" + encodeURIComponent(operation);
+      try {
+        const data = await apiGet(path);
+        const entries = data?.entries ?? data?.data?.entries ?? [];
+        renderOps(Array.isArray(entries) ? entries : []);
+      } catch (err) {
+        setBanner("İşlem audit yüklenemedi: " + err.message);
+        renderOps([]);
+      }
+    }
+
+    async function loadReqs() {
+      const plugin = document.getElementById("filterReqPlugin").value;
+      const limit = document.getElementById("limitReqs").value;
+      let path = "/audit/logs?limit=" + limit;
+      if (plugin) path += "&plugin=" + encodeURIComponent(plugin);
+      try {
+        const data = await apiGet(path);
+        const logs = data?.logs ?? data?.data?.logs ?? [];
+        renderReqs(Array.isArray(logs) ? logs : []);
+      } catch (err) {
+        setBanner("İstek logu yüklenemedi: " + err.message);
+        renderReqs([]);
+      }
+    }
+
+    async function refreshAll() {
+      setBanner(null);
+      try {
+        const [plugins, healthDetail, stats, jobsList] = await Promise.all([
+          apiGet("/plugins").catch(() => []),
+          apiGet("/observability/health/detailed").catch(() => null),
+          apiGet("/jobs/stats").catch(() => null),
+          apiGet("/jobs?limit=20").catch(() => ({ jobs: [] })),
+        ]);
+
+        renderPlugins(plugins, healthDetail);
+
+        const pluginNames = [...new Set([...PLAN_V2_PLUGINS.map((p) => p.name), ...(plugins || []).map((p) => p.name)])].sort();
+        const selPlugin = document.getElementById("filterPlugin");
+        const selReq = document.getElementById("filterReqPlugin");
+        const opts = pluginNames.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+        selPlugin.innerHTML = "<option value=\"\">Tüm plugin</option>" + opts;
+        selReq.innerHTML = "<option value=\"\">Tüm plugin</option>" + opts;
+
+        renderJobs(stats, jobsList);
+
+        const tab = document.querySelector(".adminTab.bg-slate-800")?.dataset?.tab || "plugins";
+        if (tab === "ops") loadOps();
+        if (tab === "requests") loadReqs();
+      } catch (err) {
+        setBanner("Yüklenemedi: " + err.message);
+      }
+    }
+
+    document.getElementById("saveKey").addEventListener("click", () => {
+      const key = document.getElementById("apiKey").value.trim();
+      localStorage.setItem("mcpHubApiKey", key);
+    });
+    document.getElementById("apiKey").value = getKey();
+
+    document.getElementById("refresh").addEventListener("click", refreshAll);
+
+    document.querySelectorAll(".adminTab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setTab(btn.dataset.tab);
+        if (btn.dataset.tab === "ops") loadOps();
+        if (btn.dataset.tab === "requests") loadReqs();
+      });
+    });
+
+    document.getElementById("loadOps").addEventListener("click", loadOps);
+    document.getElementById("loadReqs").addEventListener("click", loadReqs);
+
+    document.getElementById("tokenAl").addEventListener("click", async () => {
+      const btn = document.getElementById("tokenAl");
+      btn.disabled = true;
+      btn.textContent = "İstek…";
+      setBanner(null);
+      try {
+        const res = await fetch("/ui/token", { method: "POST", headers: { "Content-Type": "application/json" } });
+        const json = await res.json().catch(() => ({}));
+        const data = json?.data || json;
+        const token = data?.token ? String(data.token) : "";
+        if (token) {
+          localStorage.setItem("mcpHubApiKey", token);
+          document.getElementById("apiKey").value = token;
+          setBanner("Token alındı (admin). Bildirimdeki 6 hane: " + token);
+          refreshAll();
+        } else {
+          setBanner("Token dönmedi. Sadece localhost\'tan çalışır.");
+        }
+      } catch (e) {
+        setBanner("Token alınamadı: " + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Token al";
+      }
+    });
+
+    setTab("plugins");
+    refreshAll();
+  </script>
+</body>
+</html>

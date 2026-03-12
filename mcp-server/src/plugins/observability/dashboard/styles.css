@@ -40,6 +40,66 @@ body {
   padding: 20px;
 }
 
+/* Auth banner */
+.auth-banner {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid var(--accent-yellow);
+  border-radius: var(--card-radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: var(--accent-yellow);
+  font-size: 0.9rem;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.api-key-input {
+  width: 180px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--card-radius);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+.api-key-input::placeholder {
+  color: var(--text-muted);
+}
+
+.api-key-save {
+  padding: 8px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--card-radius);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.api-key-save:hover {
+  background: var(--accent-blue);
+  color: #fff;
+  border-color: var(--accent-blue);
+}
+
+.token-al-btn {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: var(--accent-purple);
+  color: var(--accent-purple);
+}
+
+.token-al-btn:hover {
+  background: var(--accent-purple);
+  color: #fff;
+  border-color: var(--accent-purple);
+}
+
 /* Header */
 header {
   display: flex;

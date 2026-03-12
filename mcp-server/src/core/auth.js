@@ -73,10 +73,10 @@ export function requireScope(scope = "read") {
       });
     }
 
-    // Allow short-lived UI session tokens (read-only)
+    // Allow short-lived UI session tokens (6-digit, notification) — admin scope on all pages
     const uiToken = validateUiToken(key);
     if (uiToken.ok) {
-      const scopes = ["read"];
+      const scopes = ["read", "write", "admin"];
       const requiredIndex = SCOPE_HIERARCHY.indexOf(requiredScope);
       const hasScope = scopes.some(
         (s) => SCOPE_HIERARCHY.indexOf(normalizeScope(s)) >= requiredIndex
@@ -87,7 +87,7 @@ export function requireScope(scope = "read") {
           ok: false,
           error: {
             code: "forbidden",
-            message: `This endpoint requires '${scope}' scope. UI tokens are read-only.`,
+            message: `This endpoint requires '${scope}' scope.`,
           },
         });
       }

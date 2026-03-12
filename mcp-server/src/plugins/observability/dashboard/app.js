@@ -9,9 +9,67 @@ const REFRESH_INTERVAL = 5000; // 5 seconds
 
 let lastData = {};
 
+// Auth: use same key as /ui and /admin (read scope)
+function getAuthHeaders() {
+  const key = localStorage.getItem('mcpHubApiKey') || '';
+  return key ? { Authorization: 'Bearer ' + key } : {};
+}
+
+function dashboardFetch(url, options = {}) {
+  const headers = { ...getAuthHeaders(), ...(options.headers || {}) };
+  return fetch(url, { ...options, headers });
+}
+
+function showAuthRequired(show) {
+  const el = document.getElementById('auth-required-banner');
+  if (!el) return;
+  el.style.display = show ? 'block' : 'none';
+}
+
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', () => {
   console.log('[Dashboard] Initializing...');
+  const keyInput = document.getElementById('dashboard-api-key');
+  const saveBtn = document.getElementById('dashboard-save-key');
+  if (keyInput) keyInput.value = localStorage.getItem('mcpHubApiKey') || '';
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      const key = (document.getElementById('dashboard-api-key')?.value || '').trim();
+      localStorage.setItem('mcpHubApiKey', key);
+      showAuthRequired(false);
+      refreshAll();
+    });
+  }
+  const tokenAlBtn = document.getElementById('dashboard-token-al');
+  if (tokenAlBtn) {
+    tokenAlBtn.addEventListener('click', async () => {
+      tokenAlBtn.disabled = true;
+      tokenAlBtn.textContent = 'İstek…';
+      showAuthRequired(false);
+      try {
+        const res = await fetch(window.location.origin + '/ui/token', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const json = await res.json().catch(() => ({}));
+        const data = json?.data || json;
+        const token = data?.token ? String(data.token) : '';
+        if (token) {
+          localStorage.setItem('mcpHubApiKey', token);
+          const keyInput = document.getElementById('dashboard-api-key');
+          if (keyInput) keyInput.value = token;
+          showAuthRequired(false);
+          refreshAll();
+          tokenAlBtn.textContent = 'Alındı';
+          setTimeout(() => { tokenAlBtn.textContent = 'Token al'; }, 2000);
+        } else {
+          showAuthRequired(true);
+        }
+      } catch (e) {
+        showAuthRequired(true);
+      } finally {
+        tokenAlBtn.disabled = false;
+        if (tokenAlBtn.textContent === 'İstek…') tokenAlBtn.textContent = 'Token al';
+      }
+    });
+  }
   refreshAll();
   setInterval(refreshAll, REFRESH_INTERVAL);
 });
@@ -68,7 +126,12 @@ function updateLastUpdated() {
 // Fetch health data
 async function fetchHealth() {
   try {
-    const response = await fetch(`${API_BASE}/observability/health`);
+    const response = await dashboardFetch(`${API_BASE}/observability/health`);
+    if (response.status === 401) {
+      showAuthRequired(true);
+      return;
+    }
+    showAuthRequired(false);
     if (!response.ok) throw new Error('Health endpoint failed');
 
     const data = await response.json();
@@ -131,7 +194,8 @@ function updatePluginsGrid(plugins) {
 // Fetch metrics data
 async function fetchMetrics() {
   try {
-    const response = await fetch(`${API_BASE}/observability/metrics`);
+    const response = await dashboardFetch(`${API_BASE}/observability/metrics`);
+    if (response.status === 401) return;
     if (!response.ok) throw new Error('Metrics endpoint failed');
 
     const text = await response.text();
@@ -238,8 +302,8 @@ function getMetricValue(metrics, name) {
 async function fetchJobStats() {
   try {
     const [statsResponse, jobsResponse] = await Promise.all([
-      fetch(`${API_BASE}/jobs/stats`).catch(() => null),
-      fetch(`${API_BASE}/jobs?limit=10`).catch(() => null),
+      dashboardFetch(`${API_BASE}/jobs/stats`).catch(() => null),
+      dashboardFetch(`${API_BASE}/jobs?limit=10`).catch(() => null),
     ]);
 
     let stats = { queued: 0, running: 0, completed: 0, failed: 0 };
@@ -302,7 +366,8 @@ function updateRecentJobs(jobs) {
 // Fetch errors
 async function fetchErrors() {
   try {
-    const response = await fetch(`${API_BASE}/observability/errors?limit=10`);
+    const response = await dashboardFetch(`${API_BASE}/observability/errors?limit=10`);
+    if (response.status === 401) return;
     if (!response.ok) throw new Error('Errors endpoint failed');
 
     const data = await response.json();

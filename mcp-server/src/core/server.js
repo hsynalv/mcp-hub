@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
 import { initializeToolHooks } from "./tool-registry.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
+import { getAuditManager } from "./audit/index.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
 import { submitJob, getJob, listJobs, getJobStats } from "./jobs.js";
 import { dirname, join } from "path";
@@ -312,6 +313,20 @@ export async function createServer() {
     res.json({ stats: getStats() });
   });
 
+  /** GET /audit/operations — plugin operation audit (core audit manager), filter by plugin, operation, limit */
+  app.get("/audit/operations", requireScope("read"), async (req, res) => {
+    const { plugin, operation, limit = 100, offset = 0 } = req.query;
+    const manager = getAuditManager();
+    if (!manager.initialized) await manager.init();
+    const entries = await manager.getRecentEntries({
+      limit: Math.min(Number(limit) || 100, 500),
+      offset: Number(offset) || 0,
+      ...(plugin && { plugin: String(plugin) }),
+      ...(operation && { operation: String(operation) }),
+    });
+    res.json({ entries, count: entries.length });
+  });
+
   // ── Job queue routes ───────────────────────────────────────────────────────
 
   app.post("/jobs", requireScope("write"), async (req, res) => {
@@ -524,6 +539,17 @@ export async function createServer() {
     }
     res.setHeader("Cache-Control", "no-store");
     res.sendFile(uiIndexPath);
+  });
+
+  // ── Admin Panel (20-plugin yönetim, loglar, kontrol) ───────────────────────
+
+  app.get(["/admin", "/admin/"], (req, res) => {
+    const adminPath = join(__dirname, "..", "public", "admin", "index.html");
+    if (!existsSync(adminPath)) {
+      return res.status(404).json({ ok: false, error: "Admin UI not found" });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(adminPath);
   });
 
   app.post("/ui/token", (req, res) => {

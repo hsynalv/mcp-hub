@@ -4,15 +4,23 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MCP-Hub Dashboard</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="/observability/dashboard/styles.css">
 </head>
 <body>
   <div class="dashboard">
+    <div id="auth-required-banner" style="display: none;" class="auth-banner">
+      <span>Yetkilendirme gerekli. API key girin ve Kaydet'e tıklayın (Panel / Admin ile aynı key).</span>
+    </div>
     <header>
       <h1>MCP-Hub Observability Dashboard</h1>
-      <div class="status-indicator" id="connection-status">
-        <span class="status-dot"></span>
-        <span class="status-text">Connecting...</span>
+      <div class="header-controls">
+        <input type="password" id="dashboard-api-key" placeholder="API key / 6 hane" class="api-key-input" />
+        <button type="button" id="dashboard-save-key" class="api-key-save">Kaydet</button>
+        <button type="button" id="dashboard-token-al" class="api-key-save token-al-btn">Token al</button>
+        <div class="status-indicator" id="connection-status">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting...</span>
+        </div>
       </div>
     </header>
 
@@ -95,6 +103,6 @@
     </footer>
   </div>
 
-  <script src="app.js"></script>
+  <script src="/observability/dashboard/app.js"></script>
 </body>
 </html>
