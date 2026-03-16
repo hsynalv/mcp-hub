@@ -1,54 +1,92 @@
-# Katkı Rehberi
+# Contributing to MCP-Hub
 
-## Geliştirme Kurulumu
+Thank you for your interest in contributing to MCP-Hub. This document provides guidelines for contributing.
+
+## Development Setup
 
 ```bash
 cd mcp-server
 npm install
+cp .env.example .env
+# Edit .env with your configuration
+npm run dev
 ```
 
-## Kod Stili
+## Code Style
 
-- ESLint + Prettier kullanılıyor
-- Pre-commit hook otomatik format yapar
-- `npm run lint` ile kontrol edin
+- **ESLint** and **Prettier** are used for consistency
+- Pre-commit hooks run format automatically
+- Run `npm run lint` before submitting
+- Run `npm run format` to fix formatting
 
-## Test
+## Testing
 
 ```bash
-npm test        # Watch modu	npm run test:run # CI için
-npm run test:coverage # Coverage raporu
+npm test           # Watch mode (development)
+npm run test:run   # Single run (CI)
+npm run test:coverage  # Coverage report
 ```
 
-## Commit Mesajları
+All new features and bug fixes should include tests.
+
+## Commit Messages
 
 Format: `<type>: <description>`
 
-Type'lar:
-- `feat:` Yeni özellik
-- `fix:` Bug fix
-- `docs:` Dokümantasyon
-- `refactor:` Kod değişikliği (davranış değişmez)
-- `test:` Test ekleme/güncelleme
-- `chore:` Build, config, vb.
+| Type | Use For |
+|------|---------|
+| `feat:` | New feature |
+| `fix:` | Bug fix |
+| `docs:` | Documentation only |
+| `refactor:` | Code change (no behavior change) |
+| `test:` | Adding or updating tests |
+| `chore:` | Build, config, dependencies |
+| `perf:` | Performance improvement |
+| `security:` | Security fix |
 
-Örnek: `feat: github plugin'e PR listeleme ekle`
+**Examples:**
+- `feat: add workspace isolation to RAG plugin`
+- `fix: prevent path traversal in file-storage`
+- `docs: update plugin SDK examples`
 
-## Plugin Geliştirme
+## Plugin Development
 
-1. `src/plugins/<name>/index.js` oluşturun
-2. Gerekli export'ları ekleyin (name, version, register)
-3. Test yazın
-4. README ekleyin
+1. Create `src/plugins/<name>/index.js`
+2. Export: `register`, `metadata` (or `name`/`version`), optionally `tools`
+3. Add `plugin.meta.json` for metadata validation
+4. Write tests in `tests/plugins/<name>.test.js`
+5. Add a README in the plugin folder
 
-## PR Süreci
+See [Plugin SDK](mcp-server/docs/plugin-sdk.md) for best practices.
 
-1. Branch oluşturun: `git checkout -b feature/isim`
-2. Değişiklikleri yapın ve commit edin
-3. Test'leri çalıştırın: `npm run test:run`
-4. Lint kontrolü: `npm run lint`
-5. PR açın
+**Scaffold a new plugin:**
+```bash
+npm run create-plugin my-plugin "My plugin description"
+```
 
-## Sorular
+## Pull Request Process
 
-Issue açın veya Discord'dan ulaşın.
+1. Create a branch: `git checkout -b feat/your-feature` or `fix/your-fix`
+2. Make your changes
+3. Run tests: `npm run test:run`
+4. Run lint: `npm run lint`
+5. Update documentation if needed
+6. Open a PR with a clear description
+7. Ensure CI passes
+
+## Issue Reporting
+
+- Use the [Bug Report](.github/ISSUE_TEMPLATE/bug_report.md) template for bugs
+- Use the [Feature Request](.github/ISSUE_TEMPLATE/feature_request.md) template for new ideas
+- Search existing issues before creating a new one
+
+## Security
+
+- Do not commit secrets, API keys, or credentials
+- Report security vulnerabilities privately (see [SECURITY.md](SECURITY.md))
+- Use placeholder values in examples (e.g. `sk-xxx`, `ghp_xxx`)
+
+## Questions
+
+- Open a [Discussion](https://github.com/your-org/mcp-hub/discussions) for questions
+- Open an [Issue](https://github.com/your-org/mcp-hub/issues) for bugs or features

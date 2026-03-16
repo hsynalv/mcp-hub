@@ -1,0 +1,53 @@
+{
+  "name": "rag-ingestion",
+  "version": "1.0.0",
+  "status": "beta",
+  "owner": "platform-team",
+  "description": "Document ingestion pipeline with structure-aware chunking for RAG",
+  "requiresAuth": true,
+  "supportsJobs": true,
+  "supportsStreaming": false,
+  "testLevel": "unit",
+  "resilience": {
+    "retry": false,
+    "timeout": 60000,
+    "circuitBreaker": false
+  },
+  "security": {
+    "scope": "write",
+    "dangerousCombinations": [],
+    "requiresApproval": false
+  },
+  "performance": {
+    "avgResponseTimeMs": 2000,
+    "maxConcurrent": 5
+  },
+  "documentation": {
+    "readme": true,
+    "examples": true,
+    "apiReference": true
+  },
+  "dependencies": ["rag"],
+  "envVars": [
+    {
+      "name": "RAG_INGESTION_MAX_DOCUMENT_SIZE",
+      "required": false,
+      "description": "Max document size in bytes (default 5MB)"
+    },
+    {
+      "name": "RAG_INGESTION_CHUNK_SIZE",
+      "required": false,
+      "description": "Default chunk size in chars"
+    },
+    {
+      "name": "RAG_INGESTION_CHUNK_OVERLAP",
+      "required": false,
+      "description": "Chunk overlap for sliding window"
+    },
+    {
+      "name": "RAG_INGESTION_TIMEOUT_MS",
+      "required": false,
+      "description": "Pipeline timeout in ms"
+    }
+  ]
+}

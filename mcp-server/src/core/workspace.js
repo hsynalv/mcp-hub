@@ -17,6 +17,13 @@ const conversations = new Map();
 
 /**
  * Workspace entity
+ * @property {string} id - Workspace identifier
+ * @property {string} name - Display name
+ * @property {string} owner - Owner identifier
+ * @property {Object} settings - Workspace settings
+ * @property {string} [settings.workspace_root] - Per-workspace root path (overrides base)
+ * @property {string[]} [settings.allowed_operations] - Allowed operation types (read, write, index, git, etc.)
+ * @property {Object} [settings.plugin_permission_scope] - Per-plugin permission scope
  */
 export class Workspace {
   constructor(id, name, owner, options = {}) {
@@ -31,6 +38,10 @@ export class Workspace {
       allowedPlugins: options.allowedPlugins || [], // empty = all
       maxProjects: options.maxProjects || 10,
       retentionDays: options.retentionDays || 90,
+      workspace_root: options.workspace_root || null,
+      allowed_operations: options.allowed_operations || [],
+      plugin_permission_scope: options.plugin_permission_scope || {},
+      readOnly: options.readOnly || false,
       ...options,
     };
     this.metadata = {

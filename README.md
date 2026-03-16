@@ -127,11 +127,14 @@ PORT=8787
 NODE_ENV=development
 ```
 
-## Dökümantasyon
+## Documentation
 
-- [Server Detayları](mcp-server/README.md)
-- [Mimari](mcp-server/ARCHITECTURE.md)
-- [Plugin Geliştirme](mcp-server/docs/plugin-development.md)
+- [Documentation Index](docs/README.md) — Full docs with architecture, plugin SDK, examples
+- [Server Details](mcp-server/README.md)
+- [Architecture](mcp-server/ARCHITECTURE.md)
+- [Plugin Development](mcp-server/docs/plugin-development.md)
+- [Plugin SDK](mcp-server/docs/plugin-sdk.md)
+- [Example Setups](docs/examples/minimal-local-setup.md)
 
 ## Lisans
 

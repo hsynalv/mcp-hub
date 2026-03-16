@@ -1,0 +1,35 @@
+{
+  "name": "{{PLUGIN_NAME}}",
+  "version": "1.0.0",
+  "status": "experimental",
+  "owner": "platform-team",
+  "description": "{{DESCRIPTION}}",
+  "requiresAuth": false,
+  "testLevel": "none",
+  "resilience": {
+    "retry": false,
+    "timeout": 10000,
+    "circuitBreaker": false
+  },
+  "security": {
+    "scope": "read",
+    "dangerousCombinations": [],
+    "requiresApproval": false
+  },
+  "documentation": {
+    "readme": false,
+    "examples": true
+  },
+  "envVars": [
+    {
+      "name": "{{PLUGIN_NAME_UPPER}}_ENABLED",
+      "required": false,
+      "description": "Enable the plugin (default: true)"
+    },
+    {
+      "name": "{{PLUGIN_NAME_UPPER}}_TIMEOUT_MS",
+      "required": false,
+      "description": "Operation timeout in ms"
+    }
+  ]
+}

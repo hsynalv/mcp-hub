@@ -2,12 +2,14 @@
  * Git Plugin - Core
  *
  * Git operations wrapper with security checks.
+ * Uses workspace-paths when workspaceId is provided for stricter boundaries.
  */
 
 import { exec } from "child_process";
 import { promisify } from "util";
 import { join, resolve, relative } from "path";
 import { homedir } from "os";
+import { getWorkspaceRoot, validateWorkspacePath } from "../../core/workspace-paths.js";
 
 const execAsync = promisify(exec);
 
@@ -15,8 +17,18 @@ const WORKSPACE_BASE = process.env.WORKSPACE_BASE || process.env.WORKSPACE_ROOT 
 
 /**
  * Validate that a repo path is within the allowed workspace base.
+ * When workspaceId is provided, uses per-workspace root for stricter isolation.
+ * @param {string} requestedPath - Repository path
+ * @param {string} [workspaceId] - Optional workspace ID for per-workspace root
  */
-export function safeRepoPath(requestedPath) {
+export function safeRepoPath(requestedPath, workspaceId = null) {
+  if (workspaceId) {
+    const result = validateWorkspacePath(requestedPath, workspaceId);
+    if (!result.valid) {
+      return { valid: false, error: result.reason || result.error || "Path validation failed" };
+    }
+    return { valid: true, path: result.resolvedPath };
+  }
   const resolved = resolve(requestedPath);
   const rel      = relative(WORKSPACE_BASE, resolved);
   if (rel.startsWith("..") || rel.includes("../")) {

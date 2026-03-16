@@ -162,7 +162,7 @@ export function register(app) {
    * GET /observability/metrics
    * Prometheus-compatible text format metrics.
    */
-  router.get("/metrics", requireScope("read"), (_req, res) => {
+  router.get("/metrics", requireScope("read"), async (_req, res) => {
     const stats   = getStats();
     const plugins = getPlugins();
     const uptime  = Math.floor(process.uptime());
@@ -211,6 +211,18 @@ export function register(app) {
     for (const p of plugins) {
       const ps = stats.byPlugin?.[p.name] ?? {};
       lines.push(`mcp_hub_plugin_errors_total{plugin="${p.name}"} ${ps.errors ?? 0}`);
+    }
+
+    try {
+      const { getEvalMetricsSummary } = await import("../retrieval-evals/metrics-store.js");
+      const evalSummary = getEvalMetricsSummary();
+      if (evalSummary.runs > 0) {
+        lines.push("# HELP mcp_hub_retrieval_eval_runs_total Total retrieval evaluation runs");
+        lines.push("# TYPE mcp_hub_retrieval_eval_runs_total gauge");
+        lines.push(`mcp_hub_retrieval_eval_runs_total ${evalSummary.runs}`);
+      }
+    } catch {
+      /* retrieval-evals plugin not loaded */
     }
 
     res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");

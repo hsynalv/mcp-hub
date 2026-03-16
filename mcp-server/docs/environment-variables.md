@@ -1,6 +1,8 @@
 # Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure.
+
+> **Security**: Never commit `.env` or real credentials. All values below are placeholders. Replace with your own keys from the respective service dashboards.
 
 ## Server
 

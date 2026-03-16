@@ -13,12 +13,24 @@ import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import { routeTask } from "../llm-router/index.js";
+import { validateWorkspacePath } from "../../core/workspace-paths.js";
 
 const handleError = createPluginErrorHandler("code-review");
 
 const WORKSPACE_BASE = process.env.WORKSPACE_BASE || process.env.WORKSPACE_ROOT || `${homedir()}/Projects`;
 
-function safePath(requestedPath) {
+/**
+ * Validate path is within allowed workspace.
+ * Uses workspace-paths when workspaceId provided for stricter isolation.
+ */
+function safePath(requestedPath, workspaceId = null) {
+  if (workspaceId) {
+    const result = validateWorkspacePath(requestedPath, workspaceId);
+    if (!result.valid) {
+      return { valid: false, error: result.reason || result.error || "Path validation failed" };
+    }
+    return { valid: true, path: result.resolvedPath };
+  }
   const resolved = resolve(requestedPath);
   const rel      = relative(WORKSPACE_BASE, resolved);
   if (rel.startsWith("..") || rel.includes("../")) {
@@ -319,8 +331,8 @@ export const tools = [
       },
       required: ["path"],
     },
-    handler: async ({ path, security, quality, llm }) => {
-      const v = safePath(path);
+    handler: async ({ path, security, quality, llm }, context = {}) => {
+      const v = safePath(path, context.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       try {
         const result = await reviewFile(v.path, { security, quality, llm });
@@ -352,16 +364,17 @@ export const tools = [
       },
       required: ["files"],
     },
-    handler: async ({ files, context }) => {
+    handler: async ({ files, context: ctx }, toolContext = {}) => {
       const validated = [];
+      const wsId = toolContext.workspaceId;
       for (const f of files) {
         const p = f.path || f;
-        const v = safePath(p);
+        const v = safePath(p, wsId);
         if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
         validated.push({ ...f, path: v.path });
       }
       try {
-        const result = await reviewPR(validated, { context });
+        const result = await reviewPR(validated, { context: ctx });
         return { ok: true, data: result };
       } catch (error) {
         return { ok: false, error: { code: "pr_review_error", message: error.message } };
@@ -417,7 +430,8 @@ export function register(app) {
   });
 
   router.post("/file", requireScope("read"), async (req, res) => {
-    const v = safePath(req.body.path);
+    const wsId = req.workspaceId || req.workspaceContext?.workspaceId;
+    const v = safePath(req.body.path, wsId);
     if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
     try {
       const result = await reviewFile(v.path, req.body.options || {});
@@ -429,13 +443,14 @@ export function register(app) {
 
   router.post("/pr", requireScope("read"), async (req, res) => {
     const files = req.body.files;
+    const wsId = req.workspaceId || req.workspaceContext?.workspaceId;
     if (!Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ ok: false, error: { code: "missing_files", message: "files array required" } });
     }
     const validated = [];
     for (const f of files) {
       const p = f.path || f;
-      const v = safePath(p);
+      const v = safePath(p, wsId);
       if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
       validated.push({ ...f, path: v.path });
     }

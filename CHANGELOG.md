@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Plugin SDK with createTool, createAuditHelper, loadPluginConfig, validateBodySync
+- Plugin generator: `npm run create-plugin <name>`
+- Example SDK plugin and plugin template
+- Workspace isolation and security hardening (Phase 3)
+- Workspace permissions: canReadWorkspace, canWriteWorkspace, canModifyIndex
+- Path safety: validateWorkspacePath, getWorkspaceRoot, cross-workspace blocking
+- Documentation index (docs/README.md) with architecture, plugin SDK, RAG, security links
+- Example setups: minimal local, RAG ingestion workflow, code intelligence workflow
+- CONTRIBUTING.md, PR template, issue templates (bug, feature)
+- RELEASE.md with versioning guidelines and release checklist
+- SECURITY.md for vulnerability reporting
 - Plugin quality standards with `plugin.meta.json` schema
 - Contract testing framework for plugins
 - Tool chain analysis and parameter sanitization in security-guard

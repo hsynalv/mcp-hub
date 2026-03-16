@@ -1,0 +1,40 @@
+{
+  "name": "example-sdk",
+  "version": "1.0.0",
+  "status": "experimental",
+  "owner": "platform-team",
+  "description": "Example plugin demonstrating Plugin SDK patterns",
+  "requiresAuth": false,
+  "testLevel": "unit",
+  "resilience": {
+    "retry": false,
+    "timeout": 5000,
+    "circuitBreaker": false
+  },
+  "security": {
+    "scope": "read",
+    "dangerousCombinations": [],
+    "requiresApproval": false
+  },
+  "documentation": {
+    "readme": true,
+    "examples": true
+  },
+  "envVars": [
+    {
+      "name": "EXAMPLE_SDK_ENABLED",
+      "required": false,
+      "description": "Enable the plugin (default: true)"
+    },
+    {
+      "name": "EXAMPLE_SDK_MAX_ITEMS",
+      "required": false,
+      "description": "Max items (default: 100)"
+    },
+    {
+      "name": "EXAMPLE_SDK_TIMEOUT_MS",
+      "required": false,
+      "description": "Operation timeout in ms"
+    }
+  ]
+}

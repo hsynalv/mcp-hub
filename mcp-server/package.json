@@ -21,7 +21,10 @@
     "prepare": "husky",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "eval:run": "node bin/run-retrieval-evals.js run",
+    "eval:compare": "node bin/run-retrieval-evals.js compare",
+    "create-plugin": "node bin/create-plugin.js"
   },
   "keywords": [
     "ai",
@@ -73,6 +76,7 @@
     "n8n-workflow": "^1.120.9",
     "nodemailer": "^8.0.1",
     "openai": "^6.27.0",
+    "pdf-parse": "^1.1.1",
     "pg": "^8.19.0",
     "zod": "^3.23.8"
   }

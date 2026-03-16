@@ -73,9 +73,9 @@ async function gitAudit({ operation, actor, repoPath, success, error, reason }) 
 
 // ── Path validation helper ────────────────────────────────────────────────────
 
-function validatedPath(reqPath) {
+function validatedPath(reqPath, workspaceId = null) {
   const repoPath = reqPath || ".";
-  return safeRepoPath(repoPath);
+  return safeRepoPath(repoPath, workspaceId);
 }
 
 // ── MCP Tools ─────────────────────────────────────────────────────────────────
@@ -91,8 +91,8 @@ export const tools = [
         path: { type: "string", description: "Repository path (default: current)", default: "." },
       },
     },
-    handler: async (args) => {
-      const v = validatedPath(args.path);
+    handler: async (args, context = {}) => {
+      const v = validatedPath(args.path, context.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       return gitStatus(v.path);
     },
@@ -108,8 +108,8 @@ export const tools = [
         staged: { type: "boolean", description: "Show staged changes", default: false },
       },
     },
-    handler: async (args) => {
-      const v = validatedPath(args.path);
+    handler: async (args, context = {}) => {
+      const v = validatedPath(args.path, context.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       return gitDiff(v.path, { staged: args.staged });
     },
@@ -125,8 +125,8 @@ export const tools = [
         limit: { type: "number", description: "Number of commits", default: 10 },
       },
     },
-    handler: async (args) => {
-      const v = validatedPath(args.path);
+    handler: async (args, context = {}) => {
+      const v = validatedPath(args.path, context.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       return gitLog(v.path, { limit: args.limit });
     },
@@ -143,8 +143,8 @@ export const tools = [
         all:    { type: "boolean", description: "List all branches (local + remote)", default: false },
       },
     },
-    handler: async (args) => {
-      const v = validatedPath(args.path);
+    handler: async (args, context = {}) => {
+      const v = validatedPath(args.path, context.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       return gitBranchList(v.path, { remote: args.remote, all: args.all });
     },
@@ -164,7 +164,7 @@ export const tools = [
       required: ["name"],
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitBranchCreate(v.path, args.name, args.base);
       await gitAudit({ operation: "branch_create", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
@@ -185,7 +185,7 @@ export const tools = [
       required: ["branch"],
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitCheckout(v.path, args.branch);
       await gitAudit({ operation: "checkout", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
@@ -205,7 +205,7 @@ export const tools = [
       },
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitAdd(v.path, args.files || ["."]);
       await gitAudit({ operation: "add", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
@@ -227,7 +227,7 @@ export const tools = [
       required: ["message"],
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitCommit(v.path, args.message, { files: args.files });
       await gitAudit({ operation: "commit", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
@@ -248,7 +248,7 @@ export const tools = [
       },
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitPush(v.path, { remote: args.remote, branch: args.branch });
       await gitAudit({ operation: "push", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
@@ -269,7 +269,7 @@ export const tools = [
       },
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitPull(v.path, { remote: args.remote, branch: args.branch });
       await gitAudit({ operation: "pull", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });
@@ -290,7 +290,7 @@ export const tools = [
       },
     },
     handler: async (args, context = {}) => {
-      const v = validatedPath(args.path);
+      const v = validatedPath(args.path, context?.workspaceId);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       const result = await gitStash(v.path, { pop: args.pop, message: args.message });
       await gitAudit({ operation: args.pop ? "stash_pop" : "stash_push", actor: context.actor, repoPath: v.path, success: result.ok, reason: args.explanation });

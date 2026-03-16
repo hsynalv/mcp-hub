@@ -20,6 +20,7 @@ import { MemoryStore } from "./stores/memory.store.js";
 import { auditLog, getAuditManager } from "../../core/audit/index.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import { requireScope } from "../../core/auth.js";
+import { canModifyIndex } from "../../core/workspace-permissions.js";
 
 const pluginError = createPluginErrorHandler("rag");
 
@@ -276,6 +277,11 @@ export const tools = [
       const correlationId = generateCorrelationId();
       const wsId         = context.workspaceId || "global";
 
+      const perm = await canModifyIndex({ workspaceId: wsId, actor: context.actor, plugin: "rag", correlationId });
+      if (!perm.allowed) {
+        return { ok: false, error: { code: "permission_denied", message: perm.reason || "Cannot modify index" } };
+      }
+
       if (args.content.length > MAX_DOCUMENT_SIZE) {
         await auditEntry({ operation: "index", workspaceId: wsId, actor: context.actor, correlationId, durationMs: Date.now() - startTime, success: false, error: "document_too_large" });
         return { ok: false, error: { code: "document_too_large", message: `Document exceeds max size of ${MAX_DOCUMENT_SIZE} chars` } };
@@ -313,6 +319,12 @@ export const tools = [
       const startTime    = Date.now();
       const correlationId = generateCorrelationId();
       const wsId         = context.workspaceId || "global";
+
+      const perm = await canModifyIndex({ workspaceId: wsId, actor: context.actor, plugin: "rag", correlationId });
+      if (!perm.allowed) {
+        return { ok: false, error: { code: "permission_denied", message: perm.reason || "Cannot modify index" } };
+      }
+
       const results      = [];
       let   totalChunks  = 0;
 

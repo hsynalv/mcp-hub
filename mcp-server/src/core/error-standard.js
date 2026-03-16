@@ -219,6 +219,24 @@ export function createPluginErrorHandler(pluginName) {
       details
     ),
 
+    authorization: (message, details) => {
+      const err = Errors.authorization(message);
+      if (details && typeof details === "object" && details.code) err.code = details.code;
+      return err;
+    },
+
+    notFound: (message, details) => new StandardizedError({
+      code: "NOT_FOUND",
+      category: ErrorCategories.NOT_FOUND,
+      message: message || "Resource not found",
+      userSafeMessage: message || "Resource not found",
+      retryable: false,
+      statusCode: 404,
+      details: details && typeof details === "object" ? details : null,
+    }),
+
+    internal: (message) => Errors.internal(`[${pluginName}] ${message}`),
+
     external: (service, message) => Errors.externalError(
       `${pluginName} → ${service}`,
       message
