@@ -7,7 +7,7 @@
 import { readdir, stat } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { validatePluginContract } from "../plugins/plugin.contract.js";
+import { validatePluginContract } from "../../plugins/plugin.contract.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -15,7 +15,7 @@ const __dirname = dirname(__filename);
 /**
  * Default plugins directory
  */
-export const DEFAULT_PLUGINS_DIR = join(__dirname, "../../plugins");
+export const DEFAULT_PLUGINS_DIR = join(__dirname, "../../../plugins");
 
 /**
  * Check if path is a directory

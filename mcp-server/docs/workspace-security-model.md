@@ -120,10 +120,88 @@ requestedPath
    - `timestamp`
    - `plugin`, `operation`, `actor`, `workspaceId`
 
+## Workspace-Aware Jobs
+
+Long-running jobs (e.g. RAG ingestion) run asynchronously outside the HTTP request lifecycle. Workspace context is captured at submit time and passed to runners.
+
+### submitJob(type, payload, context)
+
+```js
+submitJob(type, payload, context)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `type` | Job type (must have a registered runner) |
+| `payload` | Job input data |
+| `context` | `{ workspaceId?, projectId?, userId?, env? }` — captured at submit time |
+
+### job.context Structure
+
+Context is normalized before storage and passed to runners:
+
+| Field | Source | Fallback |
+|-------|--------|----------|
+| `workspaceId` | `context.workspaceId` or `context.workspace` | `"global"` |
+| `projectId` | `context.projectId` or `context.project?.id` | `null` |
+| `userId` | `context.userId` or `context.user` or `context.actor` | `null` |
+| `env` | `context.env` or `context.projectEnv` | `"development"` |
+
+**workspaceId fallback:** If omitted, `workspaceId` defaults to `"global"`. Runners receive `context.workspaceId ?? "global"` so they always have a valid workspace.
+
+### How Runners Receive Context
+
+Runners are registered via `registerJobRunner(type, handler)`:
+
+```js
+handler(payload, context, updateProgress, log)
+```
+
+- `payload` — job input
+- `context` — `{ workspaceId, projectId, userId, env }` (workspaceId always set, never null)
+- `updateProgress`, `log` — helpers for progress and logging
+
+### Async RAG Ingestion Example
+
+The rag-ingestion plugin submits async jobs with workspace context from the request:
+
+```js
+// Extract context from HTTP request
+const ctx = {
+  workspaceId: req.workspaceId ?? "global",
+  projectId: req.projectId ?? null,
+  actor: req.user?.id || req.user?.email || "anonymous",
+};
+
+// Submit async job with context
+const job = submitJob(
+  "rag.ingestion",
+  { request: { content, format, ... }, context: ctx },
+  { workspaceId: ctx.workspaceId, projectId: ctx.projectId, userId: ctx.actor }
+);
+```
+
+The runner merges job context with payload context and passes it to the pipeline:
+
+```js
+registerJobRunner("rag.ingestion", async (payload, context, updateProgress, log) => {
+  const execCtx = {
+    workspaceId: context.workspaceId ?? payload.context?.workspaceId ?? "global",
+    projectId: context.projectId ?? payload.context?.projectId ?? null,
+    actor: context.userId ?? payload.context?.actor ?? "anonymous",
+  };
+  const result = await runPipeline(payload.request, execCtx);
+  return result;
+});
+```
+
+`runPipeline` and the RAG indexer use `execCtx.workspaceId` for workspace isolation (e.g. `rag_index_batch` with `context.workspaceId`).
+
 ## Integration Points
 
 | Area | Integration |
 |------|-------------|
+| Async jobs | `submitJob(type, payload, context)` captures workspaceId/projectId/userId at submit time; runners receive normalized context |
 | File ingestion | RAG file connector uses workspace root when `workspaceId` in config |
 | Reindexing | `canModifyIndex` in rag-ingestion and rag plugins |
 | Git analysis | `safeRepoPath(path, workspaceId)` in git plugin |

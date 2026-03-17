@@ -335,7 +335,7 @@ export async function createServer() {
 
     try {
       const job = submitJob(type, payload ?? {}, {
-        workspaceId: req.workspaceId ?? req.headers?.["x-workspace-id"] ?? "global",
+        workspaceId: req.workspaceId ?? "global",
         projectId: req.projectId ?? null,
         userId: req.user?.id ?? req.actor?.id ?? req.user ?? null,
         env: req.projectEnv,

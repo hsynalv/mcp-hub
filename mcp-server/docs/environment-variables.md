@@ -82,9 +82,13 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```env
 RAG_VECTOR_STORE_TYPE=memory
 RAG_EMBEDDING_MODEL=text-embedding-3-small
-# Optional: OCR provider name for scanned PDFs (e.g. tesseract)
+# Optional: OCR for scanned PDFs. Set to "tesseract" to enable.
 RAG_OCR_PROVIDER=
+# Tesseract language (default: eng)
+RAG_OCR_TESSERACT_LANG=eng
 ```
+
+**OCR prerequisites:** When `RAG_OCR_PROVIDER=tesseract`, install `tesseract.js` and `pdf2pic` (npm), plus GraphicsMagick or ImageMagick (system).
 
 ## Redis (Optional)
 

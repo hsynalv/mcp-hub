@@ -45,6 +45,7 @@ function parseArgs() {
   const options = {
     apiKey: process.env.HUB_API_KEY || null,
     scope: process.env.HUB_SCOPE || "read",
+    workspaceId: process.env.HUB_WORKSPACE_ID || null,
     projectId: process.env.HUB_PROJECT_ID || null,
     env: process.env.HUB_ENV || "development",
   };
@@ -57,6 +58,9 @@ function parseArgs() {
         break;
       case "--scope":
         options.scope = args[++i];
+        break;
+      case "--workspace-id":
+        options.workspaceId = args[++i];
         break;
       case "--project-id":
         options.projectId = args[++i];
@@ -74,13 +78,15 @@ Usage: npx mcp-hub-stdio [options]
 Options:
   --api-key <key>      API key for authentication (env: HUB_API_KEY)
   --scope <scope>      Default scope: read|write|admin (env: HUB_SCOPE)
+  --workspace-id <id>  Workspace for tool execution (env: HUB_WORKSPACE_ID)
   --project-id <id>    Default project ID (env: HUB_PROJECT_ID)
   --env <env>          Default environment (env: HUB_ENV)
   --help, -h           Show this help
 
 Examples:
   npx mcp-hub-stdio --api-key secret123 --scope write
-  HUB_PROJECT_ID=myproj npx mcp-hub-stdio
+  npx mcp-hub-stdio --workspace-id ws-123 --project-id myproj
+  HUB_WORKSPACE_ID=ws-1 HUB_PROJECT_ID=proj-1 npx mcp-hub-stdio
 `);
         process.exit(0);
         break;
@@ -108,8 +114,9 @@ async function main() {
     process.exit(1);
   }
 
-  // Set context for the session
+  // Set context for the session (gateway reads these for STDIO workspace propagation)
   process.env.HUB_SCOPE = options.scope;
+  if (options.workspaceId) process.env.HUB_WORKSPACE_ID = options.workspaceId;
   if (options.projectId) process.env.HUB_PROJECT_ID = options.projectId;
   if (options.env) process.env.HUB_ENV = options.env;
 
@@ -126,6 +133,7 @@ async function main() {
 
   console.error("[mcp-hub-stdio] Starting MCP Hub STDIO server...");
   console.error(`[mcp-hub-stdio] Scope: ${options.scope}`);
+  if (options.workspaceId) console.error(`[mcp-hub-stdio] Workspace: ${options.workspaceId}`);
   if (options.projectId) console.error(`[mcp-hub-stdio] Project: ${options.projectId}`);
   console.error(`[mcp-hub-stdio] Environment: ${options.env}`);
 

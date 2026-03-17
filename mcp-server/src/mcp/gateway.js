@@ -44,12 +44,14 @@ export function createMcpServer() {
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
     const authInfo = extra?.authInfo || {};
+    // STDIO transport does not pass authInfo; fall back to env vars (HUB_WORKSPACE_ID, etc.)
     const context = {
       method: "MCP",
       user: authInfo.user ?? request.context?.user ?? null,
       requestId: request.id,
-      workspaceId: authInfo.workspaceId ?? null,
-      projectId: authInfo.projectId ?? null,
+      workspaceId: authInfo.workspaceId ?? process.env.HUB_WORKSPACE_ID ?? null,
+      projectId: authInfo.projectId ?? process.env.HUB_PROJECT_ID ?? null,
+      env: authInfo.env ?? process.env.HUB_ENV ?? null,
     };
 
     const result = await callTool(name, args || {}, context);
@@ -130,6 +132,7 @@ export async function createMcpServerWithHandleRequest() {
         user: context.user ?? null,
         workspaceId: context.workspaceId ?? null,
         projectId: context.projectId ?? null,
+        env: context.env ?? process.env.HUB_ENV ?? null,
       };
       const id = message?.id;
       if (id === undefined) {

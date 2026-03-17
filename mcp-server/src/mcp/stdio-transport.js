@@ -3,6 +3,10 @@
  *
  * Handles MCP protocol over stdin/stdout for Claude Desktop and other
  * MCP clients that use stdio transport.
+ *
+ * Workspace context: When authInfo is not provided by the transport layer,
+ * the gateway falls back to process.env (HUB_WORKSPACE_ID, HUB_PROJECT_ID,
+ * HUB_ENV). Set these before starting for workspace-aware tool execution.
  */
 
 import { createMcpServer } from "./gateway.js";

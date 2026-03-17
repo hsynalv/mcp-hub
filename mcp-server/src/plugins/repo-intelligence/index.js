@@ -109,7 +109,7 @@ export function register(app) {
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
-    const wid = req.headers["x-workspace-id"] ?? "global";
+    const wid = req.workspaceId ?? "global";
     const result = await getRecentCommits(parsed.data.path, parsed.data.limit, wid);
     res.status(result.ok ? 200 : 500).json(result);
   });
@@ -134,7 +134,7 @@ export function register(app) {
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
-    const wid = req.headers["x-workspace-id"] ?? "global";
+    const wid = req.workspaceId ?? "global";
     const result = await getOpenIssues(parsed.data.path, wid);
     res.status(result.ok ? 200 : 500).json(result);
   });
@@ -146,7 +146,7 @@ export function register(app) {
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
-    const wid = req.headers["x-workspace-id"] ?? "global";
+    const wid = req.workspaceId ?? "global";
     const result = await getProjectStructure(parsed.data.path, { maxDepth: parsed.data.maxDepth, workspaceId: wid });
     res.status(result.ok ? 200 : 500).json(result);
   });
@@ -159,7 +159,7 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: "invalid_request", details: parsed.error.flatten() });
     }
     const { path, context } = parsed.data;
-    const wid = req.headers["x-workspace-id"] ?? "global";
+    const wid = req.workspaceId ?? "global";
     const result = await repoAnalyze(path, context, wid);
     if (result.ok) await repoAudit(req, "analyze", { path, context, model: result.data?.model });
     res.status(result.ok ? 200 : 500).json(result);
@@ -174,7 +174,7 @@ export function register(app) {
     }
     const { path, context: explanation } = parsed.data;
 
-    const wid = req.headers["x-workspace-id"] ?? "global";
+    const wid = req.workspaceId ?? "global";
     const [commitsResult, issuesResult, structureResult] = await Promise.all([
       getRecentCommits(path, 30, wid),
       getOpenIssues(path, wid),

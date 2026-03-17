@@ -131,8 +131,8 @@ function limitResultSize(result) {
 function extractContext(req) {
   return {
     actor: req.actor || req.user?.id || null,
-    workspaceId: req.workspaceId || req.headers["x-workspace-id"] || null,
-    projectId: req.projectId || req.headers["x-project-id"] || null,
+    workspaceId: req.workspaceId ?? null,
+    projectId: req.projectId ?? null,
     correlationId: req.requestId || null,
   };
 }

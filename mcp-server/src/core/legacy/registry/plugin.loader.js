@@ -6,14 +6,14 @@
 
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { validatePluginContract } from "../plugins/plugin.contract.js";
+import { validatePluginContract } from "../../plugins/plugin.contract.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Default plugins directory
  */
-const DEFAULT_PLUGINS_DIR = join(__dirname, "../../plugins");
+const DEFAULT_PLUGINS_DIR = join(__dirname, "../../../plugins");
 
 /**
  * Load plugin module

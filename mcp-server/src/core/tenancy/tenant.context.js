@@ -16,10 +16,10 @@ export function extractTenantContext(req, options = {}) {
   const headers = req.headers || req;
   const user = req.user || {};
 
-  // Extract from headers
+  // Extract from headers (req.workspaceId when Express req with workspaceContextMiddleware)
   const tenantId = headers["x-tenant-id"] || null;
-  const workspaceId = headers["x-workspace-id"] || null;
-  const projectId = headers["x-project-id"] || null;
+  const workspaceId = req.workspaceId ?? headers["x-workspace-id"] || null;
+  const projectId = req.projectId ?? headers["x-project-id"] || null;
 
   // Get actor info
   const actor = user.id || user.email || headers["x-actor"] || null;

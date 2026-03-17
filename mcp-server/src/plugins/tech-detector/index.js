@@ -749,7 +749,7 @@ export function register(app) {
   });
 
   router.post("/detect", requireScope("read"), async (req, res) => {
-    const wid = req.headers["x-workspace-id"] ?? "global";
+    const wid = req.workspaceId ?? "global";
     const v = safePath(req.body.path || ".", wid);
     if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
     try {

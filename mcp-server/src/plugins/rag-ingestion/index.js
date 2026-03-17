@@ -16,6 +16,8 @@ import { registerJobRunner, submitJob, getJob } from "../../core/jobs.js";
 import { runPipeline } from "./pipeline/pipeline.js";
 import { callTool } from "../../core/tool-registry.js";
 import { canModifyIndex } from "../../core/workspace-permissions.js";
+import { registerOcrProvider } from "./ocr/index.js";
+import { TesseractOcrProvider } from "./ocr/tesseract.provider.js";
 
 const pluginError = createPluginErrorHandler("rag-ingestion");
 
@@ -53,8 +55,8 @@ export const endpoints = [
 
 function extractContext(req) {
   return {
-    workspaceId: req.headers?.["x-workspace-id"] || req.workspaceId || "global",
-    projectId: req.headers?.["x-project-id"] || req.projectId || null,
+    workspaceId: req.workspaceId ?? "global",
+    projectId: req.projectId ?? null,
     actor: req.user?.id || req.user?.email || "anonymous",
   };
 }
@@ -341,6 +343,16 @@ export const tools = [
 ];
 
 export function register(app) {
+  // Register Tesseract OCR provider when RAG_OCR_PROVIDER=tesseract
+  if (process.env.RAG_OCR_PROVIDER === "tesseract") {
+    try {
+      const provider = new TesseractOcrProvider();
+      registerOcrProvider("tesseract", provider);
+    } catch (err) {
+      console.warn("[rag-ingestion] Tesseract OCR provider registration skipped:", err.message);
+    }
+  }
+
   const router = Router();
 
   router.get("/health", (_req, res) => {

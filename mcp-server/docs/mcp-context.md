@@ -75,17 +75,33 @@ The context passed to tool handlers includes:
 
 ## STDIO Transport
 
-The STDIO transport does not receive HTTP headers. For CLI usage (e.g. `mcp-hub-stdio`), workspace context can be set via environment variables:
+The STDIO transport does not receive HTTP headers. For CLI usage (e.g. `mcp-hub-stdio`), workspace context is set via environment variables or CLI flags. The gateway falls back to these when `authInfo` is not provided by the transport:
 
-- `HUB_PROJECT_ID` – default project ID
-- `HUB_ENV` – environment
+| Variable / Flag | Description |
+|----------------|-------------|
+| `HUB_WORKSPACE_ID` / `--workspace-id` | Workspace for tool execution |
+| `HUB_PROJECT_ID` / `--project-id` | Project identifier |
+| `HUB_ENV` / `--env` | Environment (e.g. `development`, `staging`) |
 
-These are passed through the session context; tool handlers may need to read from environment or config when `context.workspaceId` is null.
+**CLI example:**
+
+```bash
+npx mcp-hub-stdio --workspace-id ws-123 --project-id proj-456
+```
+
+**Environment example:**
+
+```bash
+HUB_WORKSPACE_ID=ws-1 HUB_PROJECT_ID=proj-1 npx mcp-hub-stdio
+```
+
+Tool handlers receive `context.workspaceId`, `context.projectId`, and `context.env` in the same shape as HTTP. When neither env nor authInfo provides a value, `workspaceId` and `projectId` are `null`; tools typically use `context.workspaceId || "global"` for workspace isolation.
+
+## Async Jobs
+
+Jobs run outside the HTTP request lifecycle. When a plugin submits a job (e.g. `submitJob("rag.ingestion", payload, context)`), it must pass workspace context explicitly. The job system stores `{ workspaceId, projectId, userId }` and passes it to the runner when the job executes. See **docs/workspace-security-model.md** (Workspace-Aware Jobs) for details.
 
 ## Testing
 
-See `tests/mcp/workspace-context.test.js` for tests that verify:
-
-- MCP request with `x-workspace-id` and `x-project-id` headers
-- Tool receives `workspaceId` and `projectId` in context
-- Indexing stored in correct workspace
+- **HTTP:** `tests/mcp/workspace-context.test.js` — verifies `x-workspace-id` and `x-project-id` header propagation
+- **STDIO:** `tests/mcp/stdio-workspace-context.test.js` — verifies `HUB_WORKSPACE_ID`, `HUB_PROJECT_ID`, `HUB_ENV` fallback when authInfo is empty

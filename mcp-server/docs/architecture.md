@@ -49,8 +49,36 @@ Plugin toggles via env vars:
 - `ENABLE_N8N_WORKFLOWS=false` — disable n8n-workflows
 - `PLUGIN_STRICT_MODE=true` — fail startup if any plugin fails to load
 
-### Deprecated
+### Legacy (Deprecated)
 
-- **`src/core/registry/`** — Alternative plugin registry not used during startup. Kept for backward compatibility with registry tests only.
-- **`src/core/tools/tool.discovery.js`** — Uses deprecated registry. Observability uses `getToolStats()` from `tool-registry.js`.
-- **`src/core/tools/tool.registry.js`** — Deprecated; MCP tools are in `tool-registry.js`.
+Deprecated plugin registry and tool discovery code has been moved to **`src/core/legacy/`**:
+
+| Path | Purpose | Replacement |
+|------|---------|-------------|
+| `legacy/registry/` | PluginRegistry, discovery, loader, lifecycle | `src/core/plugins.js` |
+| `legacy/tools/` | Tool discovery from registry, ToolRegistry class | `src/core/tool-registry.js` |
+
+- **Runtime path:** Server startup uses only `plugins.js` and `tool-registry.js`. No imports from `legacy/` in production.
+- **Tests:** `legacy/registry/registry.test.js` and `legacy/tools/tools.test.js` exercise the legacy modules for backward compatibility.
+
+## Jobs
+
+Long-running work is handled by the job queue in `src/core/jobs.js`.
+
+### Flow
+
+```
+submitJob(type, payload, context)
+  → job stored with normalized context
+  → runJob(id) invokes registered runner
+  → runner(payload, context, updateProgress, log)
+```
+
+### Workspace Context
+
+Jobs capture workspace context at submit time and pass it to runners:
+
+- `context.workspaceId` — defaults to `"global"` if omitted
+- `context.projectId`, `context.userId`, `context.env` — optional
+
+See **docs/workspace-security-model.md** (Workspace-Aware Jobs) for full details and the RAG ingestion example.

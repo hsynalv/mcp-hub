@@ -327,8 +327,9 @@ describe("Tool System", () => {
       expect(formatted.plugin).toBeDefined();
       expect(formatted.tool).toBeDefined();
       expect(formatted.tags).toBeDefined();
-      expect(formatted.backend).toBeDefined();
-      expect(formatted.notes).toBeDefined();
+      // backend and notes are optional; formatToolForUI passes them through
+      expect(formatted).toHaveProperty("backend");
+      expect(formatted).toHaveProperty("notes");
     });
 
     it("should format tool list", () => {

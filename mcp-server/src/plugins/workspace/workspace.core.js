@@ -21,8 +21,8 @@ const ALLOWED_EXTENSIONS = process.env.WORKSPACE_ALLOWED_EXTENSIONS?.split(",") 
 export function extractContext(req) {
   return {
     actor: req.user?.id || req.user?.email || "anonymous",
-    workspaceId: req.headers["x-workspace-id"] || null,
-    projectId: req.headers["x-project-id"] || null,
+    workspaceId: req.workspaceId ?? null,
+    projectId: req.projectId ?? null,
   };
 }
 

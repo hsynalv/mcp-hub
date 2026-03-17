@@ -30,13 +30,30 @@ The pipeline supports **scanned PDFs** via an optional OCR provider. When PDF te
 
 ### Configuration
 
-Set the optional environment variable to use a registered OCR provider:
+Set the optional environment variable to enable OCR for scanned PDFs:
 
 ```env
 RAG_OCR_PROVIDER=tesseract
 ```
 
-The provider must be registered via `registerOcrProvider()` before ingestion. If not configured, scanned PDFs will fail with a clear error.
+When `RAG_OCR_PROVIDER=tesseract`, the rag-ingestion plugin automatically registers the `TesseractOcrProvider` at startup. If not configured, scanned PDFs will fail with a clear error.
+
+### Tesseract Provider (Built-in)
+
+The `tesseract` provider uses tesseract.js and pdf2pic. It is registered automatically when `RAG_OCR_PROVIDER=tesseract`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAG_OCR_PROVIDER` | `""` | Set to `tesseract` to enable OCR |
+| `RAG_OCR_TESSERACT_LANG` | `eng` | Tesseract language code |
+| `RAG_OCR_PDF_DPI` | `150` | DPI for PDF→image conversion (higher = better quality, slower) |
+
+**Runtime prerequisites:**
+- `tesseract.js` and `pdf2pic` (npm packages, included when installed)
+- GraphicsMagick or ImageMagick (system dependency for PDF→image conversion)
+
+**Installation:** `npm install tesseract.js pdf2pic`  
+**System:** `apt install graphicsmagick` (Ubuntu/Debian) or `brew install graphicsmagick` (macOS)
 
 ### Provider Registry
 
@@ -52,16 +69,14 @@ Implementations must extend `OcrProvider` and provide:
 - `extractFromImage(buffer, options)` — Extract text from an image buffer
 - `extractFromPdfPage(pdfBuffer, pageIndex)` — Extract text from a PDF page
 
-### Example
+### Example (Tesseract)
 
-```js
-import { registerOcrProvider } from "./plugins/rag-ingestion/ocr/index.js";
-import { MyOcrProvider } from "./my-ocr-provider.js";
-
-const provider = new MyOcrProvider({ language: "eng" });
-registerOcrProvider("tesseract", provider);
-// Set RAG_OCR_PROVIDER=tesseract in .env
+```env
+RAG_OCR_PROVIDER=tesseract
+RAG_OCR_TESSERACT_LANG=eng
 ```
+
+No code required — the provider is registered automatically when the plugin loads.
 
 ### Multi-Page Support
 

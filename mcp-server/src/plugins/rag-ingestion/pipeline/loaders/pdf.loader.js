@@ -56,8 +56,12 @@ export async function loadPdf(input) {
         metadata: { sourceType: "pdf", extractedVia: "ocr", pages: numPages },
       };
     }
+    const hint =
+      provider && provider.name !== "noop"
+        ? "OCR provider is configured but unavailable. Ensure tesseract.js, pdf2pic, and GraphicsMagick (or ImageMagick) are installed."
+        : "Set RAG_OCR_PROVIDER=tesseract and install: npm install tesseract.js pdf2pic, plus GraphicsMagick (apt install graphicsmagick) or ImageMagick.";
     throw new Error(
-      "PDF appears to be image-based (scanned). No text extracted. Set RAG_OCR_PROVIDER and register an OCR provider for scanned PDF support."
+      `PDF appears to be image-based (scanned). No text extracted. ${hint}`
     );
   }
 

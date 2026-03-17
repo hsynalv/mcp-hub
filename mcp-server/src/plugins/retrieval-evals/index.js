@@ -51,7 +51,7 @@ export function register(app) {
   router.post("/run", requireScope("write"), async (req, res) => {
     const datasetInput = req.body?.dataset ?? req.body;
     const k = req.body?.k ?? 5;
-    const workspaceId = req.body?.workspaceId ?? req.headers?.["x-workspace-id"] ?? "retrieval-eval";
+    const workspaceId = req.body?.workspaceId ?? req.workspaceId ?? "retrieval-eval";
     const saveOutput = req.body?.saveOutput !== false;
 
     if (!datasetInput) {

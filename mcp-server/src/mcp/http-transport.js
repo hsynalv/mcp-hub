@@ -123,15 +123,9 @@ export function createMcpHttpMiddleware() {
           });
         }
 
-        // Extract workspace context from headers (or from middleware)
-        const workspaceId =
-          req.headers["x-workspace-id"]?.trim() ||
-          req.workspaceId ||
-          null;
-        const projectId =
-          req.headers["x-project-id"]?.trim() ||
-          req.projectId ||
-          null;
+        // Workspace context from middleware (workspaceContextMiddleware sets req.workspaceId)
+        const workspaceId = req.workspaceId ?? null;
+        const projectId = req.projectId ?? null;
 
         const authInfo = {
           user: authContext.user,

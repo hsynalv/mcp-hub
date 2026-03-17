@@ -295,19 +295,43 @@ export function resolveWorkspaceContext(projectId) {
 }
 
 /**
- * Middleware to attach workspace context to request
+ * Middleware to attach workspace context to request.
+ *
+ * Resolution order (workspaceId):
+ * 1. x-workspace-id header (explicit) → req.workspaceId
+ * 2. x-project-id → resolveWorkspaceContext → req.workspaceId
+ * 3. neither → req.workspaceId = "global"
+ *
+ * Downstream code can rely on req.workspaceId being set.
  */
 export function workspaceContextMiddleware(req, res, next) {
-  const projectId = req.headers["x-project-id"] || req.projectId;
-  
+  const headerWorkspaceId = req.headers["x-workspace-id"]?.trim();
+  const projectId = req.headers["x-project-id"]?.trim() || req.projectId;
+
+  // Priority 1: x-workspace-id explicitly provided
+  if (headerWorkspaceId) {
+    req.workspaceId = headerWorkspaceId;
+    if (projectId) {
+      req.projectId = req.projectId ?? projectId;
+    }
+    return next();
+  }
+
+  // Priority 2: x-project-id → resolve workspace from project
   if (projectId) {
     const context = resolveWorkspaceContext(projectId);
     if (context) {
       req.workspaceContext = context;
       req.workspaceId = context.workspaceId;
+      req.projectId = req.projectId ?? context.projectId;
+    } else {
+      req.workspaceId = "global";
     }
+    return next();
   }
 
+  // Fallback: no headers
+  req.workspaceId = "global";
   next();
 }
 

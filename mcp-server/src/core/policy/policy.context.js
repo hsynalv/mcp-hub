@@ -205,12 +205,12 @@ export function extractPolicyContextFromRequest(req, options = {}) {
     action: options.action || req.params.action || req.method?.toLowerCase(),
     resourceType: options.resourceType,
     resourceId: req.params.id || req.params.resourceId,
-    workspaceId: req.headers["x-workspace-id"] ||
-      req.body?.workspaceId ||
-      req.query?.workspaceId ||
+    workspaceId: req.workspaceId ??
+      req.body?.workspaceId ??
+      req.query?.workspaceId ??
       "global",
-    projectId: req.headers["x-project-id"] ||
-      req.body?.projectId ||
+    projectId: req.projectId ??
+      req.body?.projectId ??
       req.query?.projectId,
     correlationId: req.headers["x-correlation-id"] || req.correlationId,
     scope: options.scope,
