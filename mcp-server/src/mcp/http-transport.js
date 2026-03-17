@@ -3,8 +3,10 @@
  *
  * Express middleware for MCP Streamable HTTP endpoint.
  * Handles GET/POST /mcp requests.
+ * Propagates workspace context (x-workspace-id, x-project-id) to tool handlers.
  */
 
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "./gateway.js";
 import { validateBearerToken } from "../core/auth.js";
 
@@ -13,7 +15,28 @@ import { validateBearerToken } from "../core/auth.js";
  * @returns {Function} Express middleware
  */
 export function createMcpHttpMiddleware() {
-  const server = createMcpServer();
+  let initPromise = null;
+
+  const ensureInit = async () => {
+    if (!initPromise) {
+      initPromise = (async () => {
+        const server = createMcpServer();
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        await server.connect(serverTransport);
+        const pending = new Map();
+        clientTransport.onmessage = (message) => {
+          const id = message?.id;
+          if (id !== undefined && pending.has(id)) {
+            const { resolve } = pending.get(id);
+            pending.delete(id);
+            resolve(message);
+          }
+        };
+        return { server, clientTransport, pending };
+      })();
+    }
+    return initPromise;
+  };
 
   return async (req, res, next) => {
     // Only handle /mcp path
@@ -100,10 +123,47 @@ export function createMcpHttpMiddleware() {
           });
         }
 
-        // Process through MCP server with auth context
-        const result = await server.handleRequest(message, {
+        // Extract workspace context from headers (or from middleware)
+        const workspaceId =
+          req.headers["x-workspace-id"]?.trim() ||
+          req.workspaceId ||
+          null;
+        const projectId =
+          req.headers["x-project-id"]?.trim() ||
+          req.projectId ||
+          null;
+
+        const authInfo = {
           user: authContext.user,
           scopes: authContext.scopes,
+          workspaceId,
+          projectId,
+        };
+
+        const { clientTransport, pending } = await ensureInit();
+
+        const id = message?.id;
+        const isNotification = id === undefined && message?.method;
+
+        if (isNotification) {
+          await clientTransport.send(message, { authInfo });
+          return res.status(202).json(null);
+        }
+
+        const result = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            if (pending.has(id)) {
+              pending.delete(id);
+              reject(new Error("Request timed out"));
+            }
+          }, 120000);
+          pending.set(id, {
+            resolve: (msg) => {
+              clearTimeout(timeout);
+              resolve(msg);
+            },
+          });
+          clientTransport.send(message, { authInfo }).catch(reject);
         });
 
         return res.json(result);

@@ -7,8 +7,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
-import { createMcpHttpMiddleware } from "../src/mcp/http-transport.js";
-import { registerTool, clearTools } from "../src/core/tool-registry.js";
+import { createMcpHttpMiddleware } from "../../src/mcp/http-transport.js";
+import { registerTool, clearTools } from "../../src/core/tool-registry.js";
 
 describe("MCP Integration Tests", () => {
   let app;
@@ -44,8 +44,9 @@ describe("MCP Integration Tests", () => {
         })
         .expect(200);
 
-      expect(res.body.tools).toBeDefined();
-      expect(Array.isArray(res.body.tools)).toBe(true);
+      const result = res.body.result ?? res.body;
+      expect(result.tools).toBeDefined();
+      expect(Array.isArray(result.tools)).toBe(true);
     });
 
     it("should reject invalid JSON-RPC", async () => {
@@ -87,9 +88,10 @@ describe("MCP Integration Tests", () => {
           params: {},
         });
 
-      expect(mcpRes.body.tools).toHaveLength(2);
-      expect(mcpRes.body.tools.map((t) => t.name)).toContain("tool1");
-      expect(mcpRes.body.tools.map((t) => t.name)).toContain("tool2");
+      const mcpResult = mcpRes.body.result ?? mcpRes.body;
+      expect(mcpResult.tools).toHaveLength(2);
+      expect(mcpResult.tools.map((t) => t.name)).toContain("tool1");
+      expect(mcpResult.tools.map((t) => t.name)).toContain("tool2");
     });
 
     it("should execute same handler via MCP callTool", async () => {
@@ -117,8 +119,9 @@ describe("MCP Integration Tests", () => {
           params: { name: "counter", arguments: { increment: 5 } },
         });
 
-      expect(res1.body.isError).toBe(false);
-      const data1 = JSON.parse(res1.body.content[0].text);
+      const res1Result = res1.body.result ?? res1.body;
+      expect(res1Result.isError).toBe(false);
+      const data1 = JSON.parse(res1Result.content[0].text);
       expect(data1.count).toBe(5);
 
       // Call again
@@ -131,7 +134,8 @@ describe("MCP Integration Tests", () => {
           params: { name: "counter", arguments: { increment: 3 } },
         });
 
-      const data2 = JSON.parse(res2.body.content[0].text);
+      const res2Result = res2.body.result ?? res2.body;
+      const data2 = JSON.parse(res2Result.content[0].text);
       expect(data2.count).toBe(8);
     });
   });
@@ -158,7 +162,8 @@ describe("MCP Integration Tests", () => {
           params: { name: "context_aware", arguments: {} },
         });
 
-      expect(res.body.isError).toBe(false);
+      const ctxResult = res.body.result ?? res.body;
+      expect(ctxResult.isError).toBe(false);
     });
   });
 });

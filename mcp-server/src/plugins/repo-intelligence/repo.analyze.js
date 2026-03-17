@@ -12,14 +12,14 @@ import { routeTask } from "../llm-router/index.js";
  * Analyze a repository comprehensively
  * @param {string} path - Repository path
  * @param {string} context - Analysis context/purpose
+ * @param {string} [workspaceId] - Workspace ID (default: "global")
  * @returns {Promise<Object>} Analysis result
  */
-export async function repoAnalyze(path = ".", context = "Repository analysis") {
-  // Step 1: Collect all repository data
+export async function repoAnalyze(path = ".", context = "Repository analysis", workspaceId = "global") {
   const [commitsResult, issuesResult, structureResult] = await Promise.all([
-    getRecentCommits(path, 30),
-    getOpenIssues(path),
-    getProjectStructure(path, { maxDepth: 3 }),
+    getRecentCommits(path, 30, workspaceId),
+    getOpenIssues(path, workspaceId),
+    getProjectStructure(path, { maxDepth: 3, workspaceId }),
   ]);
 
   if (!commitsResult.ok || !issuesResult.ok || !structureResult.ok) {

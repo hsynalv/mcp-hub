@@ -334,11 +334,11 @@ export async function createServer() {
     if (!type) return res.status(400).json({ ok: false, error: { code: "missing_type", message: "Provide job type" } });
 
     try {
-      // Submit job to the real jobs system - requires a registered runner
       const job = submitJob(type, payload ?? {}, {
-        projectId: req.projectId,
-        projectEnv: req.projectEnv,
-        user: req.user || req.actor?.id,
+        workspaceId: req.workspaceId ?? req.headers?.["x-workspace-id"] ?? "global",
+        projectId: req.projectId ?? null,
+        userId: req.user?.id ?? req.actor?.id ?? req.user ?? null,
+        env: req.projectEnv,
       });
 
       res.status(202).json({

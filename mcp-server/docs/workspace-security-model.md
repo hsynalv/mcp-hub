@@ -68,7 +68,32 @@ All path validation goes through `src/core/workspace-paths.js`:
 - `validateWorkspacePath(path, workspaceId)` – validates path is within workspace boundary
 - `getWorkspaceRoot(workspaceId)` – resolves workspace root (per-workspace or derived)
 - `resolvePathInWorkspace(path, workspaceId)` – returns resolved path or null if invalid
+- `resolveWorkspacePath(path, workspaceId)` – validates and returns absolute path, throws on invalid
 - `sanitizeWorkspaceId(id)` – prevents workspace ID injection
+
+### Unified Workspace Path Validation
+
+All plugins that read or write files use the central `workspace-paths` module. The canonical flow is:
+
+```
+requestedPath
+  → validateWorkspacePath(requestedPath, workspaceId)
+  → resolveWorkspacePath()  [or validatePath for plugins needing relative path]
+  → perform file operation
+```
+
+**Migrated plugins:**
+
+| Plugin | Replaced | Central API |
+|--------|----------|-------------|
+| workspace | `validateWorkspacePath` (local) | `validateWorkspacePath`, `getWorkspaceRoot`, `requireWorkspaceId` |
+| repo-intelligence | `safeResolvePath` | `validateWorkspacePath`, `safeResolvePath` (wrapper) |
+| tech-detector | `safePath` | `validateWorkspacePath` |
+| project-orchestrator | `safeWorkspacePath` | `validatePathWithinBase` |
+
+**workspaceId requirement:** When `WORKSPACE_REQUIRE_ID=true`, `requireWorkspaceId(workspaceId, operation)` throws a structured error if `workspaceId` is missing. All file operations should pass `workspaceId` from context (e.g. `x-workspace-id` header or tool context).
+
+**For custom bases:** Plugins with project-scoped roots (e.g. `project-orchestrator` using `WORKSPACE_BASE/projectId`) use `validatePathWithinBase(requestedPath, basePath)` instead of `validateWorkspacePath`.
 
 ### Protections
 
@@ -111,8 +136,9 @@ All path validation goes through `src/core/workspace-paths.js`:
 | Variable | Purpose |
 |----------|---------|
 | `WORKSPACE_STRICT_BOUNDARIES` | When `true`, enforces cross-workspace access denial |
+| `WORKSPACE_REQUIRE_ID` | When `true`, `requireWorkspaceId` throws if workspaceId is missing |
 | `WORKSPACE_ROOT_BASE` | Base path for derived workspace roots |
-| `WORKSPACE_ROOT` / `WORKSPACE_BASE` | Legacy; used when no per-workspace root |
+| `WORKSPACE_ROOT` / `WORKSPACE_BASE` / `REPO_PATH` | Legacy; used when no per-workspace root |
 | `FILE_STORAGE_WORKSPACE_ISOLATION` | Enable workspace subdirs in file storage |
 | `FILE_STORAGE_WORKSPACE_STRICT` | Require workspaceId in file-storage context |
 

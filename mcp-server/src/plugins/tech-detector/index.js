@@ -6,25 +6,23 @@
  */
 
 import { readdir, readFile, stat } from "fs/promises";
-import { join, extname, basename, resolve, relative } from "path";
-import { homedir } from "os";
+import { join, extname, basename } from "path";
 import { Router } from "express";
 import { requireScope } from "../../core/auth.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
+import { validateWorkspacePath, requireWorkspaceId } from "../../core/workspace-paths.js";
 
 const handleError = createPluginErrorHandler("tech-detector");
 
-const WORKSPACE_BASE = process.env.WORKSPACE_BASE || process.env.WORKSPACE_ROOT || join(homedir(), "Projects");
-
-function safePath(requestedPath) {
-  const resolved = resolve(requestedPath || process.cwd());
-  const rel      = relative(WORKSPACE_BASE, resolved);
-  if (rel.startsWith("..") || rel.includes("../")) {
-    return { valid: false, error: `Path is outside allowed workspace: ${requestedPath}` };
+function safePath(requestedPath, workspaceId = "global") {
+  requireWorkspaceId(workspaceId, "tech_detect");
+  const result = validateWorkspacePath(requestedPath || ".", workspaceId);
+  if (!result.valid) {
+    return { valid: false, error: result.reason || result.error || "Path outside allowed workspace", path: null };
   }
-  return { valid: true, path: resolved };
+  return { valid: true, path: result.resolvedPath };
 }
 
 export const metadata = createMetadata({
@@ -675,8 +673,9 @@ export const tools = [
       },
       required: ["path"],
     },
-    handler: async ({ path }) => {
-      const v = safePath(path);
+    handler: async ({ path }, context = {}) => {
+      const wid = context.workspaceId ?? "global";
+      const v = safePath(path, wid);
       if (!v.valid) return { ok: false, error: { code: "invalid_path", message: v.error } };
       try {
         const stack = await detectStack(v.path);
@@ -750,7 +749,8 @@ export function register(app) {
   });
 
   router.post("/detect", requireScope("read"), async (req, res) => {
-    const v = safePath(req.body.path || process.cwd());
+    const wid = req.headers["x-workspace-id"] ?? "global";
+    const v = safePath(req.body.path || ".", wid);
     if (!v.valid) return res.status(400).json({ ok: false, error: { code: "invalid_path", message: v.error } });
     try {
       const stack = await detectStack(v.path);

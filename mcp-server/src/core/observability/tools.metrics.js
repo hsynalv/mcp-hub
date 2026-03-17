@@ -4,7 +4,7 @@
  * Metrics collection for tool discovery and usage.
  */
 
-import { getToolRegistry } from "../tools/tool.registry.js";
+import { getToolStats } from "../tool-registry.js";
 import { Metrics, getMetricsRegistry } from "./metrics.js";
 
 /**
@@ -82,14 +82,13 @@ export function recordRAGQuery(operation, durationMs, status) {
  * @returns {Object}
  */
 export function getToolMetrics() {
-  const registry = getToolRegistry();
-  const stats = registry.getStats();
+  const stats = getToolStats();
 
   return {
     tools_total: stats.total,
-    tools_production_ready: stats.productionReady,
+    tools_production_ready: 0,
     tools_by_plugin: stats.byPlugin,
-    tools_by_category: stats.byCategory,
+    tools_by_category: stats.byCategory || {},
   };
 }
 
@@ -97,9 +96,8 @@ export function getToolMetrics() {
  * Sync tool metrics with tool registry
  */
 export function syncToolMetrics() {
-  const registry = getToolRegistry();
+  const stats = getToolStats();
   const metrics = getMetricsRegistry();
-  const stats = registry.getStats();
 
   metrics.set(Metrics.TOOLS_TOTAL, stats.total);
 }

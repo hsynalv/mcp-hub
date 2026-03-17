@@ -4,8 +4,8 @@
  * Process and runtime statistics for observability.
  */
 
-import { getRegistry } from "../registry/index.js";
-import { getToolRegistry } from "../tools/tool.registry.js";
+import { getPlugins, getFailedPlugins } from "../plugins.js";
+import { getToolStats as getToolRegistryStats } from "../tool-registry.js";
 import { getJobManager } from "../jobs/job.manager.js";
 
 /**
@@ -157,16 +157,16 @@ function formatUptime(seconds) {
  * @returns {Object}
  */
 export function getPluginStats() {
-  const registry = getRegistry();
-  const status = registry.getStatus();
+  const loaded = getPlugins();
+  const failed = getFailedPlugins();
 
   return {
-    total: status.total,
-    enabled: status.enabled,
-    loaded: status.loaded,
-    healthy: status.healthy,
-    failed: status.failed,
-    pluginNames: status.pluginNames,
+    total: loaded.length + failed.length,
+    enabled: loaded.length,
+    loaded: loaded.length,
+    healthy: loaded.length,
+    failed: failed.length,
+    pluginNames: loaded.map((p) => p.name),
   };
 }
 
@@ -193,13 +193,7 @@ export async function getJobStats() {
  * @returns {Object}
  */
 export function getToolStats() {
-  const registry = getToolRegistry();
-
-  return {
-    total: registry.getAll().length,
-    byPlugin: registry.getStats().byPlugin,
-    categories: registry.getCategories(),
-  };
+  return getToolRegistryStats();
 }
 
 /**
@@ -221,22 +215,21 @@ export async function getSystemSnapshot() {
  * @returns {Object}
  */
 export function getHealthStatus() {
-  const registry = getRegistry();
-  const status = registry.getStatus();
+  const pluginStats = getPluginStats();
 
   // Determine overall health
   let status_code = "healthy";
   const checks = {
     runtime: true,
-    plugins: status.failed === 0,
-    registry: status.total > 0,
+    plugins: pluginStats.failed === 0,
+    registry: pluginStats.total > 0,
   };
 
-  if (status.failed > 0) {
+  if (pluginStats.failed > 0) {
     status_code = "degraded";
   }
 
-  if (status.total === 0) {
+  if (pluginStats.total === 0) {
     status_code = "unhealthy";
   }
 

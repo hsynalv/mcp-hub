@@ -16,7 +16,13 @@ import supertest from "supertest";
 import {
   registerJobRunner,
   clearHooks,
+  resetForTesting,
 } from "../src/core/jobs.js";
+
+// Disable auth for job API tests (open mode)
+const _origRead = process.env.HUB_READ_KEY;
+const _origWrite = process.env.HUB_WRITE_KEY;
+const _origAdmin = process.env.HUB_ADMIN_KEY;
 
 // Import tool-hooks to clear between tests
 import { clearHooks as clearToolHooks } from "../src/core/tool-hooks.js";
@@ -29,32 +35,32 @@ describe("Jobs API Integration", () => {
   let request;
 
   beforeEach(async () => {
-    // Clear any previously registered hooks/runners
+    delete process.env.HUB_READ_KEY;
+    delete process.env.HUB_WRITE_KEY;
+    delete process.env.HUB_ADMIN_KEY;
+    process.env.REDIS_URL = "";
+    resetForTesting();
     clearHooks();
     clearToolHooks();
 
-    // Create fresh server instance
     app = await createServer();
     request = supertest(app);
 
-    // Register a test job runner for "test.job" type
-    registerJobRunner("test.job", async (job, updateProgress, log) => {
+    registerJobRunner("test.job", async (payload, context, updateProgress, log) => {
       await log("Starting test job");
       await updateProgress(50);
 
-      if (job.payload.shouldFail) {
+      if (payload.shouldFail) {
         throw new Error("Job failed as requested");
       }
 
       await updateProgress(100);
       await log("Test job completed");
-      return { processed: true, input: job.payload };
+      return { processed: true, input: payload, workspaceId: context.workspaceId };
     });
 
-    // Register a slow job for state testing
-    registerJobRunner("slow.job", async (job, updateProgress, log) => {
+    registerJobRunner("slow.job", async (payload, context, updateProgress, log) => {
       await log("Starting slow job");
-      // Simulate long-running work without actually blocking
       await new Promise(resolve => setTimeout(resolve, 50));
       await updateProgress(100);
       return { completed: true };
@@ -62,7 +68,12 @@ describe("Jobs API Integration", () => {
   });
 
   afterEach(() => {
-    // Cleanup
+    if (_origRead !== undefined) process.env.HUB_READ_KEY = _origRead;
+    else delete process.env.HUB_READ_KEY;
+    if (_origWrite !== undefined) process.env.HUB_WRITE_KEY = _origWrite;
+    else delete process.env.HUB_WRITE_KEY;
+    if (_origAdmin !== undefined) process.env.HUB_ADMIN_KEY = _origAdmin;
+    else delete process.env.HUB_ADMIN_KEY;
     clearHooks();
     clearToolHooks();
   });
@@ -83,10 +94,11 @@ describe("Jobs API Integration", () => {
       expect(response.body.data.job).toMatchObject({
         type: "test.job",
         state: "queued",
-        context: {
+        context: expect.objectContaining({
+          workspaceId: expect.any(String),
           projectId: "test-project",
           env: "test-env",
-        },
+        }),
         progress: 0,
       });
       expect(response.body.data.job.id).toBeDefined();
@@ -213,10 +225,11 @@ describe("Jobs API Integration", () => {
         id: jobId,
         type: "test.job",
         state: expect.any(String),
-        context: {
+        context: expect.objectContaining({
+          workspaceId: expect.any(String),
           projectId: "test-project",
           env: "test-env",
-        },
+        }),
         progress: expect.any(Number),
         logCount: expect.any(Number),
         createdAt: expect.any(String),

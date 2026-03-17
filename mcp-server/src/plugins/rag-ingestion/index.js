@@ -107,10 +107,15 @@ const reindexBodySchema = z.object({
   chunkStrategy: z.enum(["fixed", "heading", "sliding", "semantic"]).optional(),
 });
 
-registerJobRunner("rag.ingestion", async (job, updateProgress, log) => {
-  const { request, context } = job.payload;
+registerJobRunner("rag.ingestion", async (payload, context, updateProgress, log) => {
+  const { request, context: payloadCtx } = payload;
+  const execCtx = {
+    workspaceId: context.workspaceId ?? payloadCtx?.workspaceId ?? "global",
+    projectId: context.projectId ?? payloadCtx?.projectId ?? null,
+    actor: context.userId ?? payloadCtx?.actor ?? "anonymous",
+  };
   await log("Starting ingestion pipeline");
-  const result = await runPipeline(request, context);
+  const result = await runPipeline(request, execCtx);
   await updateProgress(100);
   await log(`Completed: ${result.chunks?.length || 0} chunks`);
   return result;
@@ -355,7 +360,7 @@ export function register(app) {
       const job = submitJob(
         "rag.ingestion",
         { request, context: ctx },
-        { projectId: ctx.projectId, user: ctx.actor }
+        { workspaceId: ctx.workspaceId, projectId: ctx.projectId, userId: ctx.actor }
       );
       await auditEntry({
         operation: "ingest_async",
@@ -403,7 +408,7 @@ export function register(app) {
     }
     const { async: runAsync, ...request } = parsed.data;
     if (runAsync) {
-      const job = submitJob("rag.ingestion", { request, context: ctx }, { projectId: ctx.projectId, user: ctx.actor });
+      const job = submitJob("rag.ingestion", { request, context: ctx }, { workspaceId: ctx.workspaceId, projectId: ctx.projectId, userId: ctx.actor });
       return res.status(202).json({ ok: true, data: { jobId: job.id, state: "queued" } });
     }
     const result = await runPipeline(request, ctx);

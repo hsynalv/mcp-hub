@@ -190,6 +190,33 @@ export function listTools() {
 }
 
 /**
+ * Get tool statistics for observability.
+ * @returns {{ total: number, byPlugin: Object, categories: string[], byCategory: Object }}
+ */
+export function getToolStats() {
+  const toolList = listTools();
+  const byPlugin = {};
+  const byCategory = {};
+
+  for (const t of toolList) {
+    const plugin = t.plugin || "unknown";
+    byPlugin[plugin] = (byPlugin[plugin] || 0) + 1;
+    if (t.tags?.length) {
+      for (const tag of t.tags) {
+        byCategory[tag] = (byCategory[tag] || 0) + 1;
+      }
+    }
+  }
+
+  return {
+    total: toolList.length,
+    byPlugin,
+    categories: Object.keys(byCategory).sort(),
+    byCategory,
+  };
+}
+
+/**
  * Clear all tools (mainly for testing).
  */
 export function clearTools() {

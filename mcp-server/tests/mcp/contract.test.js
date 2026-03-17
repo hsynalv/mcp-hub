@@ -5,32 +5,34 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createMcpServer } from "../src/mcp/gateway.js";
+import { createMcpServerWithHandleRequest } from "../../src/mcp/gateway.js";
 import {
   registerTool,
   clearTools,
   listTools,
   ToolTags,
-} from "../src/core/tool-registry.js";
+} from "../../src/core/tool-registry.js";
 
 // Mock policy engine
-vi.mock("../src/plugins/policy/policy.engine.js", () => ({
+vi.mock("../../src/plugins/policy/policy.engine.js", () => ({
   evaluate: vi.fn(() => ({ allowed: true })),
 }));
 
 describe("MCP Contract Tests", () => {
-  beforeEach(() => {
+  let mcp;
+
+  beforeEach(async () => {
     clearTools();
+    mcp = await createMcpServerWithHandleRequest();
   });
 
   describe("listTools contract", () => {
     it("should return empty tools list when registry is empty", async () => {
-      const server = createMcpServer();
-      const result = await server.handleRequest(
+      const response = await mcp.handleRequest(
         { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
         { user: null }
       );
-
+      const result = response?.result ?? response;
       expect(result.tools).toEqual([]);
     });
 
@@ -55,17 +57,15 @@ describe("MCP Contract Tests", () => {
         tags: [ToolTags.WRITE, ToolTags.NETWORK],
       });
 
-      const server = createMcpServer();
-      const result = await server.handleRequest(
+      const response = await mcp.handleRequest(
         { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
         { user: null }
       );
-
+      const result = response?.result ?? response;
       expect(result.tools).toHaveLength(2);
       expect(result.tools.map((t) => t.name)).toContain("test_tool");
       expect(result.tools.map((t) => t.name)).toContain("another_tool");
 
-      // Verify schema structure
       const testTool = result.tools.find((t) => t.name === "test_tool");
       expect(testTool.description).toBe("A test tool");
       expect(testTool.inputSchema.type).toBe("object");
@@ -82,12 +82,11 @@ describe("MCP Contract Tests", () => {
         tags: [ToolTags.READ],
       });
 
-      const server = createMcpServer();
-      const result = await server.handleRequest(
+      const response = await mcp.handleRequest(
         { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
         { user: null }
       );
-
+      const result = response?.result ?? response;
       const tool = result.tools[0];
       expect(tool.handler).toBeUndefined();
       expect(tool.plugin).toBeUndefined();
@@ -100,8 +99,7 @@ describe("MCP Contract Tests", () => {
 
   describe("callTool contract", () => {
     it("should return error for non-existent tool", async () => {
-      const server = createMcpServer();
-      const result = await server.handleRequest(
+      const response = await mcp.handleRequest(
         {
           jsonrpc: "2.0",
           id: 1,
@@ -110,7 +108,7 @@ describe("MCP Contract Tests", () => {
         },
         { user: null }
       );
-
+      const result = response?.result ?? response;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("tool_not_found");
     });
@@ -128,8 +126,7 @@ describe("MCP Contract Tests", () => {
         tags: [ToolTags.READ],
       });
 
-      const server = createMcpServer();
-      const result = await server.handleRequest(
+      const response = await mcp.handleRequest(
         {
           jsonrpc: "2.0",
           id: 1,
@@ -138,7 +135,7 @@ describe("MCP Contract Tests", () => {
         },
         { user: null }
       );
-
+      const result = response?.result ?? response;
       expect(result.isError).toBe(false);
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe("text");
@@ -158,8 +155,7 @@ describe("MCP Contract Tests", () => {
         tags: [ToolTags.READ],
       });
 
-      const server = createMcpServer();
-      const result = await server.handleRequest(
+      const response = await mcp.handleRequest(
         {
           jsonrpc: "2.0",
           id: 1,
@@ -168,7 +164,7 @@ describe("MCP Contract Tests", () => {
         },
         { user: null }
       );
-
+      const result = response?.result ?? response;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("tool_execution_error");
     });

@@ -45,14 +45,19 @@ export async function loadPdf(input) {
   if (!text) {
     const provider = getOcrProvider();
     if (provider && provider.name !== "noop" && (await provider.checkHealth())) {
-      const extracted = await provider.extractFromPdfPage(buffer, 0);
+      const numPages = data.numpages || 1;
+      const texts = [];
+      for (let i = 0; i < numPages; i++) {
+        const pageText = await provider.extractFromPdfPage(buffer, i);
+        texts.push(pageText || "");
+      }
       return {
-        content: extracted || "",
-        metadata: { sourceType: "pdf", extractedVia: "ocr", pages: data.numpages },
+        content: texts.join("\n\n").trim(),
+        metadata: { sourceType: "pdf", extractedVia: "ocr", pages: numPages },
       };
     }
     throw new Error(
-      "PDF appears to be image-based (scanned). No text extracted. Register an OCR provider for scanned PDF support."
+      "PDF appears to be image-based (scanned). No text extracted. Set RAG_OCR_PROVIDER and register an OCR provider for scanned PDF support."
     );
   }
 

@@ -16,10 +16,11 @@ let store = null;
 let useRedis = false;
 
 function initStore() {
-  if (config.redis.enabled && !store) {
+  const redisUrl = process.env.REDIS_URL !== undefined ? process.env.REDIS_URL : (config.redis?.url ?? "");
+  if (redisUrl && !store) {
     try {
       store = new RedisJobStore({
-        url: config.redis.url,
+        url: redisUrl,
         keyPrefix: config.redis.keyPrefix,
         ttlSeconds: config.redis.ttlSeconds,
       });
@@ -59,32 +60,48 @@ export const JobState = {
 /**
  * Register a job runner for a specific job type
  * @param {string} type - Job type identifier
- * @param {Function} handler - Async handler function(job, updateProgress, log)
+ * @param {Function} handler - Async handler(payload, context, updateProgress, log)
+ *   - payload: Job input data
+ *   - context: { workspaceId, projectId, userId } (workspaceId defaults to "global")
+ *   - updateProgress: (percent) => Promise<void>
+ *   - log: (message) => Promise<void>
  */
 export function registerJobRunner(type, handler) {
   jobRunners.set(type, handler);
   console.log(`[jobs] registered runner for type: ${type}`);
 }
 
+/** Clear all job runners (for tests) */
+export function clearHooks() {
+  jobRunners.clear();
+}
+
+/** Reset job store and memory (for tests). Use with clearHooks. */
+export function resetForTesting() {
+  store = null;
+  useRedis = false;
+  jobs.clear();
+}
+
 /**
  * Legacy: Create a job directly with inline runner
  * @param {string} type - Job type
  * @param {object} payload - Input data
- * @param {Function} runner - Async runner function
+ * @param {Function} runner - Async runner(payload, context, updateProgress, log)
+ * @param {object} [context] - Execution context
  * @returns {object} Job descriptor
  */
-export function createJob(type, payload, runner) {
-  // Register temporary runner
+export function createJob(type, payload, runner, context = {}) {
   const tempType = `${type}_${randomUUID().slice(0, 8)}`;
   registerJobRunner(tempType, runner);
-  return submitJob(tempType, payload);
+  return submitJob(tempType, payload, context);
 }
 
 /**
  * Submit a job for execution
  * @param {string} type - Job type (must have registered runner)
  * @param {object} payload - Job input data
- * @param {object} context - Execution context
+ * @param {object} context - Execution context { workspaceId?, projectId?, userId?, ... }
  * @returns {object} Job descriptor
  */
 export function submitJob(type, payload = {}, context = {}) {
@@ -95,16 +112,19 @@ export function submitJob(type, payload = {}, context = {}) {
   const id = randomUUID();
   const now = new Date().toISOString();
 
+  const jobContext = {
+    workspaceId: context.workspaceId ?? context.workspace ?? "global",
+    projectId: context.projectId ?? context.project?.id ?? null,
+    userId: context.userId ?? context.user ?? context.actor ?? null,
+    env: context.env ?? context.projectEnv ?? "development",
+  };
+
   const job = {
     id,
     type,
     state: JobState.QUEUED,
     payload,
-    context: {
-      projectId: context.projectId || context.project?.id || null,
-      env: context.env || context.projectEnv || "development",
-      user: context.user || null,
-    },
+    context: jobContext,
     progress: 0,
     logs: [],
     result: null,
@@ -139,10 +159,14 @@ export function submitJob(type, payload = {}, context = {}) {
  * Internal: Execute a job
  */
 async function runJob(id) {
-  // Get job from appropriate store
   let job;
   if (useRedis && store) {
-    job = await store.get(id);
+    try {
+      job = await store.get(id);
+    } catch {
+      job = jobs.get(id);
+    }
+    if (!job) job = jobs.get(id);
   } else {
     job = jobs.get(id);
   }
@@ -192,43 +216,11 @@ async function runJob(id) {
     }
   };
 
-  // Legacy compatibility wrapper
-  const legacyJob = {
-    ...job,
-    succeed: async (result) => {
-      if (useRedis && store) {
-        const current = await store.get(id);
-        if (current && current.state === JobState.RUNNING) {
-          await store.markCompleted(id, result ?? null);
-        }
-      } else {
-        if (job.state === JobState.RUNNING) {
-          job.state = JobState.COMPLETED;
-          job.result = result ?? null;
-          job.finishedAt = new Date().toISOString();
-        }
-      }
-    },
-    fail: async (err) => {
-      const errorMsg = err?.message ?? String(err);
-      if (useRedis && store) {
-        const current = await store.get(id);
-        if (current && current.state === JobState.RUNNING) {
-          await store.markFailed(id, errorMsg);
-        }
-      } else {
-        if (job.state === JobState.RUNNING) {
-          job.state = JobState.FAILED;
-          job.error = errorMsg;
-          job.finishedAt = new Date().toISOString();
-        }
-      }
-    },
-  };
+  const ctx = { ...job.context, workspaceId: job.context.workspaceId ?? "global" };
 
   try {
     await log(`Starting ${job.type} job`);
-    const result = await runner(legacyJob, updateProgress, log);
+    const result = await runner(job.payload, ctx, updateProgress, log);
 
     // If runner didn't call succeed/fail, mark as done
     if (useRedis && store) {

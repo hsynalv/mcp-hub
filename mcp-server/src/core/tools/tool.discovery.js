@@ -1,7 +1,8 @@
 /**
  * Tool Discovery
  *
- * Discovers and aggregates tools from the plugin registry.
+ * @deprecated Uses the deprecated plugin registry. Tool discovery for observability
+ * now uses getToolStats() from tool-registry.js. Kept for tools/tool.registry tests.
  */
 
 import { getRegistry } from "../registry/index.js";

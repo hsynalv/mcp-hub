@@ -5,6 +5,7 @@
  * Supports both HTTP (Streamable HTTP) and STDIO transports.
  */
 
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { listTools, callTool } from "../core/tool-registry.js";
@@ -40,12 +41,15 @@ export function createMcpServer() {
   });
 
   // Handle callTool request
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
+    const authInfo = extra?.authInfo || {};
     const context = {
       method: "MCP",
-      user: request.context?.user || null,
+      user: authInfo.user ?? request.context?.user ?? null,
       requestId: request.id,
+      workspaceId: authInfo.workspaceId ?? null,
+      projectId: authInfo.projectId ?? null,
     };
 
     const result = await callTool(name, args || {}, context);
@@ -100,4 +104,53 @@ export function createMcpServer() {
   });
 
   return server;
+}
+
+/**
+ * Create an MCP server with a handleRequest helper for testing.
+ * Uses InMemoryTransport to simulate stateless HTTP message flow.
+ * @returns {Promise<{ handleRequest: (message: object, context?: object) => Promise<object> }>}
+ */
+export async function createMcpServerWithHandleRequest() {
+  const server = createMcpServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const pending = new Map();
+  clientTransport.onmessage = (message) => {
+    const id = message?.id;
+    if (id !== undefined && pending.has(id)) {
+      const { resolve } = pending.get(id);
+      pending.delete(id);
+      resolve(message);
+    }
+  };
+  return {
+    handleRequest: async (message, context = {}) => {
+      const authInfo = {
+        user: context.user ?? null,
+        workspaceId: context.workspaceId ?? null,
+        projectId: context.projectId ?? null,
+      };
+      const id = message?.id;
+      if (id === undefined) {
+        await clientTransport.send(message, { authInfo });
+        return null;
+      }
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (pending.has(id)) {
+            pending.delete(id);
+            reject(new Error("Request timed out"));
+          }
+        }, 10000);
+        pending.set(id, {
+          resolve: (msg) => {
+            clearTimeout(timeout);
+            resolve(msg);
+          },
+        });
+        clientTransport.send(message, { authInfo }).catch(reject);
+      });
+    },
+  };
 }

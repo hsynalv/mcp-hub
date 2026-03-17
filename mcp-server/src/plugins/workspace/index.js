@@ -16,9 +16,9 @@ import {
   listDirectory,
   searchFiles,
   patchFile,
-  validateWorkspacePath,
   extractContext,
 } from "./workspace.core.js";
+import { getWorkspaceRoot } from "../../core/workspace-paths.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 
@@ -83,8 +83,9 @@ export const tools = [
       required: ["path"],
     },
     handler: async (args, context = {}) => {
-      const result = await readFile(args.path, { maxSize: args.maxSize });
-      await wsAudit({ operation: "read", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0 });
+      const wid = context.workspaceId ?? "global";
+      const result = await readFile(args.path, wid, { maxSize: args.maxSize });
+      await wsAudit({ operation: "read", path: args.path, allowed: result.ok, actor: context.actor || "mcp", workspaceId: wid, correlationId: generateCorrelationId(), durationMs: 0 });
       return result;
     },
   },
@@ -103,8 +104,9 @@ export const tools = [
       required: ["path", "content"],
     },
     handler: async (args, context = {}) => {
-      const result = await writeFile(args.path, args.content, { createDirs: args.createDirs });
-      await wsAudit({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      const wid = context.workspaceId ?? "global";
+      const result = await writeFile(args.path, args.content, { createDirs: args.createDirs, workspaceId: wid });
+      await wsAudit({ operation: "write", path: args.path, allowed: result.ok, actor: context.actor || "mcp", workspaceId: wid, correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -121,8 +123,9 @@ export const tools = [
       required: ["path"],
     },
     handler: async (args, context = {}) => {
-      const result = await deleteFile(args.path);
-      await wsAudit({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      const wid = context.workspaceId ?? "global";
+      const result = await deleteFile(args.path, wid);
+      await wsAudit({ operation: "delete", path: args.path, allowed: result.ok, actor: context.actor || "mcp", workspaceId: wid, correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -140,8 +143,9 @@ export const tools = [
       required: ["from", "to"],
     },
     handler: async (args, context = {}) => {
-      const result = await moveFile(args.from, args.to);
-      await wsAudit({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
+      const wid = context.workspaceId ?? "global";
+      const result = await moveFile(args.from, args.to, wid);
+      await wsAudit({ operation: "move", path: `${args.from} → ${args.to}`, allowed: result.ok, actor: context.actor || "mcp", workspaceId: wid, correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
   },
@@ -155,7 +159,7 @@ export const tools = [
         path: { type: "string", description: "Directory path (default: workspace root)", default: "." },
       },
     },
-    handler: async (args) => listDirectory(args.path),
+    handler: async (args, context = {}) => listDirectory(args.path, { workspaceId: context.workspaceId ?? "global" }),
   },
   {
     name: "workspace_search",
@@ -169,7 +173,7 @@ export const tools = [
       },
       required: ["pattern"],
     },
-    handler: async (args) => searchFiles(args.pattern, { root: args.root }),
+    handler: async (args, context = {}) => searchFiles(args.pattern, { root: args.root, workspaceId: context.workspaceId ?? "global" }),
   },
   {
     name: "workspace_patch",
@@ -186,8 +190,9 @@ export const tools = [
       required: ["path", "search", "replace"],
     },
     handler: async (args, context = {}) => {
+      const wid = context.workspaceId ?? "global";
       const patch  = `${args.search}===REPLACE===${args.replace}`;
-      const result = await patchFile(args.path, patch, { mode: "search-replace" });
+      const result = await patchFile(args.path, patch, { mode: "search-replace", workspaceId: wid });
       await wsAudit({ operation: "patch", path: args.path, allowed: result.ok, actor: context.actor || "mcp", correlationId: generateCorrelationId(), durationMs: 0, ...(args.explanation && { reason: args.explanation }) });
       return result;
     },
@@ -219,9 +224,7 @@ export function register(app) {
 
   router.get("/health", async (_req, res) => {
     try {
-      const { homedir } = await import("os");
-      const { join }    = await import("path");
-      const root = process.env.WORKSPACE_ROOT || join(homedir(), "Projects");
+      const root = getWorkspaceRoot("global");
       let rootExists = false;
       try { await (await import("fs/promises")).access(root); rootExists = true; } catch { /* noop */ }
       res.json({ ok: true, plugin: "workspace", version: "1.0.0", root, rootExists });
@@ -253,7 +256,8 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
-    const result = await readFile(path, { maxSize: parseInt(req.query.maxSize, 10) || undefined });
+    const wid = context.workspaceId ?? "global";
+    const result = await readFile(path, wid, { maxSize: parseInt(req.query.maxSize, 10) || undefined });
 
     await wsAudit({
       operation: "read",
@@ -296,7 +300,8 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
-    const result = await writeFile(path, content, { createDirs: createDirs !== false });
+    const wid = context.workspaceId ?? "global";
+    const result = await writeFile(path, content, { createDirs: createDirs !== false, workspaceId: wid });
 
     await wsAudit({
       operation: "write",
@@ -322,7 +327,8 @@ export function register(app) {
     const startTime = Date.now();
     const correlationId = generateCorrelationId();
 
-    const result = await listDirectory(path);
+    const wid = context.workspaceId ?? "global";
+    const result = await listDirectory(path, { workspaceId: wid });
 
     await wsAudit({
       operation: "list",
@@ -365,7 +371,8 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
-    const result = await searchFiles(pattern, { root: req.query.root });
+    const wid = context.workspaceId ?? "global";
+    const result = await searchFiles(pattern, { root: req.query.root, workspaceId: wid });
 
     await wsAudit({
       operation: "search",
@@ -407,8 +414,9 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: { code: err.code, message: err.message } });
     }
 
+    const wid = context.workspaceId ?? "global";
     const patch = `${search}===REPLACE===${replace}`;
-    const result = await patchFile(path, patch, { mode: "search-replace" });
+    const result = await patchFile(path, patch, { mode: "search-replace", workspaceId: wid });
 
     await wsAudit({
       operation: "patch",
@@ -439,8 +447,9 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: { code: "missing_path", message: "path query parameter required" } });
     }
 
-    const result = await deleteFile(path);
-    await wsAudit({ operation: "delete", path, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
+    const wid = context.workspaceId ?? "global";
+    const result = await deleteFile(path, wid);
+    await wsAudit({ operation: "delete", path, allowed: result.ok, actor: context.actor, workspaceId: wid, correlationId, durationMs: Date.now() - startTime });
     res.status(result.ok ? 200 : result.error?.code === "file_not_found" ? 404 : 400).json(result);
   });
 
@@ -455,8 +464,9 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: { code: "missing_fields", message: "from and to required" } });
     }
 
-    const result = await moveFile(from, to);
-    await wsAudit({ operation: "move", path: `${from} → ${to}`, allowed: result.ok, actor: context.actor, workspaceId: context.workspaceId, correlationId, durationMs: Date.now() - startTime });
+    const wid = context.workspaceId ?? "global";
+    const result = await moveFile(from, to, wid);
+    await wsAudit({ operation: "move", path: `${from} → ${to}`, allowed: result.ok, actor: context.actor, workspaceId: wid, correlationId, durationMs: Date.now() - startTime });
     res.status(result.ok ? 200 : 400).json(result);
   });
 

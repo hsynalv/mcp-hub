@@ -109,7 +109,8 @@ export function register(app) {
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
-    const result = await getRecentCommits(parsed.data.path, parsed.data.limit);
+    const wid = req.headers["x-workspace-id"] ?? "global";
+    const result = await getRecentCommits(parsed.data.path, parsed.data.limit, wid);
     res.status(result.ok ? 200 : 500).json(result);
   });
 
@@ -133,7 +134,8 @@ export function register(app) {
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
-    const result = await getOpenIssues(parsed.data.path);
+    const wid = req.headers["x-workspace-id"] ?? "global";
+    const result = await getOpenIssues(parsed.data.path, wid);
     res.status(result.ok ? 200 : 500).json(result);
   });
 
@@ -144,7 +146,8 @@ export function register(app) {
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "invalid_query", details: parsed.error.flatten() });
     }
-    const result = await getProjectStructure(parsed.data.path, { maxDepth: parsed.data.maxDepth });
+    const wid = req.headers["x-workspace-id"] ?? "global";
+    const result = await getProjectStructure(parsed.data.path, { maxDepth: parsed.data.maxDepth, workspaceId: wid });
     res.status(result.ok ? 200 : 500).json(result);
   });
 
@@ -156,7 +159,8 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: "invalid_request", details: parsed.error.flatten() });
     }
     const { path, context } = parsed.data;
-    const result = await repoAnalyze(path, context);
+    const wid = req.headers["x-workspace-id"] ?? "global";
+    const result = await repoAnalyze(path, context, wid);
     if (result.ok) await repoAudit(req, "analyze", { path, context, model: result.data?.model });
     res.status(result.ok ? 200 : 500).json(result);
   });
@@ -170,10 +174,11 @@ export function register(app) {
     }
     const { path, context: explanation } = parsed.data;
 
+    const wid = req.headers["x-workspace-id"] ?? "global";
     const [commitsResult, issuesResult, structureResult] = await Promise.all([
-      getRecentCommits(path, 30),
-      getOpenIssues(path),
-      getProjectStructure(path, { maxDepth: 3 }),
+      getRecentCommits(path, 30, wid),
+      getOpenIssues(path, wid),
+      getProjectStructure(path, { maxDepth: 3, workspaceId: wid }),
     ]);
 
     if (!commitsResult.ok || !issuesResult.ok || !structureResult.ok) {
@@ -284,8 +289,9 @@ export const tools = [
       },
       required: ["query"],
     },
-    handler: async ({ path = ".", query, limit = 5, explanation }) => {
-      const result = await getSimilarCommits(path, query, { limit });
+    handler: async ({ path = ".", query, limit = 5, explanation }, context = {}) => {
+      const wid = context.workspaceId ?? "global";
+      const result = await getSimilarCommits(path, query, { limit, workspaceId: wid });
       if (!result.ok) return result;
       return { ok: true, data: { ...result.data, explanation } };
     },
@@ -303,8 +309,9 @@ export const tools = [
       },
       required: ["explanation"],
     },
-    handler: async ({ path = ".", limit = 20, explanation }) => {
-      const result = await getRecentCommits(path, limit);
+    handler: async ({ path = ".", limit = 20, explanation }, context = {}) => {
+      const wid = context.workspaceId ?? "global";
+      const result = await getRecentCommits(path, limit, wid);
       if (!result.ok) return result;
       return { ok: true, data: { ...result.data, explanation } };
     },
@@ -321,8 +328,9 @@ export const tools = [
       },
       required: ["explanation"],
     },
-    handler: async ({ path = ".", explanation }) => {
-      const result = await getOpenIssues(path);
+    handler: async ({ path = ".", explanation }, context = {}) => {
+      const wid = context.workspaceId ?? "global";
+      const result = await getOpenIssues(path, wid);
       if (!result.ok) return result;
       return { ok: true, data: { ...result.data, explanation } };
     },
@@ -340,8 +348,9 @@ export const tools = [
       },
       required: ["explanation"],
     },
-    handler: async ({ path = ".", maxDepth = 3, explanation }) => {
-      const result = await getProjectStructure(path, { maxDepth });
+    handler: async ({ path = ".", maxDepth = 3, explanation }, context = {}) => {
+      const wid = context.workspaceId ?? "global";
+      const result = await getProjectStructure(path, { maxDepth, workspaceId: wid });
       if (!result.ok) return result;
       return { ok: true, data: { ...result.data, explanation } };
     },
@@ -358,11 +367,12 @@ export const tools = [
       },
       required: ["explanation"],
     },
-    handler: async ({ path = ".", explanation }) => {
+    handler: async ({ path = ".", explanation }, context = {}) => {
+      const wid = context.workspaceId ?? "global";
       const [commitsResult, issuesResult, structureResult] = await Promise.all([
-        getRecentCommits(path, 30),
-        getOpenIssues(path),
-        getProjectStructure(path, { maxDepth: 3 }),
+        getRecentCommits(path, 30, wid),
+        getOpenIssues(path, wid),
+        getProjectStructure(path, { maxDepth: 3, workspaceId: wid }),
       ]);
 
       if (!commitsResult.ok || !issuesResult.ok || !structureResult.ok) {
@@ -390,8 +400,9 @@ export const tools = [
       },
       required: ["explanation"],
     },
-    handler: async ({ path = ".", context = "Repository analysis", explanation }) => {
-      const result = await repoAnalyze(path, context);
+    handler: async ({ path = ".", context = "Repository analysis", explanation }, ctx = {}) => {
+      const wid = ctx.workspaceId ?? "global";
+      const result = await repoAnalyze(path, context, wid);
       if (!result.ok) return result;
       return { ok: true, data: { ...result.data, explanation } };
     },

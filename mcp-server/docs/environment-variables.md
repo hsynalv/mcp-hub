@@ -77,6 +77,15 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+## RAG (Document indexing)
+
+```env
+RAG_VECTOR_STORE_TYPE=memory
+RAG_EMBEDDING_MODEL=text-embedding-3-small
+# Optional: OCR provider name for scanned PDFs (e.g. tesseract)
+RAG_OCR_PROVIDER=
+```
+
 ## Redis (Optional)
 
 ```env

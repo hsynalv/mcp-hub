@@ -2,37 +2,38 @@
  * Repo Intelligence Plugin - Core
  *
  * Repository analysis and data collection functions.
+ * Path validation via central workspace-paths module.
  */
 
 import { exec } from "child_process";
 import { promisify } from "util";
 import { readdir, stat, readFile } from "fs/promises";
-import { join, relative, resolve } from "path";
-
-// ── Path safety ───────────────────────────────────────────────────────────────
+import { join, relative } from "path";
+import { validateWorkspacePath, getWorkspaceRoot, requireWorkspaceId } from "../../core/workspace-paths.js";
 
 /**
- * The root directory that all repo path requests must be confined to.
- * Defaults to cwd(); override with REPO_PATH env var for production.
+ * The root directory for repo operations (legacy export).
+ * Use getWorkspaceRoot(workspaceId) for workspace-scoped roots.
  */
-export const BASE_REPO_PATH = resolve(process.env.REPO_PATH || process.cwd());
+export const BASE_REPO_PATH = getWorkspaceRoot("global");
 
 /**
- * Validate and resolve a requested repo path.
- * Throws if the resolved path escapes BASE_REPO_PATH (path traversal prevention).
- *
- * @param {string} requestedPath - The path provided by the caller
+ * Resolve and validate repo path using central module.
+ * @param {string} requestedPath - Path from caller
+ * @param {string} [workspaceId] - Workspace ID (default: "global")
  * @returns {string} Resolved absolute path
+ * @throws {Error} When path is invalid
  */
-export function safeResolvePath(requestedPath) {
-  const resolved = resolve(requestedPath);
-  if (!resolved.startsWith(BASE_REPO_PATH)) {
-    throw Object.assign(
-      new Error(`Path "${requestedPath}" is outside the allowed base directory`),
-      { code: "path_traversal", base: BASE_REPO_PATH, requested: resolved }
-    );
+export function safeResolvePath(requestedPath, workspaceId = "global") {
+  requireWorkspaceId(workspaceId, "repo_path");
+  const result = validateWorkspacePath(requestedPath, workspaceId);
+  if (!result.valid) {
+    const err = new Error(result.reason || result.error || "Path outside allowed directory");
+    err.code = result.error || "path_traversal";
+    err.base = getWorkspaceRoot(workspaceId);
+    throw err;
   }
-  return resolved;
+  return result.resolvedPath;
 }
 
 const execAsync = promisify(exec);
@@ -63,10 +64,11 @@ async function git(args, cwd) {
  * Get recent commits with detailed info
  * @param {string} repoPath - Repository path
  * @param {number} limit - Number of commits (default 20)
+ * @param {string} [workspaceId] - Workspace ID (default: "global")
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
-export async function getRecentCommits(repoPath, limit = 20) {
-  try { repoPath = safeResolvePath(repoPath); } catch (err) {
+export async function getRecentCommits(repoPath, limit = 20, workspaceId = "global") {
+  try { repoPath = safeResolvePath(repoPath, workspaceId); } catch (err) {
     return { ok: false, error: { code: err.code || "path_error", message: err.message } };
   }
 
@@ -196,7 +198,8 @@ export async function getSimilarCommits(repoPath, query, options = {}) {
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function getProjectStructure(repoPath, options = {}) {
-  try { repoPath = safeResolvePath(repoPath); } catch (err) {
+  const workspaceId = options.workspaceId ?? "global";
+  try { repoPath = safeResolvePath(repoPath, workspaceId); } catch (err) {
     return { ok: false, error: { code: err.code || "path_error", message: err.message } };
   }
 
@@ -382,8 +385,8 @@ function countDirs(structure) {
  * @param {string} repoPath - Repository path
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
-export async function getOpenIssues(repoPath) {
-  try { repoPath = safeResolvePath(repoPath); } catch (err) {
+export async function getOpenIssues(repoPath, workspaceId = "global") {
+  try { repoPath = safeResolvePath(repoPath, workspaceId); } catch (err) {
     return { ok: false, error: { code: err.code || "path_error", message: err.message } };
   }
 

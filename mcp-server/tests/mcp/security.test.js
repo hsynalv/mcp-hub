@@ -7,8 +7,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import request from "supertest";
 import express from "express";
-import { createMcpHttpMiddleware } from "../src/mcp/http-transport.js";
-import { registerTool, clearTools } from "../src/core/tool-registry.js";
+import { createMcpHttpMiddleware } from "../../src/mcp/http-transport.js";
+import { registerTool, clearTools } from "../../src/core/tool-registry.js";
 
 // Mock policy engine to allow all requests
 vi.mock("../src/plugins/policy/policy.engine.js", () => ({

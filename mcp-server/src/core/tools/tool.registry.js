@@ -1,7 +1,8 @@
 /**
  * Tool Registry
  *
- * Central registry for managing and caching discovered tools.
+ * @deprecated MCP tools are in tool-registry.js. This registry uses the deprecated
+ * plugin registry for discovery. Observability uses getToolStats() from tool-registry.js.
  */
 
 import {

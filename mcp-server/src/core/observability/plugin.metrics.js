@@ -4,7 +4,7 @@
  * Metrics collection for plugin system.
  */
 
-import { getRegistry } from "../registry/index.js";
+import { getPlugins, getFailedPlugins } from "../plugins.js";
 import { Metrics, getMetricsRegistry } from "./metrics.js";
 
 /**
@@ -58,15 +58,15 @@ export function updatePluginGauge(pluginName, enabled) {
  * @returns {Object}
  */
 export function getPluginMetrics() {
-  const registry = getRegistry();
-  const status = registry.getStatus();
+  const loaded = getPlugins();
+  const failed = getFailedPlugins();
 
   return {
-    plugins_enabled: status.enabled,
-    plugins_total: status.total,
-    plugins_healthy: status.healthy,
-    plugins_failed: status.failed,
-    plugins_loaded: status.loaded,
+    plugins_enabled: loaded.length,
+    plugins_total: loaded.length + failed.length,
+    plugins_healthy: loaded.length,
+    plugins_failed: failed.length,
+    plugins_loaded: loaded.length,
   };
 }
 
@@ -82,12 +82,11 @@ export function initializePluginMetrics() {
 }
 
 /**
- * Sync plugin metrics with registry
+ * Sync plugin metrics with plugin loader
  */
 export function syncPluginMetrics() {
-  const registry = getRegistry();
+  const loaded = getPlugins();
   const metrics = getMetricsRegistry();
-  const status = registry.getStatus();
 
-  metrics.set(Metrics.PLUGINS_ENABLED, status.enabled);
+  metrics.set(Metrics.PLUGINS_ENABLED, loaded.length);
 }

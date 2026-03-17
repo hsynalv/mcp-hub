@@ -1,8 +1,8 @@
 /**
  * Plugin Registry
  *
- * Central plugin management system for MCP-Hub platform.
- * Handles plugin discovery, lifecycle, health checks, and tool aggregation.
+ * @deprecated Use plugins.js for plugin loading. Server uses loadPlugins() from
+ * plugins.js. This registry is not initialized during startup.
  */
 
 import { discoverPlugins, DEFAULT_PLUGINS_DIR } from "./plugin.discovery.js";

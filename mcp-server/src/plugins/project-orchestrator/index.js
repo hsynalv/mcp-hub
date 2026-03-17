@@ -14,7 +14,7 @@ import { Router } from "express";
 import { z } from "zod";
 import crypto from "crypto";
 import { mkdir, writeFile } from "fs/promises";
-import { join, resolve, sep } from "path";
+import { join, resolve } from "path";
 import { ToolTags, callTool as useTool } from "../../core/tool-registry.js";
 import { createJob } from "../../core/jobs.js";
 import { setDraft, getDraft, deleteDraft, getRedis } from "../../core/redis.js";
@@ -22,6 +22,7 @@ import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/inde
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { auditLog } from "../../core/audit/index.js";
 import { routeTask } from "../llm-router/index.js";
+import { validatePathWithinBase } from "../../core/workspace-paths.js";
 
 // ── Metadata ──────────────────────────────────────────────────────────────────
 
@@ -124,18 +125,19 @@ async function setSpec(specId, spec) {
 // ── Path safety for AI-generated file paths ───────────────────────────────────
 
 /**
- * Validate that an AI-generated path stays within WORKSPACE_BASE.
- * Prevents "../../etc/evil" style path traversal.
+ * Validate AI-generated path within base. Uses central workspace-paths module.
+ * @param {string} base - Absolute base directory
+ * @param {string} aiPath - Path relative to base
+ * @returns {string} Resolved absolute path
  */
 function safeWorkspacePath(base, aiPath) {
-  const resolved = resolve(join(base, aiPath));
-  if (!resolved.startsWith(base + sep) && resolved !== base) {
-    throw Object.assign(
-      new Error(`AI-generated path "${aiPath}" escapes workspace boundary`),
-      { code: "path_traversal" }
-    );
+  const result = validatePathWithinBase(aiPath, base);
+  if (!result.valid) {
+    const err = new Error(result.reason || "Path escapes workspace boundary");
+    err.code = result.error || "path_traversal";
+    throw err;
   }
-  return resolved;
+  return result.resolvedPath;
 }
 
 // ── LLM helpers ───────────────────────────────────────────────────────────────

@@ -2,15 +2,13 @@
  * Workspace Plugin
  *
  * File operations within a configured allowlist root directory.
- * Security: path traversal protection, symlink checks, size limits, audit logging.
+ * Security: path traversal protection via central workspace-paths module.
  */
 
 import { promises as fs, constants as fsConstants } from "fs";
-import { join, resolve, relative, dirname, basename } from "path";
-import { homedir } from "os";
+import { join, relative, dirname } from "path";
+import { validateWorkspacePath, getWorkspaceRoot, requireWorkspaceId } from "../../core/workspace-paths.js";
 
-// Configuration
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || join(homedir(), "Projects");
 const MAX_FILE_SIZE = parseInt(process.env.WORKSPACE_MAX_FILE_SIZE, 10) || 10 * 1024 * 1024; // 10MB default
 const ALLOWED_EXTENSIONS = process.env.WORKSPACE_ALLOWED_EXTENSIONS?.split(",") || [
   ".js", ".ts", ".jsx", ".tsx", ".json", ".md", ".txt", ".yml", ".yaml",
@@ -29,45 +27,19 @@ export function extractContext(req) {
 }
 
 /**
- * Validate and sanitize workspace path
+ * Validate path using central module. Returns { valid, resolvedPath, relative }.
  * @param {string} requestedPath - User-provided path
- * @returns {{valid: boolean, path?: string, error?: string}}
+ * @param {string} [workspaceId] - Workspace ID (default: "global")
  */
-export function validateWorkspacePath(requestedPath) {
-  if (!requestedPath || typeof requestedPath !== "string") {
-    return { valid: false, error: "Path is required" };
+function validatePath(requestedPath, workspaceId = "global") {
+  requireWorkspaceId(workspaceId, "workspace_file_op");
+  const result = validateWorkspacePath(requestedPath, workspaceId || "global");
+  if (!result.valid) {
+    return { ...result, relative: null };
   }
-
-  // Normalize path and resolve to absolute
-  let normalizedPath;
-  try {
-    // Handle paths starting with ~
-    if (requestedPath.startsWith("~/")) {
-      requestedPath = join(homedir(), requestedPath.slice(2));
-    }
-
-    // Resolve relative to workspace root
-    if (requestedPath.startsWith("/")) {
-      normalizedPath = resolve(requestedPath);
-    } else {
-      normalizedPath = resolve(WORKSPACE_ROOT, requestedPath);
-    }
-  } catch (err) {
-    return { valid: false, error: "Invalid path format" };
-  }
-
-  // Ensure path is within workspace root
-  const relativePath = relative(WORKSPACE_ROOT, normalizedPath);
-  if (relativePath.startsWith("..") || relativePath.includes("../")) {
-    return { valid: false, error: "Path traversal detected" };
-  }
-
-  // Check for path traversal patterns
-  if (requestedPath.includes("..") || requestedPath.includes("~/../")) {
-    return { valid: false, error: "Path traversal detected" };
-  }
-
-  return { valid: true, path: normalizedPath, relative: relativePath };
+  const root = getWorkspaceRoot(workspaceId || "global");
+  const rel = relative(root, result.resolvedPath);
+  return { ...result, path: result.resolvedPath, relative: rel };
 }
 
 /**
@@ -97,21 +69,25 @@ async function fileExists(path) {
 /**
  * Read file contents
  * @param {string} filePath - Relative or absolute path
+ * @param {string} [workspaceId] - Workspace ID (required when WORKSPACE_REQUIRE_ID=true)
  * @param {Object} options
  * @param {number} options.maxSize - Max bytes to read (default 1MB)
  * @returns {Promise<{ok: boolean, data?: string, error?: Object}>}
  */
-export async function readFile(filePath, options = {}) {
-  const validation = validateWorkspacePath(filePath);
+export async function readFile(filePath, workspaceIdOrOptions = "global", options = {}) {
+  const { workspaceId, opts } = typeof workspaceIdOrOptions === "string" || workspaceIdOrOptions == null
+    ? { workspaceId: workspaceIdOrOptions ?? "global", opts: options }
+    : { workspaceId: "global", opts: workspaceIdOrOptions };
+  const validation = validatePath(filePath, workspaceId);
   if (!validation.valid) {
-    return { ok: false, error: { code: "invalid_path", message: validation.error } };
+    return { ok: false, error: { code: "invalid_path", message: validation.reason || validation.error } };
   }
 
-  const maxSize = options.maxSize || 1024 * 1024; // 1MB default
+  const maxSize = opts.maxSize || 1024 * 1024; // 1MB default
 
   try {
     // Check if file exists
-    const stats = await fs.stat(validation.path);
+    const stats = await fs.stat(validation.resolvedPath);
     if (!stats.isFile()) {
       return { ok: false, error: { code: "not_a_file", message: "Path is not a file" } };
     }
@@ -128,7 +104,7 @@ export async function readFile(filePath, options = {}) {
     }
 
     // Read file
-    const content = await fs.readFile(validation.path, "utf-8");
+    const content = await fs.readFile(validation.resolvedPath, "utf-8");
     const truncated = content.length > maxSize;
     const result = truncated ? content.slice(0, maxSize) + "\n\n[...truncated...]" : content;
 
@@ -156,17 +132,18 @@ export async function readFile(filePath, options = {}) {
  * @param {string} content - File content
  * @param {Object} options
  * @param {boolean} options.createDirs - Create parent directories if missing
+ * @param {string} [options.workspaceId] - Workspace ID (default: "global")
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function writeFile(filePath, content, options = {}) {
-  const validation = validateWorkspacePath(filePath);
+  const workspaceId = options.workspaceId ?? "global";
+  const validation = validatePath(filePath, workspaceId);
   if (!validation.valid) {
-    return { ok: false, error: { code: "invalid_path", message: validation.error } };
+    return { ok: false, error: { code: "invalid_path", message: validation.reason || validation.error } };
   }
 
   try {
-    // Check if parent directory exists
-    const parentDir = dirname(validation.path);
+    const parentDir = dirname(validation.resolvedPath);
     const parentExists = await fileExists(parentDir);
 
     if (!parentExists) {
@@ -177,11 +154,8 @@ export async function writeFile(filePath, content, options = {}) {
       }
     }
 
-    // Check if file already exists
-    const exists = await fileExists(validation.path);
-
-    // Write file
-    await fs.writeFile(validation.path, content, "utf-8");
+    const exists = await fileExists(validation.resolvedPath);
+    await fs.writeFile(validation.resolvedPath, content, "utf-8");
 
     return {
       ok: true,
@@ -202,21 +176,23 @@ export async function writeFile(filePath, content, options = {}) {
  * @param {string} dirPath - Directory path (default: workspace root)
  * @param {Object} options
  * @param {boolean} options.recursive - List recursively
+ * @param {string} [options.workspaceId] - Workspace ID (default: "global")
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function listDirectory(dirPath = ".", options = {}) {
-  const validation = validateWorkspacePath(dirPath);
+  const workspaceId = options.workspaceId ?? "global";
+  const validation = validatePath(dirPath, workspaceId);
   if (!validation.valid) {
-    return { ok: false, error: { code: "invalid_path", message: validation.error } };
+    return { ok: false, error: { code: "invalid_path", message: validation.reason || validation.error } };
   }
 
   try {
-    const stats = await fs.stat(validation.path);
+    const stats = await fs.stat(validation.resolvedPath);
     if (!stats.isDirectory()) {
       return { ok: false, error: { code: "not_a_directory", message: "Path is not a directory" } };
     }
 
-    const entries = await fs.readdir(validation.path, { withFileTypes: true });
+    const entries = await fs.readdir(validation.resolvedPath, { withFileTypes: true });
 
     const items = entries.map((entry) => ({
       name: entry.name,
@@ -251,12 +227,14 @@ export async function listDirectory(dirPath = ".", options = {}) {
  * @param {string} pattern - Search pattern (glob or regex)
  * @param {Object} options
  * @param {string} options.root - Search root directory
+ * @param {string} [options.workspaceId] - Workspace ID (default: "global")
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function searchFiles(pattern, options = {}) {
-  const rootValidation = validateWorkspacePath(options.root || ".");
+  const workspaceId = options.workspaceId ?? "global";
+  const rootValidation = validatePath(options.root || ".", workspaceId);
   if (!rootValidation.valid) {
-    return { ok: false, error: { code: "invalid_path", message: rootValidation.error } };
+    return { ok: false, error: { code: "invalid_path", message: rootValidation.reason || rootValidation.error } };
   }
 
   try {
@@ -288,7 +266,7 @@ export async function searchFiles(pattern, options = {}) {
       }
     }
 
-    await searchDir(rootValidation.path, rootValidation.relative);
+    await searchDir(rootValidation.resolvedPath, rootValidation.relative);
 
     // Limit results
     const limited = results.slice(0, 100);
@@ -313,17 +291,18 @@ export async function searchFiles(pattern, options = {}) {
  * @param {string} patch - Patch content (unified diff format or search/replace)
  * @param {Object} options
  * @param {string} options.mode - "search-replace" or "diff"
+ * @param {string} [options.workspaceId] - Workspace ID (default: "global")
  * @returns {Promise<{ok: boolean, data?: Object, error?: Object}>}
  */
 export async function patchFile(filePath, patch, options = {}) {
-  const validation = validateWorkspacePath(filePath);
+  const workspaceId = options.workspaceId ?? "global";
+  const validation = validatePath(filePath, workspaceId);
   if (!validation.valid) {
-    return { ok: false, error: { code: "invalid_path", message: validation.error } };
+    return { ok: false, error: { code: "invalid_path", message: validation.reason || validation.error } };
   }
 
   try {
-    // Read current content
-    const currentContent = await fs.readFile(validation.path, "utf-8");
+    const currentContent = await fs.readFile(validation.resolvedPath, "utf-8");
     let newContent;
 
     if (options.mode === "search-replace") {
@@ -339,8 +318,7 @@ export async function patchFile(filePath, patch, options = {}) {
       return { ok: false, error: { code: "not_implemented", message: "Unified diff mode not yet implemented" } };
     }
 
-    // Write patched content
-    await fs.writeFile(validation.path, newContent, "utf-8");
+    await fs.writeFile(validation.resolvedPath, newContent, "utf-8");
 
     return {
       ok: true,
@@ -361,19 +339,21 @@ export async function patchFile(filePath, patch, options = {}) {
 
 /**
  * Delete a file within the workspace.
+ * @param {string} filePath - Path to file
+ * @param {string} [workspaceId] - Workspace ID (default: "global")
  */
-export async function deleteFile(filePath) {
-  const validation = validateWorkspacePath(filePath);
+export async function deleteFile(filePath, workspaceId = "global") {
+  const validation = validatePath(filePath, workspaceId);
   if (!validation.valid) {
-    return { ok: false, error: { code: "invalid_path", message: validation.error } };
+    return { ok: false, error: { code: "invalid_path", message: validation.reason || validation.error } };
   }
 
   try {
-    const stat = await fs.stat(validation.path);
+    const stat = await fs.stat(validation.resolvedPath);
     if (stat.isDirectory()) {
       return { ok: false, error: { code: "is_directory", message: "Path is a directory. Use delete on files only." } };
     }
-    await fs.unlink(validation.path);
+    await fs.unlink(validation.resolvedPath);
     return { ok: true, data: { deleted: validation.relative } };
   } catch (err) {
     if (err.code === "ENOENT") {
@@ -385,21 +365,24 @@ export async function deleteFile(filePath) {
 
 /**
  * Move or rename a file within the workspace.
+ * @param {string} srcPath - Source path
+ * @param {string} dstPath - Destination path
+ * @param {string} [workspaceId] - Workspace ID (default: "global")
  */
-export async function moveFile(srcPath, dstPath) {
-  const srcValidation = validateWorkspacePath(srcPath);
+export async function moveFile(srcPath, dstPath, workspaceId = "global") {
+  const srcValidation = validatePath(srcPath, workspaceId);
   if (!srcValidation.valid) {
-    return { ok: false, error: { code: "invalid_source_path", message: srcValidation.error } };
+    return { ok: false, error: { code: "invalid_source_path", message: srcValidation.reason || srcValidation.error } };
   }
 
-  const dstValidation = validateWorkspacePath(dstPath);
+  const dstValidation = validatePath(dstPath, workspaceId);
   if (!dstValidation.valid) {
-    return { ok: false, error: { code: "invalid_destination_path", message: dstValidation.error } };
+    return { ok: false, error: { code: "invalid_destination_path", message: dstValidation.reason || dstValidation.error } };
   }
 
   try {
-    await fs.mkdir(dirname(dstValidation.path), { recursive: true });
-    await fs.rename(srcValidation.path, dstValidation.path);
+    await fs.mkdir(dirname(dstValidation.resolvedPath), { recursive: true });
+    await fs.rename(srcValidation.resolvedPath, dstValidation.resolvedPath);
     return { ok: true, data: { from: srcValidation.relative, to: dstValidation.relative } };
   } catch (err) {
     if (err.code === "ENOENT") {
