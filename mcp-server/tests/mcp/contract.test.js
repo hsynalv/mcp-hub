@@ -12,6 +12,7 @@ import {
   listTools,
   ToolTags,
 } from "../../src/core/tool-registry.js";
+import { clearHooks } from "../../src/core/tool-hooks.js";
 
 // Mock policy engine
 vi.mock("../../src/plugins/policy/policy.engine.js", () => ({
@@ -23,6 +24,7 @@ describe("MCP Contract Tests", () => {
 
   beforeEach(async () => {
     clearTools();
+    clearHooks();
     mcp = await createMcpServerWithHandleRequest();
   });
 
@@ -52,7 +54,7 @@ describe("MCP Contract Tests", () => {
       registerTool({
         name: "another_tool",
         description: "Another test tool",
-        inputSchema: { type: "object" },
+        inputSchema: { type: "object", properties: {} },
         handler: async () => "result",
         tags: [ToolTags.WRITE, ToolTags.NETWORK],
       });
@@ -76,7 +78,7 @@ describe("MCP Contract Tests", () => {
       registerTool({
         name: "secure_tool",
         description: "A secure tool",
-        inputSchema: { type: "object" },
+        inputSchema: { type: "object", properties: {} },
         handler: async () => "secret",
         plugin: "test",
         tags: [ToolTags.READ],
@@ -148,7 +150,7 @@ describe("MCP Contract Tests", () => {
       registerTool({
         name: "failing_tool",
         description: "A tool that fails",
-        inputSchema: { type: "object" },
+        inputSchema: { type: "object", properties: {} },
         handler: async () => {
           throw new Error("Intentional failure");
         },
@@ -175,13 +177,14 @@ describe("MCP Contract Tests", () => {
       registerTool({
         name: "tagged_tool",
         description: "A tagged tool",
+        inputSchema: { type: "object", properties: {} },
         handler: async () => "result",
-        tags: [ToolTags.READ, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
+        tags: [ToolTags.READ_ONLY, ToolTags.NETWORK, ToolTags.EXTERNAL_API],
       });
 
       const tools = listTools();
       expect(tools[0].tags).toEqual([
-        ToolTags.READ,
+        ToolTags.READ_ONLY,
         ToolTags.NETWORK,
         ToolTags.EXTERNAL_API,
       ]);
@@ -191,12 +194,13 @@ describe("MCP Contract Tests", () => {
       registerTool({
         name: "partial_tool",
         description: "A tool with some invalid tags",
+        inputSchema: { type: "object", properties: {} },
         handler: async () => "result",
-        tags: [ToolTags.READ, "INVALID_TAG", ToolTags.WRITE, "ANOTHER_INVALID"],
+        tags: [ToolTags.READ_ONLY, "INVALID_TAG", ToolTags.WRITE, "ANOTHER_INVALID"],
       });
 
       const tools = listTools();
-      expect(tools[0].tags).toEqual([ToolTags.READ, ToolTags.WRITE]);
+      expect(tools[0].tags).toEqual([ToolTags.READ_ONLY, ToolTags.WRITE]);
     });
   });
 });

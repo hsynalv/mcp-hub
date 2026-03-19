@@ -757,11 +757,11 @@ router.post("/projects/:id/execute", async (req, res) => {
 
 // ── Utility routes (delegate to MCP tool handlers) ────────────────────────────
 
-router.post("/repo",      async (req, res) => { res.json(await tools.find(t => t.name === "project_create_repo").handler(req.body || {})); });
-router.post("/structure", async (req, res) => { res.json(await tools.find(t => t.name === "project_generate_structure").handler(req.body || {})); });
-router.post("/tasks",     async (req, res) => { res.json(await tools.find(t => t.name === "project_create_tasks").handler(req.body || {})); });
-router.post("/code",      async (req, res) => { res.json(await tools.find(t => t.name === "project_generate_code").handler(req.body || {})); });
-router.post("/pr",        async (req, res) => { res.json(await tools.find(t => t.name === "project_open_pr").handler(req.body || {})); });
+router.post("/repo",      async (req, res) => { res.json(await useTool("project_create_repo",      req.body || {}, { method: req.method, requestId: req.requestId, projectId: req.projectId, workspaceId: req.workspaceId, source: "rest" })); });
+router.post("/structure", async (req, res) => { res.json(await useTool("project_generate_structure", req.body || {}, { method: req.method, requestId: req.requestId, projectId: req.projectId, workspaceId: req.workspaceId, source: "rest" })); });
+router.post("/tasks",     async (req, res) => { res.json(await useTool("project_create_tasks",      req.body || {}, { method: req.method, requestId: req.requestId, projectId: req.projectId, workspaceId: req.workspaceId, source: "rest" })); });
+router.post("/code",      async (req, res) => { res.json(await useTool("project_generate_code",      req.body || {}, { method: req.method, requestId: req.requestId, projectId: req.projectId, workspaceId: req.workspaceId, source: "rest" })); });
+router.post("/pr",        async (req, res) => { res.json(await useTool("project_open_pr",            req.body || {}, { method: req.method, requestId: req.requestId, projectId: req.projectId, workspaceId: req.workspaceId, source: "rest" })); });
 
 export function register(app) {
   app.use("/project-orchestrator", router);

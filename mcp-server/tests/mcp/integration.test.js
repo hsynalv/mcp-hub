@@ -4,7 +4,8 @@
  * Tests that verify REST and MCP endpoints return consistent results.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import http from "http";
 import request from "supertest";
 import express from "express";
 import { createMcpHttpMiddleware } from "../../src/mcp/http-transport.js";
@@ -25,12 +26,26 @@ describe("MCP Integration Tests", () => {
 
   describe("HTTP endpoint availability", () => {
     it("should respond to GET /mcp with SSE headers", async () => {
-      const res = await request(app)
-        .get("/mcp")
-        .expect(200);
-
-      expect(res.headers["content-type"]).toContain("text/event-stream");
-      expect(res.headers["cache-control"]).toBe("no-cache");
+      const server = await new Promise((resolve) => {
+        const s = app.listen(0, "127.0.0.1", () => resolve(s));
+      });
+      const port = server.address().port;
+      await new Promise((resolve, reject) => {
+        const req = http.get(`http://127.0.0.1:${port}/mcp`, (res) => {
+          expect(res.statusCode).toBe(200);
+          expect(res.headers["content-type"]).toContain("text/event-stream");
+          expect(res.headers["cache-control"]).toBe("no-cache");
+          res.destroy();
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
+        req.on("error", (err) => {
+          server.close(() => reject(err));
+        });
+        req.setTimeout(2000, () => {
+          req.destroy();
+          server.close((err) => (err ? reject(err) : resolve()));
+        });
+      });
     });
 
     it("should respond to POST /mcp with JSON-RPC", async () => {
@@ -50,15 +65,18 @@ describe("MCP Integration Tests", () => {
     });
 
     it("should reject invalid JSON-RPC", async () => {
-      await request(app)
+      const res = await request(app)
         .post("/mcp")
         .send({ invalid: "request" })
-        .expect(200); // MCP returns 200 with error in body
+        .expect(200);
+
+      expect(res.body?.error?.code).toBe(-32600);
     });
 
     it("should reject non-JSON requests", async () => {
       await request(app)
         .post("/mcp")
+        .set("Content-Type", "application/json")
         .send("not json")
         .expect(400);
     });
@@ -70,11 +88,13 @@ describe("MCP Integration Tests", () => {
       registerTool({
         name: "tool1",
         description: "Tool 1",
+        inputSchema: { type: "object", properties: {} },
         handler: async () => "result1",
       });
       registerTool({
         name: "tool2",
         description: "Tool 2",
+        inputSchema: { type: "object", properties: {} },
         handler: async () => "result2",
       });
 
@@ -145,7 +165,8 @@ describe("MCP Integration Tests", () => {
       registerTool({
         name: "context_aware",
         description: "Tool that uses context",
-        handler: async (args, context) => ({
+        inputSchema: { type: "object", properties: {} },
+        handler: async (_args, context) => ({
           project: context.projectId,
           env: context.projectEnv,
         }),

@@ -10,7 +10,7 @@ import { createHash } from "crypto";
 import { requireScope } from "../../core/auth.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { auditLog, generateCorrelationId } from "../../core/audit/index.js";
-import { ToolTags } from "../../core/tool-registry.js";
+import { ToolTags, callTool } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import { loadPrompts, withStore } from "./prompts.store.js";
 import { resolveSlots } from "./prompts.slots.js";
@@ -405,6 +405,17 @@ export const tools = [
 
 // ─── REST & register ───────────────────────────────────────────────────────
 
+function toolCtx(req) {
+  return {
+    method: req.method,
+    requestId: req.requestId,
+    user: req.user ?? null,
+    projectId: req.projectId,
+    workspaceId: req.workspaceId,
+    actor: req.user?.sub,
+  };
+}
+
 export function register(app) {
   const router = Router();
 
@@ -424,14 +435,16 @@ export function register(app) {
   });
 
   router.get("/", requireScope("read"), async (req, res) => {
-    const tool = tools.find((t) => t.name === "prompt_list");
-    const result = await tool.handler({ tag: req.query.tag, mode: req.query.mode });
+    const result = await callTool(
+      "prompt_list",
+      { tag: req.query.tag, mode: req.query.mode },
+      { ...toolCtx(req), source: "rest" }
+    );
     res.json(result);
   });
 
-  router.get("/sections", requireScope("read"), async (_req, res) => {
-    const tool = tools.find((t) => t.name === "prompt_sections");
-    const result = await tool.handler({});
+  router.get("/sections", requireScope("read"), async (req, res) => {
+    const result = await callTool("prompt_sections", {}, { ...toolCtx(req), source: "rest" });
     res.json(result);
   });
 
@@ -440,23 +453,32 @@ export function register(app) {
     try {
       if (req.query.context) context = JSON.parse(decodeURIComponent(req.query.context));
     } catch { /* ignore */ }
-    const tool = tools.find((t) => t.name === "prompt_render");
-    const result = await tool.handler({ id: req.params.id, context });
+    const result = await callTool(
+      "prompt_render",
+      { id: req.params.id, context },
+      { ...toolCtx(req), source: "rest" }
+    );
     if (!result.ok) return res.status(404).json(result);
     res.json(result);
   });
 
   router.get("/:id", requireScope("read"), async (req, res) => {
     const version = req.query.version ? parseInt(req.query.version, 10) : undefined;
-    const tool = tools.find((t) => t.name === "prompt_get");
-    const result = await tool.handler({ id: req.params.id, version });
+    const result = await callTool(
+      "prompt_get",
+      { id: req.params.id, version },
+      { ...toolCtx(req), source: "rest" }
+    );
     res.status(result.ok ? 200 : 404).json(result);
   });
 
   router.post("/", requireScope("write"), async (req, res) => {
     try {
-      const tool = tools.find((t) => t.name === "prompt_create");
-      const result = await tool.handler({ ...req.body, explanation: "REST create" }, { actor: req.user?.sub });
+      const result = await callTool(
+        "prompt_create",
+        { ...req.body, explanation: "REST create" },
+        { ...toolCtx(req), source: "rest", actor: req.user?.sub }
+      );
       res.status(result.ok ? 201 : 400).json(result);
     } catch (err) {
       res.status(500).json(handleError(err, "create"));
@@ -465,8 +487,11 @@ export function register(app) {
 
   router.put("/:id", requireScope("write"), async (req, res) => {
     try {
-      const tool = tools.find((t) => t.name === "prompt_update");
-      const result = await tool.handler({ ...req.body, id: req.params.id }, { actor: req.user?.sub });
+      const result = await callTool(
+        "prompt_update",
+        { ...req.body, id: req.params.id },
+        { ...toolCtx(req), source: "rest", actor: req.user?.sub }
+      );
       res.status(result.ok ? 200 : 404).json(result);
     } catch (err) {
       res.status(500).json(handleError(err, "update"));
@@ -474,23 +499,29 @@ export function register(app) {
   });
 
   router.get("/:id/versions", requireScope("read"), async (req, res) => {
-    const tool = tools.find((t) => t.name === "prompt_get_versions");
-    const result = await tool.handler({ id: req.params.id });
+    const result = await callTool(
+      "prompt_get_versions",
+      { id: req.params.id },
+      { ...toolCtx(req), source: "rest" }
+    );
     res.status(result.ok ? 200 : 404).json(result);
   });
 
   router.post("/:id/versions/:version/restore", requireScope("write"), async (req, res) => {
-    const tool = tools.find((t) => t.name === "prompt_restore_version");
-    const result = await tool.handler(
+    const result = await callTool(
+      "prompt_restore_version",
       { id: req.params.id, version: parseInt(req.params.version, 10) },
-      { actor: req.user?.sub }
+      { ...toolCtx(req), source: "rest", actor: req.user?.sub }
     );
     res.status(result.ok ? 200 : 404).json(result);
   });
 
   router.delete("/:id", requireScope("write"), async (req, res) => {
-    const tool = tools.find((t) => t.name === "prompt_delete");
-    const result = await tool.handler({ id: req.params.id }, { actor: req.user?.sub });
+    const result = await callTool(
+      "prompt_delete",
+      { id: req.params.id },
+      { ...toolCtx(req), source: "rest", actor: req.user?.sub }
+    );
     res.status(result.ok ? 200 : 404).json(result);
   });
 

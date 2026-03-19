@@ -47,11 +47,13 @@ export function createMcpServer() {
     // STDIO transport does not pass authInfo; fall back to env vars (HUB_WORKSPACE_ID, etc.)
     const context = {
       method: "MCP",
+      source: "mcp",
       user: authInfo.user ?? request.context?.user ?? null,
       requestId: request.id,
       workspaceId: authInfo.workspaceId ?? process.env.HUB_WORKSPACE_ID ?? null,
       projectId: authInfo.projectId ?? process.env.HUB_PROJECT_ID ?? null,
       env: authInfo.env ?? process.env.HUB_ENV ?? null,
+      scopes: authInfo.scopes ?? [],
     };
 
     const result = await callTool(name, args || {}, context);

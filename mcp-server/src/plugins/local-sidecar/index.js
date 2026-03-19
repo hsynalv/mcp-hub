@@ -6,7 +6,7 @@
  */
 
 import { Router } from "express";
-import { ToolTags } from "../../core/tool-registry.js";
+import { ToolTags, callTool } from "../../core/tool-registry.js";
 import { fsList, fsRead, fsWrite, fsHash, checkPathAllowed } from "./sidecar.core.js";
 import { spawn } from "child_process";
 import { createReadStream } from "fs";
@@ -333,18 +333,23 @@ export function register(app) {
       return res.status(400).json({ ok: false, error: "path is required" });
     }
 
-    // Find the drive_upload tool handler
-    const uploadTool = tools.find(t => t.name === "drive_upload");
-    if (!uploadTool) {
-      return res.status(500).json({ ok: false, error: "Tool not found" });
-    }
-
-    const result = await uploadTool.handler({
-      path,
-      remote,
-      destination,
-      explanation: "REST API upload request",
-    });
+    const result = await callTool(
+      "drive_upload",
+      {
+        path,
+        remote,
+        destination,
+        explanation: "REST API upload request",
+      },
+      {
+        method: req.method,
+        requestId: req.requestId,
+        user: req.user ?? null,
+        projectId: req.projectId,
+        workspaceId: req.workspaceId,
+        source: "rest",
+      }
+    );
 
     res.json(result);
   });

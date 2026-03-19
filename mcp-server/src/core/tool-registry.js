@@ -15,12 +15,8 @@
  *   }
  */
 
-import { getPolicyEvaluator, getApprovalStore, isPolicySystemAvailable } from "./policy-hooks.js";
-import {
-  registerBeforeExecutionHook,
-  executeBeforeHooks,
-  executeAfterHooks,
-} from "./tool-hooks.js";
+import { getApprovalStore } from "./policy-hooks.js";
+import { executeRegisteredTool } from "./tool-execution/execute-tool.js";
 
 const tools = new Map();
 
@@ -159,6 +155,7 @@ export function registerTool(tool) {
     handler: tool.handler,
     plugin: tool.plugin || "unknown",
     tags: validatedTags,
+    ...(tool.timeoutMs != null ? { timeoutMs: tool.timeoutMs } : {}),
   });
 
   console.log(`[tool-registry] registered ${tool.name} [${validatedTags.join(", ") || "no tags"}]`);
@@ -239,68 +236,19 @@ export async function callTool(name, args, context = {}) {
         code: "tool_not_found",
         message: `Tool not found: ${name}`,
       },
-    };
-  }
-
-  // Execute before-hooks (policy checks, validation, etc.)
-  const hookResult = await executeBeforeHooks(name, args, context);
-  if (hookResult) {
-    return hookResult; // Hook blocked execution
-  }
-
-  // Execute the tool
-  const startTime = Date.now();
-  let result;
-  try {
-    result = await tool.handler(args, context);
-
-    // Normalize result to standard envelope if not already
-    if (result && typeof result === "object") {
-      if (result.ok === true || result.ok === false) {
-        // Already normalized
-      } else {
-        result = {
-          ok: true,
-          data: result,
-          meta: { requestId: context.requestId },
-        };
-      }
-    } else {
-      result = {
-        ok: true,
-        data: result,
-        meta: { requestId: context.requestId },
-      };
-    }
-  } catch (err) {
-    result = {
-      ok: false,
-      error: {
-        code: err.code || "tool_execution_error",
-        message: err.message || "Tool execution failed",
-        ...(err.details ? { details: err.details } : {}),
+      meta: {
+        ...(context.requestId != null ? { requestId: context.requestId } : {}),
+        durationMs: 0,
       },
-      meta: { requestId: context.requestId },
     };
   }
 
-  // Audit logging
-  logToolExecution({
-    toolName: name,
-    timestamp: new Date().toISOString(),
-    projectId: context.projectId,
-    parameters: args,
-    result: result,
-    duration: Date.now() - startTime,
-    user: context.user,
-    approvalId: context.approvalId,
-    failed: !result.ok,
+  return executeRegisteredTool({
+    name,
+    tool,
+    args,
+    context,
   });
-
-  // Execute after-hooks (auditing, metrics, etc.)
-  await executeAfterHooks(name, args, context, result);
-
-  return result;
 }
 
 /**
@@ -376,30 +324,10 @@ export async function approveTool(approvalId, context = {}) {
 }
 
 /**
- * Initialize tool registry hooks.
- * Called once during server startup.
- * Note: Hooks are now registered by plugins themselves (e.g., policy plugin).
- * This function is kept for backward compatibility but is currently a no-op.
+ * Process startup hook slot (e.g. registerAfterExecutionHook from plugins).
+ * Metrics and masked audit run inside executeRegisteredTool before plugin after-hooks.
  */
-export function initializeToolHooks() {
-  // Plugins register their own hooks via registerBeforeExecutionHook()
-  // and registerAfterExecutionHook() from tool-hooks.js
-}
-
-/**
- * Audit logging for tool executions.
- * @param {Object} logEntry
- */
-function logToolExecution(logEntry) {
-  // In production, this could write to a file, database, or external service
-  const logLine = JSON.stringify({
-    type: "tool_audit",
-    ...logEntry,
-  });
-
-  // Write to stderr for now (can be redirected to file)
-  console.error(logLine);
-}
+export function initializeToolHooks() {}
 
 /**
  * Convert Zod schema to JSON Schema (basic implementation).

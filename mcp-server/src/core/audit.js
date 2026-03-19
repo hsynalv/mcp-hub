@@ -28,11 +28,22 @@ const SECRET_KEYS = new Set([
 
 function maskBody(body) {
   if (!body || typeof body !== "object") return body;
+  if (Array.isArray(body)) {
+    return body.map((item) =>
+      item != null && typeof item === "object" ? maskBody(item) : item
+    );
+  }
   const out = {};
   for (const [k, v] of Object.entries(body)) {
     const lower = k.toLowerCase();
     const isSensitive = [...SECRET_KEYS].some((s) => lower.includes(s));
-    out[k] = isSensitive ? "[REDACTED]" : (typeof v === "object" ? maskBody(v) : v);
+    if (isSensitive) {
+      out[k] = "[REDACTED]";
+    } else if (v != null && typeof v === "object") {
+      out[k] = maskBody(v);
+    } else {
+      out[k] = v;
+    }
   }
   return out;
 }

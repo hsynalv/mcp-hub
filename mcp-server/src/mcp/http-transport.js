@@ -123,9 +123,19 @@ export function createMcpHttpMiddleware() {
           });
         }
 
-        // Workspace context from middleware (workspaceContextMiddleware sets req.workspaceId)
-        const workspaceId = req.workspaceId ?? null;
-        const projectId = req.projectId ?? null;
+        if (message.jsonrpc !== "2.0") {
+          return res.status(200).json({
+            jsonrpc: "2.0",
+            id: message.id ?? null,
+            error: { code: -32600, message: "Invalid Request" },
+          });
+        }
+
+        // Prefer workspaceContextMiddleware; fall back to headers (e.g. minimal Express apps / tests)
+        const workspaceId =
+          req.workspaceId ?? req.headers["x-workspace-id"]?.toString().trim() ?? null;
+        const projectId =
+          req.projectId ?? req.headers["x-project-id"]?.toString().trim() ?? null;
 
         const authInfo = {
           user: authContext.user,
