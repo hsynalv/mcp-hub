@@ -8,6 +8,7 @@
 import { getWorkspace, isPluginAllowed } from "./workspace.js";
 import { auditLog, generateCorrelationId } from "./audit/index.js";
 import { sanitizeWorkspaceId, canAccessWorkspace } from "./workspace-paths.js";
+import { getRuntimeSecurityMode } from "./auth/get-runtime-security-mode.js";
 
 const STRICT_WORKSPACE = process.env.WORKSPACE_STRICT_BOUNDARIES === "true";
 
@@ -95,6 +96,16 @@ export async function canWriteWorkspace(context = {}) {
  */
 export async function canRunTool(toolName, context = {}, operationType = null) {
   const wsId = context.workspaceId || "global";
+
+  const mode = getRuntimeSecurityMode();
+  if (mode.strictWorkspaceRegistration && wsId !== "global" && !getWorkspace(wsId)) {
+    await auditDenied(context.plugin || "core", "can_run_tool", "workspace_not_registered", {
+      ...context,
+      toolName,
+      workspaceId: wsId,
+    });
+    return { allowed: false, reason: "workspace_not_registered" };
+  }
 
   if (STRICT_WORKSPACE && wsId && wsId !== "global") {
     const check = await canReadWorkspace(context);

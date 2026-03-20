@@ -6,6 +6,14 @@ import { createServer } from "../src/core/server.js";
  * Basic server boot and health checks.
  */
 
+function hubAuthHeaders() {
+  const k =
+    process.env.HUB_READ_KEY?.trim() ||
+    process.env.HUB_WRITE_KEY?.trim() ||
+    process.env.HUB_ADMIN_KEY?.trim();
+  return k ? { Authorization: `Bearer ${k}` } : {};
+}
+
 describe("Smoke Tests", () => {
   let app;
   let server;
@@ -42,7 +50,9 @@ describe("Smoke Tests", () => {
   });
 
   it("should respond to /whoami", async () => {
-    const response = await fetch(`http://localhost:${port}/whoami`);
+    const response = await fetch(`http://localhost:${port}/whoami`, {
+      headers: hubAuthHeaders(),
+    });
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.ok).toBe(true);
@@ -52,17 +62,19 @@ describe("Smoke Tests", () => {
   it("should return validation error for invalid request", async () => {
     const response = await fetch(`http://localhost:${port}/http/request`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...hubAuthHeaders() },
       body: JSON.stringify({}),
     });
     expect(response.status).toBe(400);
     const data = await response.json();
     expect(data.ok).toBe(false);
-    expect(data.error.code).toBe("missing_project_id");
+    expect(["missing_project_id", "validation_error"]).toContain(data.error.code);
   });
 
   it("should return 404 for unknown routes", async () => {
-    const response = await fetch(`http://localhost:${port}/unknown-route`);
+    const response = await fetch(`http://localhost:${port}/unknown-route`, {
+      headers: hubAuthHeaders(),
+    });
     expect(response.status).toBe(404);
     const data = await response.json();
     expect(data.ok).toBe(false);

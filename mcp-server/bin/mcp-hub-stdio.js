@@ -47,6 +47,7 @@ function parseArgs() {
     scope: process.env.HUB_SCOPE || "read",
     workspaceId: process.env.HUB_WORKSPACE_ID || null,
     projectId: process.env.HUB_PROJECT_ID || null,
+    tenantId: process.env.HUB_TENANT_ID?.trim() || null,
     env: process.env.HUB_ENV || "development",
   };
 
@@ -67,6 +68,9 @@ function parseArgs() {
         break;
       case "--env":
         options.env = args[++i];
+        break;
+      case "--tenant-id":
+        options.tenantId = args[++i];
         break;
       case "--help":
       case "-h":
@@ -96,6 +100,108 @@ Examples:
   return options;
 }
 
+function normalizeHubScopes(scopes) {
+  if (!Array.isArray(scopes)) return [];
+  return [
+    ...new Set(
+      scopes
+        .map((s) => (String(s).toLowerCase() === "danger" ? "admin" : String(s).toLowerCase()))
+        .filter((s) => s === "read" || s === "write" || s === "admin")
+    ),
+  ];
+}
+
+async function applyStdioSessionAuth(options) {
+  const { validateBearerToken, isAuthEnabled } = await import("../src/core/auth.js");
+  const { getSecurityRuntime } = await import("../src/core/security/resolve-runtime-security.js");
+  const { setStdioSessionContext } = await import("../src/core/authorization/stdio-session-context.js");
+
+  const workspaceId = options.workspaceId || process.env.HUB_WORKSPACE_ID || null;
+  const projectId = options.projectId || process.env.HUB_PROJECT_ID || null;
+  const envVal = options.env || process.env.HUB_ENV || null;
+  const tenantId = options.tenantId || process.env.HUB_TENANT_ID?.trim() || null;
+
+  const baseInfo = {
+    workspaceId,
+    projectId,
+    env: envVal,
+    tenantId,
+  };
+
+   if (!isAuthEnabled()) {
+    const rt = getSecurityRuntime();
+    if (!rt.allowOpenPrincipal) {
+      setStdioSessionContext({
+        authInfo: {
+          ...baseInfo,
+          user: null,
+          scopes: [],
+          type: null,
+          actor: null,
+        },
+        correlationId: null,
+      });
+      return;
+    }
+    setStdioSessionContext({
+      authInfo: {
+        ...baseInfo,
+        user: null,
+        scopes: ["read", "write", "admin"],
+        type: "open_hub",
+        actor: { type: "open_hub", scopes: ["read", "write", "admin"] },
+      },
+      correlationId: null,
+    });
+    return;
+  }
+
+  if (!options.apiKey) {
+    setStdioSessionContext({
+      authInfo: {
+        ...baseInfo,
+        user: null,
+        scopes: [],
+        type: null,
+        actor: null,
+      },
+      correlationId: null,
+    });
+    return;
+  }
+
+  const v = await validateBearerToken(options.apiKey);
+  if (!v.valid) {
+    setStdioSessionContext({
+      authInfo: {
+        ...baseInfo,
+        user: null,
+        scopes: [],
+        type: null,
+        actor: null,
+      },
+      correlationId: null,
+    });
+    return;
+  }
+
+  const normScopes = normalizeHubScopes(v.scopes || []);
+  setStdioSessionContext({
+    authInfo: {
+      ...baseInfo,
+      user: v.claims?.sub || "authenticated",
+      scopes: normScopes,
+      type: v.type,
+      actor: {
+        type: v.type || "api_key",
+        scopes: normScopes,
+        ...(v.claims?.sub ? { subject: v.claims.sub } : {}),
+      },
+    },
+    correlationId: null,
+  });
+}
+
 async function main() {
   const options = parseArgs();
 
@@ -119,6 +225,7 @@ async function main() {
   if (options.workspaceId) process.env.HUB_WORKSPACE_ID = options.workspaceId;
   if (options.projectId) process.env.HUB_PROJECT_ID = options.projectId;
   if (options.env) process.env.HUB_ENV = options.env;
+  if (options.tenantId) process.env.HUB_TENANT_ID = options.tenantId;
 
   // Load plugins before starting MCP server
   console.error("[mcp-hub-stdio] Loading plugins...");
@@ -126,6 +233,8 @@ async function main() {
   const app = express();
   await loadPlugins(app);
   console.error("[mcp-hub-stdio] Plugins loaded");
+
+  await applyStdioSessionAuth(options);
 
   // Create and start MCP server with STDIO transport
   const server = createMcpServer();

@@ -17,26 +17,12 @@
 
 import { getApprovalStore } from "./policy-hooks.js";
 import { executeRegisteredTool } from "./tool-execution/execute-tool.js";
+import { ToolTags, VALID_TAGS as TOOL_TAG_VALUES } from "./tool-tags.js";
 
 const tools = new Map();
 
-/** Standard tool tags for policy and UX */
-export const ToolTags = {
-  // Primary policy tags
-  READ_ONLY: "read_only",
-  WRITE: "write",
-  DESTRUCTIVE: "destructive",
-  NEEDS_APPROVAL: "needs_approval",
-  // Capability tags
-  BULK: "BULK",
-  NETWORK: "NETWORK",
-  LOCAL_FS: "LOCAL_FS",
-  GIT: "GIT",
-  EXTERNAL_API: "EXTERNAL_API",
-};
-
-/** All valid tags */
-export const VALID_TAGS = Object.values(ToolTags);
+export { ToolTags } from "./tool-tags.js";
+export const VALID_TAGS = TOOL_TAG_VALUES;
 
 /**
  * Validate tool according to MCP contract

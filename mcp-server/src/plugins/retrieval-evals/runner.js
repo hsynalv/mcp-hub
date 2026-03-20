@@ -76,8 +76,13 @@ export async function runQueryEvaluation(options) {
  * @param {string} [params.workspaceId]
  * @returns {Promise<import("./types.js").EvalRunResult>}
  */
-export async function runEvaluation({ dataset, k = DEFAULT_K, workspaceId = EVAL_WORKSPACE }) {
-  const context = { workspaceId };
+export async function runEvaluation({
+  dataset,
+  k = DEFAULT_K,
+  workspaceId = EVAL_WORKSPACE,
+  authContext = {},
+}) {
+  const context = { workspaceId, ...authContext };
   const queryResults = [];
   const latencies = [];
 

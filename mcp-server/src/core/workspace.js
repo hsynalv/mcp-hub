@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { config } from "./config.js";
+import { getRuntimeSecurityMode } from "./auth/get-runtime-security-mode.js";
 
 // In-memory storage (replace with Redis/DB in production)
 const workspaces = new Map();
@@ -346,6 +347,16 @@ export function getWorkspaceKey(workspaceId, type, id) {
  * Check if plugin is allowed in workspace
  */
 export function isPluginAllowed(workspaceId, pluginName) {
+  const mode = getRuntimeSecurityMode();
+  if (
+    mode.strictWorkspaceRegistration &&
+    workspaceId &&
+    workspaceId !== "global" &&
+    !workspaces.get(workspaceId)
+  ) {
+    return false;
+  }
+
   const workspace = workspaces.get(workspaceId);
   if (!workspace) return true;
 

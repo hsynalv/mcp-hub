@@ -5,7 +5,7 @@
  * Single source of truth: registry → OpenAPI (not the reverse)
  */
 
-import { getTools } from "./tool-registry.js";
+import { listTools } from "./tool-registry.js";
 import { getPlugins } from "./plugins.js";
 
 /**
@@ -14,7 +14,7 @@ import { getPlugins } from "./plugins.js";
  */
 export function generateOpenApiSpec() {
   const plugins = getPlugins();
-  const tools = getTools();
+  const tools = listTools();
   
   const paths = {};
   const schemas = {};
@@ -413,7 +413,7 @@ function buildTags(plugins) {
  */
 export function validateOpenApiSync() {
   const plugins = getPlugins();
-  const tools = getTools();
+  const tools = listTools();
   const spec = generateOpenApiSpec();
   
   const issues = [];

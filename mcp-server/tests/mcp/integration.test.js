@@ -15,6 +15,11 @@ describe("MCP Integration Tests", () => {
   let app;
 
   beforeAll(() => {
+    delete process.env.HUB_READ_KEY;
+    delete process.env.HUB_WRITE_KEY;
+    delete process.env.HUB_ADMIN_KEY;
+    process.env.HUB_ALLOW_OPEN_HUB = "true";
+
     app = express();
     app.use(express.json());
     app.all("/mcp", createMcpHttpMiddleware());

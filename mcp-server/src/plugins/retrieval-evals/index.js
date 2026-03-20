@@ -15,6 +15,7 @@ import { runEvaluation } from "./runner.js";
 import { compareStrategies } from "./strategy-comparison.js";
 import { saveEvaluationResult } from "./output.js";
 import { recordEvalRun, getRecentEvalRuns } from "./metrics-store.js";
+import { toolContextFromRequest } from "../../core/authorization/http-tool-context.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -74,7 +75,12 @@ export function register(app) {
     }
 
     try {
-      const result = await runEvaluation({ dataset: parsed.dataset, k, workspaceId });
+      const result = await runEvaluation({
+        dataset: parsed.dataset,
+        k,
+        workspaceId,
+        authContext: toolContextFromRequest(req),
+      });
       recordEvalRun(result);
 
       if (saveOutput) {
@@ -114,7 +120,12 @@ export function register(app) {
     }
 
     try {
-      const results = await compareStrategies({ dataset: parsed.dataset, strategies, k });
+      const results = await compareStrategies({
+        dataset: parsed.dataset,
+        strategies,
+        k,
+        authContext: toolContextFromRequest(req),
+      });
       recordEvalRun(results);
 
       if (saveOutput) {

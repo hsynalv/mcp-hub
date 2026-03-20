@@ -9,6 +9,9 @@
  */
 
 import { getPolicyEvaluator, getApprovalStore } from "./policy-hooks.js";
+import { getSecurityRuntime } from "./security/resolve-runtime-security.js";
+import { resolveRequestedBy } from "./auth/resolve-principal.js";
+import { isConfirmedBypassAllowed } from "./security/is-confirmed-bypass-allowed.js";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -28,7 +31,7 @@ export function loadPresetsAtStartup() {
 
   const approvalStore = getApprovalStore();
   if (!approvalStore?.listRules || !approvalStore?.addRule) {
-    console.log("[policy] Policy system not yet registered, skipping preset load");
+    console.log("[policy] Rule store not registered yet, skipping preset load");
     return;
   }
 
@@ -95,20 +98,32 @@ export function policyGuardrailMiddleware(req, res, next) {
     return next();
   }
 
-  // Skip if confirmed=true (dry-run bypass)
-  if (req.query?.confirmed === "true") {
+  if (isConfirmedBypassAllowed(req)) {
     return next();
   }
 
-  // Get policy evaluator (may not be available if policy plugin not loaded)
   const evaluate = getPolicyEvaluator();
+  const runtime = getSecurityRuntime();
   if (!evaluate) {
-    return next();
+    if (runtime.policyAllowMissingEvaluator) {
+      return next();
+    }
+    const requestId = req.requestId ?? null;
+    return res.status(503).json({
+      ok: false,
+      error: {
+        code: "policy_unavailable",
+        message:
+          "Policy engine is required for write operations. Load the policy plugin or set POLICY_ALLOW_MISSING_EVALUATOR=true for local development only.",
+      },
+      meta: { requestId },
+    });
   }
 
-  const requestedBy = req.actor?.type === "api_key"
-    ? `key:${req.authScopes?.join(",") || "read"}`
-    : "anonymous";
+  const requestedBy = resolveRequestedBy({
+    user: req.user,
+    actor: req.actor,
+  });
 
   const result = evaluate(req.method, req.path, req.body, requestedBy);
 

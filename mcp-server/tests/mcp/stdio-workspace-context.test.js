@@ -25,6 +25,10 @@ describe("STDIO Workspace Context", () => {
     delete process.env.HUB_WORKSPACE_ID;
     delete process.env.HUB_PROJECT_ID;
     delete process.env.HUB_ENV;
+    // Open hub: empty authInfo mirrors STDIO unless session injects principal (host .env keys would block callTool)
+    delete process.env.HUB_READ_KEY;
+    delete process.env.HUB_WRITE_KEY;
+    delete process.env.HUB_ADMIN_KEY;
   });
 
   afterEach(() => {

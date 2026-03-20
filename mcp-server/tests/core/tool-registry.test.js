@@ -22,6 +22,13 @@ vi.mock("../../src/plugins/policy/policy.engine.js", () => ({
 
 const emptyObjectSchema = { type: "object", properties: {} };
 
+/** Explicit principal for unit tests when host .env enables hub keys (auth-on + scopes required). */
+const TEST_TOOL_CTX = {
+  actor: { type: "test", scopes: ["read", "write", "admin"] },
+  scopes: ["read", "write", "admin"],
+  authScopes: ["read", "write", "admin"],
+};
+
 describe("Tool Registry", () => {
   beforeEach(() => {
     clearTools();
@@ -129,7 +136,7 @@ describe("Tool Registry", () => {
         handler: async (args) => ({ message: `Hello ${args.name}` }),
       });
 
-      const result = await callTool("greet", { name: "World" });
+      const result = await callTool("greet", { name: "World" }, TEST_TOOL_CTX);
       expect(result.ok).toBe(true);
       expect(result.data).toEqual({ message: "Hello World" });
       expect(typeof result.meta.durationMs).toBe("number");
@@ -147,7 +154,7 @@ describe("Tool Registry", () => {
         handler: async () => ({ ok: true }),
       });
 
-      const result = await callTool("needs_name", {});
+      const result = await callTool("needs_name", {}, TEST_TOOL_CTX);
       expect(result.ok).toBe(false);
       expect(result.error.code).toBe("invalid_tool_input");
     });
@@ -164,7 +171,7 @@ describe("Tool Registry", () => {
         handler: async () => "done",
       });
 
-      await callTool("hooked", {}, { requestId: "r1" });
+      await callTool("hooked", {}, { ...TEST_TOOL_CTX, requestId: "r1" });
       expect(seen.toolName).toBe("hooked");
       expect(seen.res.ok).toBe(true);
       expect(seen.res.data).toBe("done");
@@ -179,7 +186,7 @@ describe("Tool Registry", () => {
         handler: async () => "raw result",
       });
 
-      const result = await callTool("simple", {});
+      const result = await callTool("simple", {}, TEST_TOOL_CTX);
       expect(result.ok).toBe(true);
       expect(result.data).toBe("raw result");
     });
@@ -194,7 +201,7 @@ describe("Tool Registry", () => {
         },
       });
 
-      const result = await callTool("failing", {});
+      const result = await callTool("failing", {}, TEST_TOOL_CTX);
       expect(result.ok).toBe(false);
       expect(result.error.code).toBe("tool_execution_error");
     });

@@ -16,6 +16,8 @@ import { registerJobRunner, submitJob, getJob } from "../../core/jobs.js";
 import { runPipeline } from "./pipeline/pipeline.js";
 import { callTool } from "../../core/tool-registry.js";
 import { canModifyIndex } from "../../core/workspace-permissions.js";
+import { toolContextFromRequest } from "../../core/authorization/http-tool-context.js";
+import { resolveRequestedBy } from "../../core/authorization/resolve-principal.js";
 import { registerOcrProvider } from "./ocr/index.js";
 import { TesseractOcrProvider } from "./ocr/tesseract.provider.js";
 
@@ -54,11 +56,7 @@ export const endpoints = [
 ];
 
 function extractContext(req) {
-  return {
-    workspaceId: req.workspaceId ?? "global",
-    projectId: req.projectId ?? null,
-    actor: req.user?.id || req.user?.email || "anonymous",
-  };
+  return toolContextFromRequest(req);
 }
 
 async function auditEntry(entry) {
@@ -144,7 +142,12 @@ export const tools = [
       const correlationId = generateCorrelationId();
       const wsId = context.workspaceId || "global";
 
-      const perm = await canModifyIndex({ workspaceId: wsId, actor: context.actor, plugin: "rag-ingestion", correlationId });
+      const perm = await canModifyIndex({
+        workspaceId: wsId,
+        actor: resolveRequestedBy(context),
+        plugin: "rag-ingestion",
+        correlationId,
+      });
       if (!perm.allowed) {
         return { ok: false, error: { code: "permission_denied", message: perm.reason || "Cannot modify index" } };
       }
@@ -199,7 +202,11 @@ export const tools = [
     },
     handler: async (args, context = {}) => {
       const wsId = context.workspaceId || "global";
-      const perm = await canModifyIndex({ workspaceId: wsId, actor: context.actor, plugin: "rag-ingestion" });
+      const perm = await canModifyIndex({
+        workspaceId: wsId,
+        actor: resolveRequestedBy(context),
+        plugin: "rag-ingestion",
+      });
       if (!perm.allowed) {
         return { ok: false, error: { code: "permission_denied", message: perm.reason || "Cannot modify index" } };
       }
@@ -272,7 +279,11 @@ export const tools = [
       const start = Date.now();
       const wsId = context.workspaceId || "global";
 
-      const perm = await canModifyIndex({ workspaceId: wsId, actor: context.actor, plugin: "rag-ingestion" });
+      const perm = await canModifyIndex({
+        workspaceId: wsId,
+        actor: resolveRequestedBy(context),
+        plugin: "rag-ingestion",
+      });
       if (!perm.allowed) {
         return { ok: false, error: { code: "permission_denied", message: perm.reason || "Cannot modify index" } };
       }

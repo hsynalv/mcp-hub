@@ -45,6 +45,11 @@ describe("Strategy Comparison", () => {
       dataset: parsed.dataset,
       strategies: ["rag_ingestion_sliding"],
       k: 5,
+      authContext: {
+        actor: { type: "test", scopes: ["read", "write", "admin"] },
+        scopes: ["read", "write", "admin"],
+        authScopes: ["read", "write", "admin"],
+      },
     });
 
     expect(results).toHaveLength(1);

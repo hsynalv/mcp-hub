@@ -8,7 +8,19 @@
 
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "./gateway.js";
-import { validateBearerToken } from "../core/auth.js";
+import { resolveHubPrincipalFromRequest } from "../core/security/resolve-principal.js";
+import { runWithMcpRequestContext } from "../core/authorization/mcp-request-context.js";
+
+function normalizeHubScopes(scopes) {
+  if (!Array.isArray(scopes)) return [];
+  return [
+    ...new Set(
+      scopes
+        .map((s) => (String(s).toLowerCase() === "danger" ? "admin" : String(s).toLowerCase()))
+        .filter((s) => s === "read" || s === "write" || s === "admin")
+    ),
+  ];
+}
 
 /**
  * Create Express middleware for MCP HTTP endpoint
@@ -56,36 +68,46 @@ export function createMcpHttpMiddleware() {
       });
     }
 
-    // Authenticate request
-    const token = extractBearerToken(req);
-    let authContext = { user: null, scopes: [] };
+    let principal;
+    if (req.securityContext?.authenticated) {
+      principal = {
+        authenticated: true,
+        scopes: req.securityContext.scopes,
+        actor: req.securityContext.actor,
+        user: req.securityContext.user,
+        authType: req.securityContext.authType,
+      };
+    } else {
+      principal = await resolveHubPrincipalFromRequest(req);
+    }
 
-    if (token) {
-      const validation = await validateBearerToken(token);
-      if (validation.valid) {
-        authContext = {
-          user: validation.claims?.sub || "authenticated",
-          scopes: validation.scopes || [],
-          type: validation.type,
-        };
-      } else if (process.env.HUB_AUTH_ENABLED === "true") {
+    if (!principal.authenticated) {
+      if (principal.reason === "invalid_token") {
         return res.status(401).json({
           ok: false,
           error: {
             code: "invalid_token",
             message: "Invalid or expired token.",
           },
+          meta: { requestId: req.requestId ?? null },
         });
       }
-    } else if (process.env.HUB_AUTH_ENABLED === "true") {
       return res.status(401).json({
         ok: false,
         error: {
           code: "unauthorized",
-          message: "Authorization header required. Use: Authorization: Bearer <token>",
+          message: "Authorization required. Use: Authorization: Bearer <HUB_API_KEY>",
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
+
+    const authContext = {
+      user: principal.user,
+      scopes: principal.scopes,
+      type: principal.authType,
+      actor: principal.actor,
+    };
 
     try {
       // Handle GET request (SSE stream setup - simplified)
@@ -136,12 +158,17 @@ export function createMcpHttpMiddleware() {
           req.workspaceId ?? req.headers["x-workspace-id"]?.toString().trim() ?? null;
         const projectId =
           req.projectId ?? req.headers["x-project-id"]?.toString().trim() ?? null;
+        const tenantId = req.headers["x-tenant-id"]?.toString().trim() || undefined;
 
         const authInfo = {
           user: authContext.user,
           scopes: authContext.scopes,
+          type: authContext.type,
+          actor: authContext.actor,
           workspaceId,
           projectId,
+          env: req.projectEnv,
+          tenantId,
         };
 
         const { clientTransport, pending } = await ensureInit();
@@ -149,8 +176,12 @@ export function createMcpHttpMiddleware() {
         const id = message?.id;
         const isNotification = id === undefined && message?.method;
 
+        const storePayload = { authInfo, correlationId: req.requestId ?? null };
+
         if (isNotification) {
-          await clientTransport.send(message, { authInfo });
+          await runWithMcpRequestContext(storePayload, () =>
+            clientTransport.send(message, { authInfo })
+          );
           return res.status(202).json(null);
         }
 
@@ -167,7 +198,9 @@ export function createMcpHttpMiddleware() {
               resolve(msg);
             },
           });
-          clientTransport.send(message, { authInfo }).catch(reject);
+          runWithMcpRequestContext(storePayload, () =>
+            clientTransport.send(message, { authInfo })
+          ).catch(reject);
         });
 
         return res.json(result);
@@ -192,17 +225,6 @@ export function createMcpHttpMiddleware() {
       });
     }
   };
-}
-
-/**
- * Extract Bearer token from request headers
- * @param {Object} req - Express request
- * @returns {string|null}
- */
-function extractBearerToken(req) {
-  const auth = req.headers["authorization"] ?? "";
-  if (auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
-  return req.headers["x-hub-api-key"]?.trim() ?? null;
 }
 
 /**

@@ -4,10 +4,11 @@ import { fileURLToPath } from "url";
 import { Router } from "express";
 import { z } from "zod";
 import { requireScope } from "../../core/auth.js";
+import { toolContextFromRequest } from "../../core/authorization/http-tool-context.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { registerPolicyHooks } from "../../core/policy-hooks.js";
 import { registerBeforeExecutionHook } from "../../core/tool-hooks.js";
-import { getPolicyEvaluator, getApprovalStore } from "../../core/policy-hooks.js";
+import { getApprovalStore } from "../../core/policy-hooks.js";
 import {
   listRules,
   addRule,
@@ -168,31 +169,12 @@ export function register(app) {
     getApproval,
     listApprovals,
     loadPolicyConfig,
+    listRules,
+    addRule,
   });
 
-  // Register tool execution hook for policy enforcement
+  // Tool policy pattern matching runs in core authorization (execute-tool) before this hook.
   registerBeforeExecutionHook(async (toolName, args, context) => {
-    // Policy check before executing tool
-    const policyEvaluator = getPolicyEvaluator();
-    if (policyEvaluator) {
-      const path = `/tools/${toolName}`;
-      const method = context.method || "POST";
-      const policy = policyEvaluator(method, path, args, context.user);
-
-      if (!policy.allowed) {
-        return {
-          ok: false,
-          error: {
-            code: policy.action || "policy_denied",
-            message: policy.explanation || "Request denied by policy",
-            ...(policy.approval ? { approval: policy.approval } : {}),
-            ...(policy.preview ? { preview: policy.preview } : {}),
-          },
-          meta: { requestId: context.requestId },
-        };
-      }
-    }
-
     // Tag-based approval workflow
     const approvalStore = getApprovalStore();
     const policyConfig = approvalStore?.loadPolicyConfig
@@ -360,7 +342,10 @@ export function register(app) {
     
     // Import approveTool from tool-registry dynamically to avoid circular deps
     const { approveTool } = await import("../../core/tool-registry.js");
-    const result = await approveTool(id, { user: req.user || "manual" });
+    const result = await approveTool(id, {
+      ...toolContextFromRequest(req),
+      user: req.user || "manual",
+    });
     
     if (!result.ok) {
       return res.status(404).json(result);

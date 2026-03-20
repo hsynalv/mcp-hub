@@ -18,6 +18,7 @@ import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/inde
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { auditLog } from "../../core/audit/index.js";
 import { requireScope } from "../../core/auth.js";
+import { toolContextFromRequest } from "../../core/authorization/http-tool-context.js";
 import { routeTask } from "../llm-router/index.js";
 
 // ── Metadata ─────────────────────────────────────────────────────────────────
@@ -73,14 +74,14 @@ function gpaAudit(req, action, details = {}) {
 
 // ── GitHub helpers ────────────────────────────────────────────────────────────
 
-async function fetchGitHubRepos(limit = GITHUB_ANALYZE_REPO_COUNT) {
-  const res = await callTool("github_list_repos", { sort: "pushed", limit });
+async function fetchGitHubRepos(limit = GITHUB_ANALYZE_REPO_COUNT, toolCtx = {}) {
+  const res = await callTool("github_list_repos", { sort: "pushed", limit }, toolCtx);
   if (!res?.ok) return res;
   return { ok: true, data: res.data?.repos ?? [] };
 }
 
-async function analyzeRepo(fullName) {
-  const res = await callTool("github_analyze_repo", { repo: fullName });
+async function analyzeRepo(fullName, toolCtx = {}) {
+  const res = await callTool("github_analyze_repo", { repo: fullName }, toolCtx);
   if (!res?.ok) return res;
   return { ok: true, data: res.data };
 }
@@ -275,9 +276,10 @@ router.post("/analyze", requireScope("read"), async (req, res) => {
   }
 
   const repoCount = parsed.data.repos ?? GITHUB_ANALYZE_REPO_COUNT;
+  const tctx = toolContextFromRequest(req);
 
   // 1. Fetch repo list
-  const reposResult = await fetchGitHubRepos(repoCount);
+  const reposResult = await fetchGitHubRepos(repoCount, tctx);
   if (!reposResult?.ok || !reposResult.data?.length) {
     return res.status(500).json(pluginError.external("Failed to fetch GitHub repos", { code: "github_error" }));
   }
@@ -285,7 +287,7 @@ router.post("/analyze", requireScope("read"), async (req, res) => {
   // 2. Analyze each repo (sequentially to avoid GitHub rate limits)
   const analyses = [];
   for (const repo of reposResult.data.slice(0, repoCount)) {
-    const analysis = await analyzeRepo(repo.fullName);
+    const analysis = await analyzeRepo(repo.fullName, tctx);
     if (analysis?.ok && analysis.data) analyses.push(analysis.data);
   }
 
@@ -418,14 +420,14 @@ export const tools = [
         username: { type: "string", description: "GitHub username override (default: authenticated user)" },
       },
     },
-    handler: async (args) => {
+    handler: async (args, context) => {
       const repoCount   = args.repos || GITHUB_ANALYZE_REPO_COUNT;
-      const reposResult = await fetchGitHubRepos(repoCount);
+      const reposResult = await fetchGitHubRepos(repoCount, context);
       if (!reposResult?.ok) return { ok: false, error: "Failed to fetch repos" };
 
       const analyses = [];
       for (const repo of reposResult.data.slice(0, repoCount)) {
-        const analysis = await analyzeRepo(repo.fullName);
+        const analysis = await analyzeRepo(repo.fullName, context);
         if (analysis?.ok) analyses.push(analysis.data);
       }
 

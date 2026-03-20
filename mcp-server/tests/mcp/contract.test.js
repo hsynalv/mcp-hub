@@ -13,6 +13,14 @@ import {
   ToolTags,
 } from "../../src/core/tool-registry.js";
 import { clearHooks } from "../../src/core/tool-hooks.js";
+import { clearStdioSessionContext } from "../../src/core/authorization/stdio-session-context.js";
+
+const MCP_TEST_CTX = {
+  user: null,
+  scopes: ["read", "write", "admin"],
+  authScopes: ["read", "write", "admin"],
+  actor: { type: "test", scopes: ["read", "write", "admin"] },
+};
 
 // Mock policy engine
 vi.mock("../../src/plugins/policy/policy.engine.js", () => ({
@@ -25,6 +33,7 @@ describe("MCP Contract Tests", () => {
   beforeEach(async () => {
     clearTools();
     clearHooks();
+    clearStdioSessionContext();
     mcp = await createMcpServerWithHandleRequest();
   });
 
@@ -32,7 +41,7 @@ describe("MCP Contract Tests", () => {
     it("should return empty tools list when registry is empty", async () => {
       const response = await mcp.handleRequest(
         { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
-        { user: null }
+        MCP_TEST_CTX
       );
       const result = response?.result ?? response;
       expect(result.tools).toEqual([]);
@@ -61,7 +70,7 @@ describe("MCP Contract Tests", () => {
 
       const response = await mcp.handleRequest(
         { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
-        { user: null }
+        MCP_TEST_CTX
       );
       const result = response?.result ?? response;
       expect(result.tools).toHaveLength(2);
@@ -108,7 +117,7 @@ describe("MCP Contract Tests", () => {
           method: "tools/call",
           params: { name: "nonexistent", arguments: {} },
         },
-        { user: null }
+        MCP_TEST_CTX
       );
       const result = response?.result ?? response;
       expect(result.isError).toBe(true);
@@ -135,7 +144,7 @@ describe("MCP Contract Tests", () => {
           method: "tools/call",
           params: { name: "greet", arguments: { name: "World" } },
         },
-        { user: null }
+        MCP_TEST_CTX
       );
       const result = response?.result ?? response;
       expect(result.isError).toBe(false);
@@ -164,7 +173,7 @@ describe("MCP Contract Tests", () => {
           method: "tools/call",
           params: { name: "failing_tool", arguments: {} },
         },
-        { user: null }
+        MCP_TEST_CTX
       );
       const result = response?.result ?? response;
       expect(result.isError).toBe(true);

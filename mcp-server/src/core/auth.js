@@ -10,10 +10,11 @@
  *   import { requireScope } from "./auth.js";
  *   router.post("/apply", requireScope("write"), handler);
  *
- * If no keys are configured the server runs in open mode (dev-friendly).
+ * Enforced credentials and scope checks run after enforceSecurityContext (unified principal).
+ * Local anonymous access only when HUB_ALLOW_OPEN_HUB=true and no hub keys are configured.
  */
 
-import { validateUiToken } from "./ui-tokens.js";
+import { getSecurityRuntime, hubKeysConfigured } from "./security/resolve-runtime-security.js";
 
 const SCOPE_HIERARCHY = ["read", "write", "admin"];
 
@@ -35,11 +36,9 @@ function getKeyMap() {
   return map;
 }
 
-function authEnabled() {
-  return !!(
-    process.env.HUB_READ_KEY?.trim() ||
-    process.env.HUB_WRITE_KEY?.trim() ||
-    process.env.HUB_ADMIN_KEY?.trim()
+function hasVerifierInfrastructure() {
+  return (
+    hubKeysConfigured() || !!process.env.OAUTH_INTROSPECTION_ENDPOINT?.trim()
   );
 }
 
@@ -51,67 +50,30 @@ function extractKey(req) {
 }
 
 /**
- * Middleware factory.
+ * Scope gate — relies on {@link ../security/enforce-security-context.js enforceSecurityContext}
+ * having attached req.securityContext / req.authScopes / req.actor.
+ *
  * requireScope("read")   — any valid key
  * requireScope("write")  — write or admin key
  * requireScope("danger") — admin key only
  */
 export function requireScope(scope = "read") {
   return (req, res, next) => {
-    if (!authEnabled()) return next(); // open mode — no keys configured
-
-    const requiredScope = normalizeScope(scope);
-
-    const key = extractKey(req);
-    if (!key) {
+    if (!req.securityContext?.authenticated) {
       return res.status(401).json({
         ok: false,
         error: {
           code: "unauthorized",
-          message: "Authorization header required. Use: Authorization: Bearer <HUB_API_KEY>",
+          message:
+            "Security context missing. Ensure enforceSecurityContext runs before protected routes.",
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
 
-    // Allow short-lived UI session tokens (6-digit, notification) — admin scope on all pages
-    const uiToken = validateUiToken(key);
-    if (uiToken.ok) {
-      const scopes = ["read", "write", "admin"];
-      const requiredIndex = SCOPE_HIERARCHY.indexOf(requiredScope);
-      const hasScope = scopes.some(
-        (s) => SCOPE_HIERARCHY.indexOf(normalizeScope(s)) >= requiredIndex
-      );
+    const requiredScope = normalizeScope(scope);
 
-      if (!hasScope) {
-        return res.status(403).json({
-          ok: false,
-          error: {
-            code: "forbidden",
-            message: `This endpoint requires '${scope}' scope.`,
-          },
-        });
-      }
-
-      req.authScopes = scopes;
-      req.actor = {
-        type: "ui_token",
-        scopes: req.authScopes,
-      };
-      return next();
-    }
-
-    const keyMap = getKeyMap();
-    const scopes = keyMap.get(key);
-    if (!scopes) {
-      return res.status(401).json({
-        ok: false,
-        error: {
-          code: "invalid_key",
-          message: "Invalid API key.",
-        },
-      });
-    }
-
+    const scopes = req.securityContext.scopes || req.authScopes || [];
     const requiredIndex = SCOPE_HIERARCHY.indexOf(requiredScope);
     const hasScope = scopes.some(
       (s) => SCOPE_HIERARCHY.indexOf(normalizeScope(s)) >= requiredIndex
@@ -122,24 +84,26 @@ export function requireScope(scope = "read") {
         ok: false,
         error: {
           code: "forbidden",
-          message: `This endpoint requires '${scope}' scope. Your key does not have sufficient permissions.`,
+          message: `This endpoint requires '${scope}' scope. Your credentials do not have sufficient permissions.`,
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
 
-    // Attach scopes to request for downstream use
-    req.authScopes = scopes.map(normalizeScope);
-    req.actor = {
-      type: "api_key",
-      scopes: req.authScopes,
-    };
     next();
   };
 }
 
-/** Returns whether the server is running with auth enabled. */
+/**
+ * Whether the hub is configured to verify credentials (health / diagnostics).
+ * Production is fail-closed via credentialRequired unless HUB_AUTH_ENABLED=false (blocked at startup).
+ */
 export function isAuthEnabled() {
-  return authEnabled();
+  const rt = getSecurityRuntime();
+  if (process.env.HUB_AUTH_ENABLED === "false" && !rt.isProduction) {
+    return false;
+  }
+  return rt.credentialRequired || hasVerifierInfrastructure();
 }
 
 // ── OAuth 2.1 Bearer Token Support ───────────────────────────────────────────
@@ -230,8 +194,7 @@ export async function validateBearerToken(token) {
  */
 export function requireOAuthScope(scope = "read") {
   return async (req, res, next) => {
-    // Skip if no auth configured
-    if (!authEnabled() && !process.env.OAUTH_INTROSPECTION_ENDPOINT) {
+    if (!hasVerifierInfrastructure()) {
       return next();
     }
 

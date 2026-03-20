@@ -11,6 +11,7 @@ import {
   validationErrorEnvelope,
 } from "./normalize-result.js";
 import { maskToolAuditPayload } from "./mask-sensitive-data.js";
+import { authorizeToolCall } from "../authorization/authorize-tool-call.js";
 
 function defaultTimeoutMs(tool) {
   if (tool?.timeoutMs != null && tool.timeoutMs >= 0) {
@@ -64,6 +65,27 @@ export async function executeRegisteredTool({ name, tool, args, context }) {
   const started = Date.now();
   const ctx = context && typeof context === "object" ? context : {};
   const normalizedArgs = coerceArgs(args);
+
+  const authzBlock = await authorizeToolCall({ name, tool, args: normalizedArgs, context: ctx });
+  if (authzBlock) {
+    const duration = Date.now() - started;
+    const out = normalizeShortCircuitResult(authzBlock, ctx, duration);
+    writeToolAuditLine({
+      toolName: name,
+      timestamp: new Date().toISOString(),
+      projectId: ctx.projectId,
+      parameters: normalizedArgs,
+      result: out,
+      duration,
+      user: ctx.user,
+      approvalId: ctx.approvalId,
+      failed: !out.ok,
+      phase: "authorization",
+    });
+    await emitToolMetrics(name, tool, out, started);
+    await executeAfterHooks(name, normalizedArgs, ctx, out);
+    return out;
+  }
 
   const short = await executeBeforeHooks(name, normalizedArgs, ctx);
   if (short) {

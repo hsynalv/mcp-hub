@@ -6,6 +6,7 @@
  */
 
 import { Router } from "express";
+import { toolContextFromRequest } from "../../core/authorization/http-tool-context.js";
 import { ToolTags, callTool } from "../../core/tool-registry.js";
 import { fsList, fsRead, fsWrite, fsHash, checkPathAllowed } from "./sidecar.core.js";
 import { spawn } from "child_process";
@@ -341,14 +342,7 @@ export function register(app) {
         destination,
         explanation: "REST API upload request",
       },
-      {
-        method: req.method,
-        requestId: req.requestId,
-        user: req.user ?? null,
-        projectId: req.projectId,
-        workspaceId: req.workspaceId,
-        source: "rest",
-      }
+      toolContextFromRequest(req)
     );
 
     res.json(result);

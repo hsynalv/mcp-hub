@@ -9,6 +9,34 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { listTools, callTool } from "../core/tool-registry.js";
+import {
+  getMcpRequestContext,
+  runWithMcpRequestContext,
+} from "../core/authorization/mcp-request-context.js";
+import {
+  getStdioSessionContext,
+  mergeMcpAuthInfo,
+} from "../core/authorization/stdio-session-context.js";
+import {
+  filterVisibleTools,
+  filterOptionsFromContext,
+} from "../core/authorization/filter-visible-tools.js";
+
+function effectiveMcpStore() {
+  return getMcpRequestContext() ?? getStdioSessionContext();
+}
+
+function baseContextFromAuthInfo(authInfo, correlationId) {
+  return {
+    workspaceId: authInfo.workspaceId ?? process.env.HUB_WORKSPACE_ID ?? null,
+    projectId: authInfo.projectId ?? process.env.HUB_PROJECT_ID ?? null,
+    tenantId: authInfo.tenantId ?? process.env.HUB_TENANT_ID ?? null,
+    scopes: authInfo.scopes ?? [],
+    actor: authInfo.actor ?? null,
+    user: authInfo.user ?? null,
+    requestId: correlationId,
+  };
+}
 
 /**
  * Create an MCP server instance
@@ -28,9 +56,18 @@ export function createMcpServer() {
     }
   );
 
-  // Handle listTools request
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = listTools();
+    const store = effectiveMcpStore();
+    const all = listTools();
+    const baseCtx = store?.authInfo
+      ? baseContextFromAuthInfo(store.authInfo, store.correlationId)
+      : {
+          workspaceId: process.env.HUB_WORKSPACE_ID ?? null,
+          projectId: process.env.HUB_PROJECT_ID ?? null,
+          tenantId: process.env.HUB_TENANT_ID ?? null,
+        };
+    const { workspaceId, scopes, tenantId } = filterOptionsFromContext(baseCtx);
+    const tools = filterVisibleTools(all, { workspaceId, scopes, tenantId });
     return {
       tools: tools.map((tool) => ({
         name: tool.name,
@@ -43,8 +80,16 @@ export function createMcpServer() {
   // Handle callTool request
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
-    const authInfo = extra?.authInfo || {};
-    // STDIO transport does not pass authInfo; fall back to env vars (HUB_WORKSPACE_ID, etc.)
+    const sessionInfo = getStdioSessionContext()?.authInfo;
+    const alsInfo = getMcpRequestContext()?.authInfo;
+    const authInfo = mergeMcpAuthInfo(
+      mergeMcpAuthInfo(sessionInfo, alsInfo),
+      extra?.authInfo
+    );
+    const scopes = Array.isArray(authInfo.scopes) ? authInfo.scopes : [];
+    const actor =
+      authInfo.actor ??
+      (scopes.length > 0 ? { type: authInfo.type || "bearer", scopes } : null);
     const context = {
       method: "MCP",
       source: "mcp",
@@ -52,8 +97,11 @@ export function createMcpServer() {
       requestId: request.id,
       workspaceId: authInfo.workspaceId ?? process.env.HUB_WORKSPACE_ID ?? null,
       projectId: authInfo.projectId ?? process.env.HUB_PROJECT_ID ?? null,
+      tenantId: authInfo.tenantId ?? process.env.HUB_TENANT_ID ?? null,
       env: authInfo.env ?? process.env.HUB_ENV ?? null,
-      scopes: authInfo.scopes ?? [],
+      scopes,
+      authScopes: scopes,
+      actor,
     };
 
     const result = await callTool(name, args || {}, context);
@@ -130,15 +178,21 @@ export async function createMcpServerWithHandleRequest() {
   };
   return {
     handleRequest: async (message, context = {}) => {
+      const scopes = Array.isArray(context.scopes) ? context.scopes : [];
       const authInfo = {
         user: context.user ?? null,
         workspaceId: context.workspaceId ?? null,
         projectId: context.projectId ?? null,
+        tenantId: context.tenantId ?? null,
         env: context.env ?? process.env.HUB_ENV ?? null,
+        scopes,
+        type: context.type,
+        actor: context.actor ?? (scopes.length ? { type: context.type || "test", scopes } : null),
       };
       const id = message?.id;
+      const runSend = () => clientTransport.send(message, { authInfo });
       if (id === undefined) {
-        await clientTransport.send(message, { authInfo });
+        await runWithMcpRequestContext({ authInfo, correlationId: null }, runSend);
         return null;
       }
       return new Promise((resolve, reject) => {
@@ -154,7 +208,7 @@ export async function createMcpServerWithHandleRequest() {
             resolve(msg);
           },
         });
-        clientTransport.send(message, { authInfo }).catch(reject);
+        runWithMcpRequestContext({ authInfo, correlationId: String(id) }, runSend).catch(reject);
       });
     },
   };

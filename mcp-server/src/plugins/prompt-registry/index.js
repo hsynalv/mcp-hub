@@ -11,6 +11,7 @@ import { requireScope } from "../../core/auth.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";
 import { auditLog, generateCorrelationId } from "../../core/audit/index.js";
 import { ToolTags, callTool } from "../../core/tool-registry.js";
+import { toolContextFromRequest } from "../../core/authorization/http-tool-context.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import { loadPrompts, withStore } from "./prompts.store.js";
 import { resolveSlots } from "./prompts.slots.js";
@@ -406,14 +407,7 @@ export const tools = [
 // ─── REST & register ───────────────────────────────────────────────────────
 
 function toolCtx(req) {
-  return {
-    method: req.method,
-    requestId: req.requestId,
-    user: req.user ?? null,
-    projectId: req.projectId,
-    workspaceId: req.workspaceId,
-    actor: req.user?.sub,
-  };
+  return toolContextFromRequest(req);
 }
 
 export function register(app) {

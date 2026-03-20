@@ -32,6 +32,8 @@ export function registerPolicyHooks({
   getApproval,
   listApprovals,
   loadPolicyConfig,
+  listRules,
+  addRule,
 }) {
   policyEvaluator = evaluate;
   approvalStore = {
@@ -40,6 +42,9 @@ export function registerPolicyHooks({
     getApproval,
     listApprovals,
     loadPolicyConfig,
+    ...(typeof listRules === "function" && typeof addRule === "function"
+      ? { listRules, addRule }
+      : {}),
   };
   console.log("[policy-hooks] Policy system registered");
 }

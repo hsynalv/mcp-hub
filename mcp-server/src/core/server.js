@@ -9,6 +9,8 @@ import { initializeToolHooks } from "./tool-registry.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { getAuditManager } from "./audit/index.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
+import { validateSecurityConfigOrExit } from "./security/validate-security-config.js";
+import { enforceSecurityContext } from "./security/enforce-security-context.js";
 import { submitJob, getJob, listJobs, getJobStats } from "./jobs.js";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -20,6 +22,17 @@ import { createMcpHttpMiddleware } from "../mcp/http-transport.js";
 import { issueUiTokenWithNotification } from "./ui-tokens.js";
 
 import { workspaceContextMiddleware } from "./workspace.js";
+import { toolContextFromRequest } from "./authorization/http-tool-context.js";
+import {
+  discoveryVisibilityContextFromRequest,
+  filterPluginsForDiscovery,
+} from "./authorization/filter-visible-surfaces.js";
+
+function tenantHeaderMiddleware(req, res, next) {
+  const raw = req.headers["x-tenant-id"]?.toString().trim();
+  req.tenantId = raw || null;
+  next();
+}
 
 function isPlainObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -180,6 +193,8 @@ function projectContextMiddleware(req, res, next) {
 }
 
 export async function createServer() {
+  validateSecurityConfigOrExit();
+
   const app = express();
 
   app.use(cors());
@@ -189,6 +204,8 @@ export async function createServer() {
   app.use(correlationIdMiddleware);
   app.use(projectContextMiddleware);
   app.use(workspaceContextMiddleware);
+  app.use(tenantHeaderMiddleware);
+  app.use(enforceSecurityContext);
   app.use(auditMiddleware);
   app.use(responseEnvelopeMiddleware);
   app.use(policyGuardrailMiddleware);
@@ -214,11 +231,14 @@ export async function createServer() {
   });
 
   app.get("/plugins", requireScope("read"), (req, res) => {
-    res.json(getPlugins());
+    const vis = discoveryVisibilityContextFromRequest(req);
+    const plugins = filterPluginsForDiscovery(getPlugins(), vis);
+    res.json(plugins);
   });
 
   app.get("/plugins/:name/manifest", requireScope("read"), (req, res) => {
-    const plugins = getPlugins();
+    const vis = discoveryVisibilityContextFromRequest(req);
+    const plugins = filterPluginsForDiscovery(getPlugins(), vis);
     const plugin  = plugins.find((p) => p.name === req.params.name);
     if (!plugin) return res.status(404).json({ ok: false, error: { code: "plugin_not_found", message: "Plugin not found" } });
     res.json(plugin);
@@ -228,8 +248,9 @@ export async function createServer() {
    * GET /openapi.json
    * Auto-generated OpenAPI spec from all plugin manifests.
    */
-  app.get("/openapi.json", requireScope("read"), (_req, res) => {
-    const plugins = getPlugins();
+  app.get("/openapi.json", requireScope("read"), (req, res) => {
+    const vis = discoveryVisibilityContextFromRequest(req);
+    const plugins = filterPluginsForDiscovery(getPlugins(), vis);
     const paths = {};
 
     for (const plugin of plugins) {
@@ -491,7 +512,7 @@ export async function createServer() {
 
     try {
       const result = await callTool(toolName, approval.body || {}, {
-        user: req.user || "manual",
+        ...toolContextFromRequest(req),
         approvalId: approval_id,
         method: approval.method || "POST",
       });
@@ -622,13 +643,12 @@ export async function createServer() {
 
   // ── Plugin loader ──────────────────────────────────────────────────────────
 
-  // Load policy presets at startup
-  loadPresetsAtStartup();
-
   // Initialize tool registry hooks (policy, auditing, etc.)
   initializeToolHooks();
 
   await loadPlugins(app);
+
+  loadPresetsAtStartup();
 
   // ── 404 handler ────────────────────────────────────────────────────────────
 

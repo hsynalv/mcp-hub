@@ -88,6 +88,7 @@ export async function compareStrategies({
   strategies = Object.keys(STRATEGIES),
   k = 5,
   workspaceId = EVAL_WORKSPACE,
+  authContext = {},
 }) {
   const results = [];
 
@@ -96,7 +97,7 @@ export async function compareStrategies({
     if (!strategy) continue;
 
     const strategyWorkspace = `${workspaceId}-${name}`;
-    const ctx = { workspaceId: strategyWorkspace };
+    const ctx = { workspaceId: strategyWorkspace, ...authContext };
 
     const indexStart = Date.now();
     let latencyByStage = {};
@@ -113,7 +114,12 @@ export async function compareStrategies({
       continue;
     }
 
-    const evalResult = await runEvaluation({ dataset, k, workspaceId: strategyWorkspace });
+    const evalResult = await runEvaluation({
+      dataset,
+      k,
+      workspaceId: strategyWorkspace,
+      authContext,
+    });
     evalResult.latencyByStage = latencyByStage;
 
     results.push({
