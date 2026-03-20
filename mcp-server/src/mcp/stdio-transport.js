@@ -1,30 +1,48 @@
 /**
- * MCP STDIO Transport
+ * MCP STDIO Transport (legacy)
  *
- * Handles MCP protocol over stdin/stdout for Claude Desktop and other
- * MCP clients that use stdio transport.
+ * This module is not the supported production entry. Use the package binary
+ * {@link ../../bin/mcp-hub-stdio.js mcp-hub-stdio.js} (see package.json "bin").
  *
- * Workspace context: When authInfo is not provided by the transport layer,
- * the gateway falls back to process.env (HUB_WORKSPACE_ID, HUB_PROJECT_ID,
- * HUB_ENV). Set these before starting for workspace-aware tool execution.
+ * Direct execution of this file skips plugin loading, security bootstrap, and
+ * validated session auth — unsafe for production unless intentionally allowed.
  */
 
+import { pathToFileURL } from "url";
 import { createMcpServer } from "./gateway.js";
 import { setDebug } from "../core/debug.js";
 
+function isDirectExecutionAsCli() {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+}
+
+function assertLegacyStdioEntryAllowed() {
+  console.error(
+    "[mcp-hub-stdio] DEPRECATED: src/mcp/stdio-transport.js is not a supported production entry. Use: npx mcp-hub-stdio (bin/mcp-hub-stdio.js)."
+  );
+  if (process.env.NODE_ENV === "production" && process.env.HUB_ALLOW_LEGACY_STDIO_TRANSPORT !== "true") {
+    console.error(
+      "[mcp-hub-stdio] Refusing legacy stdio entry in production. Set HUB_ALLOW_LEGACY_STDIO_TRANSPORT=true only for deliberate testing."
+    );
+    process.exit(1);
+  }
+}
+
 /**
- * Start MCP server with stdio transport
- * This is the main entry point for Claude Desktop and other stdio-based MCP clients
+ * @deprecated Use `bin/mcp-hub-stdio.js`. This path does not run security validation or session auth.
  */
 export function startStdioTransport() {
   const server = createMcpServer();
 
-  // Enable debug mode if requested
   if (process.env.DEBUG === "true") {
     setDebug(true, { traceRequests: true, traceTools: true });
   }
 
-  // Handle incoming messages from stdin
   process.stdin.on("data", async (data) => {
     try {
       const lines = data.toString().split("\n").filter((line) => line.trim());
@@ -38,7 +56,6 @@ export function startStdioTransport() {
           continue;
         }
 
-        // Handle the message
         const response = await handleMessage(server, message);
         if (response) {
           sendResponse(response);
@@ -50,7 +67,6 @@ export function startStdioTransport() {
     }
   });
 
-  // Handle process termination
   process.on("SIGINT", () => {
     console.error("[stdio] Received SIGINT, shutting down...");
     process.exit(0);
@@ -61,23 +77,18 @@ export function startStdioTransport() {
     process.exit(0);
   });
 
-  // Log startup (to stderr, not stdout)
-  console.error("[stdio] MCP server started on stdio transport");
+  console.error("[stdio] MCP server started on stdio transport (legacy path)");
   console.error("[stdio] Waiting for messages...");
 }
 
-/**
- * Handle a single MCP message
- */
 async function handleMessage(server, message) {
-  const { jsonrpc, id, method, params } = message;
+  const { jsonrpc, id, method } = message;
 
   if (jsonrpc !== "2.0") {
     return createErrorResponse(id, -32600, "Invalid Request", "Expected jsonrpc 2.0");
   }
 
   try {
-    // Map MCP protocol methods to server handlers
     switch (method) {
       case "initialize":
         return createSuccessResponse(id, {
@@ -92,22 +103,20 @@ async function handleMessage(server, message) {
         });
 
       case "initialized":
-        // Client confirmed initialization, no response needed
         return null;
 
-      case "tools/list":
-        const toolsResult = await server.request(
-          { method: "tools/list" },
-          { timeout: 30000 }
-        );
+      case "tools/list": {
+        const toolsResult = await server.request({ method: "tools/list" }, { timeout: 30000 });
         return createSuccessResponse(id, toolsResult);
+      }
 
-      case "tools/call":
+      case "tools/call": {
         const callResult = await server.request(
-          { method: "tools/call", params },
+          { method: "tools/call", params: message.params },
           { timeout: 120000 }
         );
         return createSuccessResponse(id, callResult);
+      }
 
       default:
         return createErrorResponse(id, -32601, "Method not found", `Method ${method} not supported`);
@@ -118,9 +127,6 @@ async function handleMessage(server, message) {
   }
 }
 
-/**
- * Create a successful JSON-RPC response
- */
 function createSuccessResponse(id, result) {
   return {
     jsonrpc: "2.0",
@@ -129,9 +135,6 @@ function createSuccessResponse(id, result) {
   };
 }
 
-/**
- * Create an error JSON-RPC response
- */
 function createErrorResponse(id, code, message, data = null) {
   const response = {
     jsonrpc: "2.0",
@@ -147,22 +150,16 @@ function createErrorResponse(id, code, message, data = null) {
   return response;
 }
 
-/**
- * Send a response to stdout
- */
 function sendResponse(response) {
   const line = JSON.stringify(response);
   process.stdout.write(line + "\n");
 }
 
-/**
- * Send an error response
- */
 function sendErrorResponse(id, code, message, data) {
   sendResponse(createErrorResponse(id, code, message, data));
 }
 
-// Auto-start if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectExecutionAsCli()) {
+  assertLegacyStdioEntryAllowed();
   startStdioTransport();
 }

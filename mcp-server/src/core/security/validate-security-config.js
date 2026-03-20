@@ -30,7 +30,7 @@ export function validateSecurityConfigOrExit() {
 
   if (rt.isProduction && process.env.HUB_AUTH_ENABLED === "false") {
     console.error(
-      "\n❌ Security: HUB_AUTH_ENABLED=false is not allowed in production (fail-closed hub HTTP).\n"
+      "\n❌ Security: HUB_AUTH_ENABLED=false is not allowed in production (fail-closed hub HTTP/STDIO).\n"
     );
     process.exit(1);
   }

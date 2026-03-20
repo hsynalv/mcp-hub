@@ -4,12 +4,6 @@
  *
  * CLI entrypoint for MCP STDIO transport.
  * Usage: npx mcp-hub-stdio [options]
- *
- * Options:
- *   --api-key <key>      API key for authentication
- *   --scope <scope>      Default scope (read/write/admin)
- *   --project-id <id>    Default project ID
- *   --env <env>          Default environment
  */
 
 import { config } from "dotenv";
@@ -19,11 +13,9 @@ import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 
 // Cursor/STDIO expects ONLY JSON-RPC frames on stdout.
-// Send all logs to stderr to avoid breaking JSON parsing.
 console.log = (...args) => process.stderr.write(args.join(" ") + "\n");
 console.info = (...args) => process.stderr.write(args.join(" ") + "\n");
 console.warn = (...args) => process.stderr.write(args.join(" ") + "\n");
-// keep console.error as-is (already stderr)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,7 +36,7 @@ for (const p of envCandidates) {
 function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
-    apiKey: process.env.HUB_API_KEY || null,
+    apiKey: process.env.HUB_API_KEY?.trim() || null,
     scope: process.env.HUB_SCOPE || "read",
     workspaceId: process.env.HUB_WORKSPACE_ID || null,
     projectId: process.env.HUB_PROJECT_ID || null,
@@ -56,7 +48,7 @@ function parseArgs() {
     const arg = args[i];
     switch (arg) {
       case "--api-key":
-        options.apiKey = args[++i];
+        options.apiKey = args[++i]?.trim() || null;
         break;
       case "--scope":
         options.scope = args[++i];
@@ -81,8 +73,8 @@ MCP Hub STDIO Server
 Usage: npx mcp-hub-stdio [options]
 
 Options:
-  --api-key <key>      API key for authentication (env: HUB_API_KEY)
-  --scope <scope>      Default scope: read|write|admin (env: HUB_SCOPE)
+  --api-key <key>      Credential (API key / Bearer secret; env: HUB_API_KEY)
+  --scope <scope>      Minimum scope required for this session: read|write|admin (env: HUB_SCOPE). Must be satisfied by the credential (same idea as HTTP requireScope).
   --workspace-id <id>  Workspace for tool execution (env: HUB_WORKSPACE_ID)
   --project-id <id>    Default project ID (env: HUB_PROJECT_ID)
   --env <env>          Default environment (env: HUB_ENV)
@@ -101,139 +93,28 @@ Examples:
   return options;
 }
 
-function normalizeHubScopes(scopes) {
-  if (!Array.isArray(scopes)) return [];
-  return [
-    ...new Set(
-      scopes
-        .map((s) => (String(s).toLowerCase() === "danger" ? "admin" : String(s).toLowerCase()))
-        .filter((s) => s === "read" || s === "write" || s === "admin")
-    ),
-  ];
-}
-
-async function applyStdioSessionAuth(options, sessionId) {
-  const { validateBearerToken, isAuthEnabled } = await import("../src/core/auth.js");
-  const { getSecurityRuntime } = await import("../src/core/security/resolve-runtime-security.js");
-  const { setStdioSessionContext } = await import("../src/core/authorization/stdio-session-context.js");
-
-  const workspaceId = options.workspaceId || process.env.HUB_WORKSPACE_ID || null;
-  const projectId = options.projectId || process.env.HUB_PROJECT_ID || null;
-  const envVal = options.env || process.env.HUB_ENV || null;
-  const tenantId = options.tenantId || process.env.HUB_TENANT_ID?.trim() || null;
-
-  const baseInfo = {
-    workspaceId,
-    projectId,
-    env: envVal,
-    tenantId,
-  };
-
-   if (!isAuthEnabled()) {
-    const rt = getSecurityRuntime();
-    if (!rt.allowOpenPrincipal) {
-      setStdioSessionContext({
-        authInfo: {
-          ...baseInfo,
-          user: null,
-          scopes: [],
-          type: null,
-          actor: null,
-        },
-        correlationId: null,
-        sessionId,
-      });
-      return;
-    }
-    setStdioSessionContext({
-      authInfo: {
-        ...baseInfo,
-        user: null,
-        scopes: ["read", "write", "admin"],
-        type: "open_hub",
-        actor: { type: "open_hub", scopes: ["read", "write", "admin"] },
-      },
-      correlationId: null,
-      sessionId,
-    });
-    return;
-  }
-
-  if (!options.apiKey) {
-    setStdioSessionContext({
-      authInfo: {
-        ...baseInfo,
-        user: null,
-        scopes: [],
-        type: null,
-        actor: null,
-      },
-      correlationId: null,
-      sessionId,
-    });
-    return;
-  }
-
-  const v = await validateBearerToken(options.apiKey);
-  if (!v.valid) {
-    setStdioSessionContext({
-      authInfo: {
-        ...baseInfo,
-        user: null,
-        scopes: [],
-        type: null,
-        actor: null,
-      },
-      correlationId: null,
-      sessionId,
-    });
-    return;
-  }
-
-  const normScopes = normalizeHubScopes(v.scopes || []);
-  setStdioSessionContext({
-    authInfo: {
-      ...baseInfo,
-      user: v.claims?.sub || "authenticated",
-      scopes: normScopes,
-      type: v.type,
-      actor: {
-        type: v.type || "api_key",
-        scopes: normScopes,
-        ...(v.claims?.sub ? { subject: v.claims.sub } : {}),
-      },
-    },
-    correlationId: null,
-    sessionId,
-  });
-}
-
 async function main() {
   const options = parseArgs();
 
-   const [{ createMcpServer }, { StdioServerTransport }, { loadPlugins }, { initializeToolHooks }] = await Promise.all([
-     import("../src/mcp/gateway.js"),
-     import("@modelcontextprotocol/sdk/server/stdio.js"),
-     import("../src/core/plugins.js"),
-     import("../src/core/tool-registry.js"),
-   ]);
+  const { validateSecurityConfigOrExit } = await import("../src/core/security/validate-security-config.js");
+  validateSecurityConfigOrExit();
+
+  const [{ createMcpServer }, { StdioServerTransport }, { loadPlugins }, { initializeToolHooks }, { bootstrapStdioAuthContext }, { emitStdioBootstrapAuthDenied }] = await Promise.all([
+    import("../src/mcp/gateway.js"),
+    import("@modelcontextprotocol/sdk/server/stdio.js"),
+    import("../src/core/plugins.js"),
+    import("../src/core/tool-registry.js"),
+    import("../src/core/security/stdio-session-bootstrap.js"),
+    import("../src/core/audit/emit-stdio-auth.js"),
+  ]);
 
   const { default: express } = await import("express");
 
-  // Validate API key if auth is enabled
-  if (process.env.HUB_AUTH_ENABLED === "true" && !options.apiKey) {
-    console.error("Error: API key required. Provide --api-key or set HUB_API_KEY");
-    process.exit(1);
-  }
-
-  // Set context for the session (gateway reads these for STDIO workspace propagation)
-  process.env.HUB_SCOPE = options.scope;
   if (options.workspaceId) process.env.HUB_WORKSPACE_ID = options.workspaceId;
   if (options.projectId) process.env.HUB_PROJECT_ID = options.projectId;
   if (options.env) process.env.HUB_ENV = options.env;
   if (options.tenantId) process.env.HUB_TENANT_ID = options.tenantId;
 
-  // Load plugins before starting MCP server
   console.error("[mcp-hub-stdio] Loading plugins...");
   initializeToolHooks();
   const app = express();
@@ -241,14 +122,53 @@ async function main() {
   console.error("[mcp-hub-stdio] Plugins loaded");
 
   const sessionId = randomUUID();
-  await applyStdioSessionAuth(options, sessionId);
 
-  // Create and start MCP server with STDIO transport
+  const workspaceId = options.workspaceId || process.env.HUB_WORKSPACE_ID || null;
+  const projectId = options.projectId || process.env.HUB_PROJECT_ID || null;
+
+  const authOutcome = await bootstrapStdioAuthContext({
+    apiKey: options.apiKey,
+    scope: options.scope,
+    workspaceId,
+    projectId,
+    env: options.env || process.env.HUB_ENV || null,
+    tenantId: options.tenantId || process.env.HUB_TENANT_ID?.trim() || null,
+    sessionId,
+  });
+
+  const wsAudit = workspaceId != null && String(workspaceId).length > 0 ? String(workspaceId) : "global";
+
+  if (!authOutcome.ok) {
+    await emitStdioBootstrapAuthDenied({
+      sessionId,
+      reason: authOutcome.reason,
+      errorCode: authOutcome.errorCode,
+      workspaceId: wsAudit,
+      projectId,
+      requiredScope: authOutcome.requiredScope,
+    }).catch(() => {});
+
+    if (authOutcome.errorCode === "invalid_token") {
+      console.error("[mcp-hub-stdio] Error: invalid API key or token (--api-key / HUB_API_KEY)");
+    } else if (authOutcome.errorCode === "insufficient_scope") {
+      console.error(
+        `[mcp-hub-stdio] Error: credential does not satisfy required scope '${authOutcome.requiredScope}'. Use a key with sufficient privileges or lower --scope / HUB_SCOPE.`
+      );
+    } else {
+      console.error(
+        "[mcp-hub-stdio] Error: authentication required. Provide --api-key / HUB_API_KEY, or enable local open-hub only where appropriate (non-production)."
+      );
+    }
+    process.exit(1);
+  }
+
+  process.env.HUB_SCOPE = options.scope;
+
   const server = createMcpServer();
   const transport = new StdioServerTransport();
 
   console.error("[mcp-hub-stdio] Starting MCP Hub STDIO server...");
-  console.error(`[mcp-hub-stdio] Scope: ${options.scope}`);
+  console.error(`[mcp-hub-stdio] Required scope: ${options.scope}`);
   if (options.workspaceId) console.error(`[mcp-hub-stdio] Workspace: ${options.workspaceId}`);
   if (options.projectId) console.error(`[mcp-hub-stdio] Project: ${options.projectId}`);
   console.error(`[mcp-hub-stdio] Environment: ${options.env}`);
@@ -326,7 +246,6 @@ async function main() {
     }
   }
 
-  // Handle shutdown gracefully
   process.on("SIGINT", async () => {
     console.error("\n[mcp-hub-stdio] Shutting down...");
     await shutdownTelemetry();

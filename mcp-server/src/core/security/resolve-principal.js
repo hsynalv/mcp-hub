@@ -35,6 +35,20 @@ function extractCredential(req) {
  */
 
 /**
+ * STDIO / CLI: same resolution as HTTP Bearer without an Express request.
+ * @param {string|null|undefined} apiKey - raw key or Bearer-equivalent secret (never logged)
+ * @returns {Promise<ResolvedHubPrincipal>}
+ */
+export async function resolveHubPrincipalFromStdioToken(apiKey) {
+  const req = { headers: {} };
+  const t = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (t.length > 0) {
+    req.headers.authorization = `Bearer ${t}`;
+  }
+  return resolveHubPrincipalFromRequest(req);
+}
+
+/**
  * @param {import("express").Request} req
  * @returns {Promise<ResolvedHubPrincipal>}
  */

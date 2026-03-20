@@ -76,3 +76,4 @@ export {
   httpHubAuditLifecycleMiddleware,
 } from "./emit-http-events.js";
 export { resolveActorString, hubMetadataFromToolContext, mergeHubMetadata } from "./base-envelope.js";
+export { emitStdioBootstrapAuthDenied } from "./emit-stdio-auth.js";
