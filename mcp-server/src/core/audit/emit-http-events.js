@@ -98,6 +98,11 @@ export async function emitHttpRequestCompleted(req, res, durationMs) {
  * @param {object} detail — see {@link normalizeHttpDenyEvent}
  */
 export async function emitHttpDenyHubEvent(req, detail) {
+  if (req.hubHttpDenyAuditEmitted) {
+    return;
+  }
+  req.hubHttpDenyAuditEmitted = true;
+
   const norm = normalizeHttpDenyEvent(detail);
   const ws = req.workspaceId != null ? String(req.workspaceId) : "global";
 

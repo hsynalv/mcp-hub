@@ -61,6 +61,12 @@ function extractKey(req) {
 export function requireScope(scope = "read") {
   return (req, res, next) => {
     if (!req.securityContext?.authenticated) {
+      void emitHttpDenyHubEvent(req, {
+        source: "require_scope",
+        statusCode: 401,
+        errorCode: "unauthorized",
+        requiredScope: scope,
+      }).catch(() => {});
       return res.status(401).json({
         ok: false,
         error: {
@@ -207,23 +213,39 @@ export function requireOAuthScope(scope = "read") {
 
     const token = extractKey(req);
     if (!token) {
+      void emitHttpDenyHubEvent(req, {
+        source: "require_oauth_scope",
+        statusCode: 401,
+        errorCode: "unauthorized",
+        requiredScope: scope,
+        authMechanism: "oauth",
+      }).catch(() => {});
       return res.status(401).json({
         ok: false,
         error: {
           code: "unauthorized",
           message: "Authorization header required. Use: Authorization: Bearer <token>",
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
 
     const validation = await validateBearerToken(token);
     if (!validation.valid) {
+      void emitHttpDenyHubEvent(req, {
+        source: "require_oauth_scope",
+        statusCode: 401,
+        errorCode: "invalid_token",
+        requiredScope: scope,
+        authMechanism: "oauth",
+      }).catch(() => {});
       return res.status(401).json({
         ok: false,
         error: {
           code: "invalid_token",
           message: "Invalid or expired token.",
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
 
@@ -235,12 +257,20 @@ export function requireOAuthScope(scope = "read") {
     );
 
     if (!hasScope) {
+      void emitHttpDenyHubEvent(req, {
+        source: "require_oauth_scope",
+        statusCode: 403,
+        errorCode: "insufficient_scope",
+        requiredScope: scope,
+        authMechanism: "oauth",
+      }).catch(() => {});
       return res.status(403).json({
         ok: false,
         error: {
           code: "insufficient_scope",
           message: `This endpoint requires '${scope}' scope. Token has: ${validation.scopes.join(", ")}`,
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
 

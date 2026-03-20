@@ -1,10 +1,13 @@
 /**
- * Map HTTP-layer denies (security / scope / policy-guard) to hub event types + safe metadata.
+ * Map HTTP-layer denies (security / scope / policy-guard / MCP transport) to hub event types + safe metadata.
+ * Single normalization layer for {@link ./emit-http-events.js emitHttpDenyHubEvent}.
  */
 
 import { HubEventTypes } from "./event-types.js";
 
-/** @typedef {"enforce_security_context"|"require_scope"|"policy_guard"} HttpDenySource */
+/**
+ * @typedef {"enforce_security_context"|"require_scope"|"require_oauth_scope"|"policy_guard"|"mcp_http_transport"} HttpDenySource
+ */
 
 /**
  * @param {unknown} rule
@@ -27,6 +30,17 @@ export function sanitizePolicyRuleRef(rule) {
 }
 
 /**
+ * @param {HttpDenySource} source
+ */
+function hubPhaseForSource(source) {
+  if (source === "enforce_security_context") return "authenticate";
+  if (source === "require_scope" || source === "require_oauth_scope") return "authorize";
+  if (source === "policy_guard") return "policy_guard";
+  if (source === "mcp_http_transport") return "mcp_transport";
+  return "http";
+}
+
+/**
  * @param {object} detail
  * @param {HttpDenySource} detail.source
  * @param {number} detail.statusCode
@@ -35,6 +49,8 @@ export function sanitizePolicyRuleRef(rule) {
  * @param {unknown} [detail.policyRule]
  * @param {number} [detail.policyLimit]
  * @param {number|string} [detail.policyWindow]
+ * @param {string} [detail.authMechanism] e.g. "oauth"
+ * @param {string} [detail.hubTransport] overrides default http (e.g. "mcp_http")
  * @returns {{ eventType: string, reason: string, metadata: Record<string, string|number|undefined> }}
  */
 export function normalizeHttpDenyEvent(detail) {
@@ -46,17 +62,25 @@ export function normalizeHttpDenyEvent(detail) {
     policyRule,
     policyLimit,
     policyWindow,
+    authMechanism,
+    hubTransport: transportOverride,
   } = detail;
 
   const meta = {
     hubDenySource: source,
-    hubPhase:
-      source === "enforce_security_context"
-        ? "authenticate"
-        : source === "require_scope"
-          ? "authorize"
-          : "policy_guard",
+    hubPhase: hubPhaseForSource(source),
+    hubStatusCode: statusCode,
   };
+
+  if (transportOverride != null && String(transportOverride).length > 0) {
+    meta.hubTransport = String(transportOverride);
+  }
+
+  if (authMechanism != null && String(authMechanism).length > 0) {
+    meta.hubAuthMechanism = String(authMechanism);
+  } else if (source === "require_oauth_scope") {
+    meta.hubAuthMechanism = "oauth";
+  }
 
   /** @type {string} */
   let eventType = HubEventTypes.AUTH_DENIED;
@@ -86,15 +110,20 @@ export function normalizeHttpDenyEvent(detail) {
       reason = errorCode || "policy_denied";
       if (ruleRef) meta.hubPolicyRule = ruleRef;
     }
-  } else if (source === "require_scope") {
+  } else if (source === "require_scope" || source === "require_oauth_scope") {
     eventType = HubEventTypes.AUTH_DENIED;
     meta.hubErrorCode = errorCode || (statusCode === 403 ? "forbidden" : "unauthorized");
     if (statusCode === 403) {
       meta.hubDenyKind = "insufficient_scope";
       reason = requiredScope ? `insufficient_scope:${requiredScope}` : "insufficient_scope";
     } else {
-      meta.hubDenyKind = "security_context_missing";
-      reason = "security_context_missing";
+      if (errorCode === "invalid_token") {
+        meta.hubDenyKind = "invalid_token";
+        reason = "invalid_token";
+      } else {
+        meta.hubDenyKind = "security_context_missing";
+        reason = errorCode || "security_context_missing";
+      }
     }
     if (requiredScope) meta.hubRequiredScope = String(requiredScope);
   } else if (source === "enforce_security_context") {
@@ -103,6 +132,24 @@ export function normalizeHttpDenyEvent(detail) {
     meta.hubErrorCode = code;
     meta.hubDenyKind = code === "invalid_token" ? "invalid_token" : "unauthenticated";
     reason = code;
+  } else if (source === "mcp_http_transport") {
+    eventType = HubEventTypes.AUTH_DENIED;
+    const code = errorCode || "forbidden";
+    meta.hubErrorCode = code;
+    if (!meta.hubTransport) meta.hubTransport = "mcp_http";
+    if (code === "invalid_origin") {
+      meta.hubDenyKind = "invalid_origin";
+      reason = "invalid_origin";
+    } else if (code === "invalid_token") {
+      meta.hubDenyKind = "invalid_token";
+      reason = "invalid_token";
+    } else if (code === "unauthorized") {
+      meta.hubDenyKind = "unauthenticated";
+      reason = "unauthorized";
+    } else {
+      meta.hubDenyKind = "mcp_transport_denied";
+      reason = code;
+    }
   }
 
   return { eventType, reason, metadata: meta };

@@ -114,6 +114,7 @@ export const METADATA_ALLOWLIST = [
   "hubStatusClass",
   "hubRequiredScope",
   "hubDenySource",
+  "hubAuthMechanism",
   "hubPolicyLimit",
   "hubPolicyWindow",
   "hubJobId",

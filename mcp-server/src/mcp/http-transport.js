@@ -10,6 +10,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "./gateway.js";
 import { resolveHubPrincipalFromRequest } from "../core/security/resolve-principal.js";
 import { runWithMcpRequestContext } from "../core/authorization/mcp-request-context.js";
+import { emitHttpDenyHubEvent } from "../core/audit/emit-http-events.js";
 
 function normalizeHubScopes(scopes) {
   if (!Array.isArray(scopes)) return [];
@@ -59,12 +60,19 @@ export function createMcpHttpMiddleware() {
     // Security: Check origin for DNS rebinding protection
     const origin = req.headers.origin;
     if (origin && !isValidOrigin(origin)) {
+      void emitHttpDenyHubEvent(req, {
+        source: "mcp_http_transport",
+        statusCode: 403,
+        errorCode: "invalid_origin",
+        hubTransport: "mcp_http",
+      }).catch(() => {});
       return res.status(403).json({
         ok: false,
         error: {
           code: "invalid_origin",
           message: "Origin not allowed",
         },
+        meta: { requestId: req.requestId ?? null },
       });
     }
 
@@ -83,6 +91,12 @@ export function createMcpHttpMiddleware() {
 
     if (!principal.authenticated) {
       if (principal.reason === "invalid_token") {
+        void emitHttpDenyHubEvent(req, {
+          source: "mcp_http_transport",
+          statusCode: 401,
+          errorCode: "invalid_token",
+          hubTransport: "mcp_http",
+        }).catch(() => {});
         return res.status(401).json({
           ok: false,
           error: {
@@ -92,6 +106,12 @@ export function createMcpHttpMiddleware() {
           meta: { requestId: req.requestId ?? null },
         });
       }
+      void emitHttpDenyHubEvent(req, {
+        source: "mcp_http_transport",
+        statusCode: 401,
+        errorCode: "unauthorized",
+        hubTransport: "mcp_http",
+      }).catch(() => {});
       return res.status(401).json({
         ok: false,
         error: {
