@@ -21,6 +21,12 @@ import {
   filterVisibleTools,
   filterOptionsFromContext,
 } from "../core/authorization/filter-visible-tools.js";
+import {
+  emitDiscoveryRequestedEvent,
+  emitDiscoveryFilteredEvent,
+} from "../core/audit/emit-hub-event.js";
+import { DiscoverySurfaces } from "../core/audit/discovery-surfaces.js";
+import { resolveActorString } from "../core/audit/base-envelope.js";
 
 function effectiveMcpStore() {
   return getMcpRequestContext() ?? getStdioSessionContext();
@@ -68,6 +74,39 @@ export function createMcpServer() {
         };
     const { workspaceId, scopes, tenantId } = filterOptionsFromContext(baseCtx);
     const tools = filterVisibleTools(all, { workspaceId, scopes, tenantId });
+
+    const correlationId = store?.correlationId != null ? String(store.correlationId) : undefined;
+    const sessionId = store?.sessionId != null ? String(store.sessionId) : undefined;
+    const actor = store?.authInfo
+      ? resolveActorString(store.authInfo.actor ?? store.authInfo.user)
+      : "anonymous";
+    const ws = baseCtx.workspaceId != null ? String(baseCtx.workspaceId) : "global";
+
+    try {
+      await emitDiscoveryRequestedEvent({
+        transport: "mcp",
+        discoverySurface: DiscoverySurfaces.MCP_TOOLS_LIST,
+        correlationId,
+        sessionId,
+        workspaceId: ws,
+        tenantId: baseCtx.tenantId != null ? String(baseCtx.tenantId) : undefined,
+        actor,
+      });
+      await emitDiscoveryFilteredEvent({
+        transport: "mcp",
+        discoverySurface: DiscoverySurfaces.MCP_TOOLS_LIST,
+        correlationId,
+        sessionId,
+        workspaceId: ws,
+        actor,
+        tenantId: baseCtx.tenantId != null ? String(baseCtx.tenantId) : undefined,
+        totalCount: all.length,
+        visibleCount: tools.length,
+      });
+    } catch {
+      /* discovery telemetry is best-effort */
+    }
+
     return {
       tools: tools.map((tool) => ({
         name: tool.name,
@@ -80,8 +119,10 @@ export function createMcpServer() {
   // Handle callTool request
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args } = request.params;
-    const sessionInfo = getStdioSessionContext()?.authInfo;
-    const alsInfo = getMcpRequestContext()?.authInfo;
+    const mcpStore = getMcpRequestContext();
+    const stdioStore = getStdioSessionContext();
+    const sessionInfo = stdioStore?.authInfo;
+    const alsInfo = mcpStore?.authInfo;
     const authInfo = mergeMcpAuthInfo(
       mergeMcpAuthInfo(sessionInfo, alsInfo),
       extra?.authInfo
@@ -90,11 +131,24 @@ export function createMcpServer() {
     const actor =
       authInfo.actor ??
       (scopes.length > 0 ? { type: authInfo.type || "bearer", scopes } : null);
+    const correlationForTools =
+      mcpStore?.correlationId != null
+        ? String(mcpStore.correlationId)
+        : stdioStore?.correlationId != null
+          ? String(stdioStore.correlationId)
+          : request.id != null
+            ? `mcp-rpc-${request.id}`
+            : undefined;
+    const sessionId =
+      stdioStore?.sessionId != null ? String(stdioStore.sessionId) : undefined;
+
     const context = {
       method: "MCP",
       source: "mcp",
       user: authInfo.user ?? request.context?.user ?? null,
       requestId: request.id,
+      correlationId: correlationForTools,
+      sessionId,
       workspaceId: authInfo.workspaceId ?? process.env.HUB_WORKSPACE_ID ?? null,
       projectId: authInfo.projectId ?? process.env.HUB_PROJECT_ID ?? null,
       tenantId: authInfo.tenantId ?? process.env.HUB_TENANT_ID ?? null,

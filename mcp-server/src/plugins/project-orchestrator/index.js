@@ -16,7 +16,6 @@ import crypto from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import { ToolTags, callTool as useTool } from "../../core/tool-registry.js";
-import { createJob } from "../../core/jobs.js";
 import { setDraft, getDraft, deleteDraft, getRedis } from "../../core/redis.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
 import { createPluginErrorHandler } from "../../core/error-standard.js";

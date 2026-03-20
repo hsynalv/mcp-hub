@@ -1,8 +1,8 @@
 /**
  * Jobs System Index
  *
- * Central export point for job queue functionality.
- * Plugins can register job handlers via registerJobHandler().
+ * Production job execution: `../jobs.js` (submitJob, registerJobRunner).
+ * This folder holds an alternate in-memory JobManager implementation used only by unit tests.
  */
 
 // Core types
@@ -20,7 +20,7 @@ export { JobQueue, createJobQueue } from "./job.queue.js";
 // Worker
 export { JobWorker, createJobWorker } from "./job.worker.js";
 
-// Manager - primary interface
+// @deprecated Alternate job subsystem — use `../jobs.js` for production / hub telemetry.
 export { JobManager, createJobManager, getJobManager, setJobManager } from "./job.manager.js";
 
 // Legacy exports for backward compatibility

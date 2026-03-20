@@ -8,7 +8,7 @@
  * - Failed jobs expose error state
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import supertest from "supertest";
 
@@ -29,6 +29,8 @@ import { clearHooks as clearToolHooks } from "../src/core/tool-hooks.js";
 
 // Import server factory
 import { createServer } from "../src/core/server.js";
+import { getAuditManager } from "../src/core/audit/index.js";
+import { HubEventTypes } from "../src/core/audit/event-types.js";
 
 describe("Jobs API Integration", () => {
   let app;
@@ -158,9 +160,10 @@ describe("Jobs API Integration", () => {
         .set("x-env", "test-env");
 
       expect(response.status).toBe(200);
-      expect(response.body.count).toBe(2);
-      expect(response.body.jobs).toHaveLength(2);
-      expect(response.body.jobs[0]).toMatchObject({
+      expect(response.body.ok).toBe(true);
+      expect(response.body.data.count).toBe(2);
+      expect(response.body.data.jobs).toHaveLength(2);
+      expect(response.body.data.jobs[0]).toMatchObject({
         type: "test.job",
         state: expect.any(String),
       });
@@ -187,8 +190,9 @@ describe("Jobs API Integration", () => {
         .set("x-env", "test-env");
 
       expect(response.status).toBe(200);
-      expect(response.body.jobs).toHaveLength(1);
-      expect(response.body.jobs[0].type).toBe("test.job");
+      expect(response.body.ok).toBe(true);
+      expect(response.body.data.jobs).toHaveLength(1);
+      expect(response.body.data.jobs[0].type).toBe("test.job");
     });
 
     it("should return empty array when no jobs", async () => {
@@ -198,8 +202,9 @@ describe("Jobs API Integration", () => {
         .set("x-env", "test-env");
 
       expect(response.status).toBe(200);
-      expect(response.body.count).toBe(0);
-      expect(response.body.jobs).toEqual([]);
+      expect(response.body.ok).toBe(true);
+      expect(response.body.data.count).toBe(0);
+      expect(response.body.data.jobs).toEqual([]);
     });
   });
 
@@ -221,7 +226,8 @@ describe("Jobs API Integration", () => {
         .set("x-env", "test-env");
 
       expect(response.status).toBe(200);
-      expect(response.body.job).toMatchObject({
+      expect(response.body.ok).toBe(true);
+      expect(response.body.data.job).toMatchObject({
         id: jobId,
         type: "test.job",
         state: expect.any(String),
@@ -245,6 +251,86 @@ describe("Jobs API Integration", () => {
       expect(response.status).toBe(404);
       expect(response.body.ok).toBe(false);
       expect(response.body.error.code).toBe("job_not_found");
+    });
+  });
+
+  describe("DELETE /jobs/:id", () => {
+    it("cancels queued job and returns envelope", async () => {
+      let release;
+      const hold = new Promise((r) => {
+        release = r;
+      });
+      registerJobRunner("gate.del", async () => {
+        await hold;
+        return { ok: true };
+      });
+
+      const sub = await request
+        .post("/jobs")
+        .set("x-project-id", "test-project")
+        .set("x-env", "test-env")
+        .send({ type: "gate.del", payload: {} });
+      expect(sub.status).toBe(202);
+      const jobId = sub.body.data.job.id;
+
+      const del = await request.delete(`/jobs/${jobId}`).set("x-project-id", "test-project");
+      expect(del.status).toBe(202);
+      expect(del.body.ok).toBe(true);
+      expect(del.body.data.cancelled).toBe(true);
+
+      release();
+    });
+  });
+
+  describe("job hub lifecycle events", () => {
+    it("records submitted, started, completed in AuditManager with request correlation", async () => {
+      const manager = getAuditManager();
+      if (!manager.initialized) await manager.init();
+
+      const correlationId = "jobs-api-lifecycle-corr-1";
+      const response = await request
+        .post("/jobs")
+        .set("x-correlation-id", correlationId)
+        .set("x-tenant-id", "tenant-lc-1")
+        .set("x-project-id", "test-project")
+        .set("x-env", "test-env")
+        .send({ type: "test.job", payload: { id: 1 } });
+
+      expect(response.status).toBe(202);
+
+      await vi.waitFor(async () => {
+        const entries = await manager.getRecentEntries({ limit: 40 });
+        const submitted = entries.find((e) => e.operation === HubEventTypes.JOB_SUBMITTED);
+        expect(submitted?.correlationId).toBe(correlationId);
+        expect(submitted?.metadata?.hubTenantId).toBe("tenant-lc-1");
+        expect(submitted?.metadata?.hubJobType).toBe("test.job");
+      });
+
+      await vi.waitFor(async () => {
+        const entries = await manager.getRecentEntries({ limit: 50 });
+        expect(entries.some((e) => e.operation === HubEventTypes.JOB_COMPLETED)).toBe(true);
+      }, { timeout: 3000 });
+    });
+
+    it("records job.failed for failing jobs", async () => {
+      const manager = getAuditManager();
+      if (!manager.initialized) await manager.init();
+
+      const submitResponse = await request
+        .post("/jobs")
+        .set("x-project-id", "test-project")
+        .set("x-env", "test-env")
+        .send({
+          type: "test.job",
+          payload: { shouldFail: true },
+        });
+
+      expect(submitResponse.status).toBe(202);
+
+      await vi.waitFor(async () => {
+        const entries = await manager.getRecentEntries({ limit: 60 });
+        expect(entries.some((e) => e.operation === HubEventTypes.JOB_FAILED)).toBe(true);
+      }, { timeout: 3000 });
     });
   });
 
@@ -272,9 +358,10 @@ describe("Jobs API Integration", () => {
         .set("x-env", "test-env");
 
       expect(response.status).toBe(200);
-      expect(response.body.job.state).toBe("failed");
-      expect(response.body.job.error).toBe("Job failed as requested");
-      expect(response.body.job.finishedAt).toBeDefined();
+      expect(response.body.ok).toBe(true);
+      expect(response.body.data.job.state).toBe("failed");
+      expect(response.body.data.job.error).toBe("Job failed as requested");
+      expect(response.body.data.job.finishedAt).toBeDefined();
     });
   });
 });

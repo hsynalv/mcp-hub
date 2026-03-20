@@ -1,7 +1,8 @@
 /**
- * Job Manager
+ * Job Manager (alternate / in-memory subsystem)
  *
- * Central job management system - submit, process, monitor jobs.
+ * @deprecated Production and observability use `src/core/jobs.js` + hub lifecycle events.
+ *             Kept for `jobs.test.js` and incremental migration only — do not wire new features here.
  */
 
 import { JobStatus, VALID_JOB_STATUSES } from "./job.types.js";

@@ -15,6 +15,7 @@ import { isConfirmedBypassAllowed } from "./security/is-confirmed-bypass-allowed
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { emitHttpDenyHubEvent } from "./audit/emit-http-events.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -108,6 +109,11 @@ export function policyGuardrailMiddleware(req, res, next) {
     if (runtime.policyAllowMissingEvaluator) {
       return next();
     }
+    void emitHttpDenyHubEvent(req, {
+      source: "policy_guard",
+      statusCode: 503,
+      errorCode: "policy_unavailable",
+    }).catch(() => {});
     const requestId = req.requestId ?? null;
     return res.status(503).json({
       ok: false,
@@ -136,6 +142,12 @@ export function policyGuardrailMiddleware(req, res, next) {
 
   switch (result.action) {
     case "block": {
+      void emitHttpDenyHubEvent(req, {
+        source: "policy_guard",
+        statusCode: 403,
+        errorCode: "policy_blocked",
+        policyRule: result.rule,
+      }).catch(() => {});
       return res.status(403).json({
         ok: false,
         error: {
@@ -173,6 +185,14 @@ export function policyGuardrailMiddleware(req, res, next) {
     }
 
     case "policy_rate_limit": {
+      void emitHttpDenyHubEvent(req, {
+        source: "policy_guard",
+        statusCode: 429,
+        errorCode: "policy_rate_limit",
+        policyRule: result.rule,
+        policyLimit: result.limit,
+        policyWindow: result.window,
+      }).catch(() => {});
       return res.status(429).json({
         ok: false,
         error: {
@@ -185,6 +205,12 @@ export function policyGuardrailMiddleware(req, res, next) {
     }
 
     default: {
+      void emitHttpDenyHubEvent(req, {
+        source: "policy_guard",
+        statusCode: 403,
+        errorCode: "policy_denied",
+        policyRule: result.rule,
+      }).catch(() => {});
       return res.status(403).json({
         ok: false,
         error: {

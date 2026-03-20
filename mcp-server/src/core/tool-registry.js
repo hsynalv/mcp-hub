@@ -18,6 +18,9 @@
 import { getApprovalStore } from "./policy-hooks.js";
 import { executeRegisteredTool } from "./tool-execution/execute-tool.js";
 import { ToolTags, VALID_TAGS as TOOL_TAG_VALUES } from "./tool-tags.js";
+import { emitHubAuditEvent } from "./audit/emit-hub-event.js";
+import { HubEventTypes, HubOutcomes } from "./audit/event-types.js";
+import { resolveActorString } from "./audit/base-envelope.js";
 
 const tools = new Map();
 
@@ -216,6 +219,35 @@ export function clearTools() {
 export async function callTool(name, args, context = {}) {
   const tool = tools.get(name);
   if (!tool) {
+    try {
+      await emitHubAuditEvent({
+        eventType: HubEventTypes.TOOL_EXECUTION_FAILED,
+        outcome: HubOutcomes.FAILURE,
+        plugin: "core",
+        actor: resolveActorString(context.actor ?? context.user),
+        workspaceId: context.workspaceId != null ? String(context.workspaceId) : "global",
+        projectId: context.projectId ?? null,
+        correlationId:
+          context.correlationId != null
+            ? String(context.correlationId)
+            : context.requestId != null
+              ? String(context.requestId)
+              : undefined,
+        durationMs: 0,
+        allowed: false,
+        success: false,
+        reason: `Tool not found: ${name}`,
+        error: "tool_not_found",
+        toolContext: context,
+        metadata: {
+          hubToolName: name,
+          hubErrorCode: "tool_not_found",
+          hubPlugin: "core",
+        },
+      });
+    } catch {
+      /* best-effort */
+    }
     return {
       ok: false,
       error: {

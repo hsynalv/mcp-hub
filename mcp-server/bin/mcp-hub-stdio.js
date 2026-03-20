@@ -16,6 +16,7 @@ import { config } from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
+import { randomUUID } from "crypto";
 
 // Cursor/STDIO expects ONLY JSON-RPC frames on stdout.
 // Send all logs to stderr to avoid breaking JSON parsing.
@@ -111,7 +112,7 @@ function normalizeHubScopes(scopes) {
   ];
 }
 
-async function applyStdioSessionAuth(options) {
+async function applyStdioSessionAuth(options, sessionId) {
   const { validateBearerToken, isAuthEnabled } = await import("../src/core/auth.js");
   const { getSecurityRuntime } = await import("../src/core/security/resolve-runtime-security.js");
   const { setStdioSessionContext } = await import("../src/core/authorization/stdio-session-context.js");
@@ -140,6 +141,7 @@ async function applyStdioSessionAuth(options) {
           actor: null,
         },
         correlationId: null,
+        sessionId,
       });
       return;
     }
@@ -152,6 +154,7 @@ async function applyStdioSessionAuth(options) {
         actor: { type: "open_hub", scopes: ["read", "write", "admin"] },
       },
       correlationId: null,
+      sessionId,
     });
     return;
   }
@@ -166,6 +169,7 @@ async function applyStdioSessionAuth(options) {
         actor: null,
       },
       correlationId: null,
+      sessionId,
     });
     return;
   }
@@ -181,6 +185,7 @@ async function applyStdioSessionAuth(options) {
         actor: null,
       },
       correlationId: null,
+      sessionId,
     });
     return;
   }
@@ -199,6 +204,7 @@ async function applyStdioSessionAuth(options) {
       },
     },
     correlationId: null,
+    sessionId,
   });
 }
 
@@ -234,7 +240,8 @@ async function main() {
   await loadPlugins(app);
   console.error("[mcp-hub-stdio] Plugins loaded");
 
-  await applyStdioSessionAuth(options);
+  const sessionId = randomUUID();
+  await applyStdioSessionAuth(options, sessionId);
 
   // Create and start MCP server with STDIO transport
   const server = createMcpServer();
@@ -250,15 +257,86 @@ async function main() {
 
   console.error("[mcp-hub-stdio] MCP server connected via STDIO");
 
+  const sessionStartedAt = Date.now();
+  try {
+    const { emitHubAuditEvent } = await import("../src/core/audit/emit-hub-event.js");
+    const { HubEventTypes, HubOutcomes } = await import("../src/core/audit/event-types.js");
+    const { resolveActorString } = await import("../src/core/audit/base-envelope.js");
+    const { getStdioSessionContext } = await import("../src/core/authorization/stdio-session-context.js");
+    const sc = getStdioSessionContext();
+    await emitHubAuditEvent({
+      eventType: HubEventTypes.STDIO_SESSION_STARTED,
+      outcome: HubOutcomes.SUCCESS,
+      plugin: "core",
+      actor: sc?.authInfo ? resolveActorString(sc.authInfo.actor ?? sc.authInfo.user) : "anonymous",
+      workspaceId: process.env.HUB_WORKSPACE_ID ?? "global",
+      projectId: process.env.HUB_PROJECT_ID ?? null,
+      correlationId: `stdio-session-${sessionId}`,
+      durationMs: 0,
+      allowed: true,
+      success: true,
+      toolContext: {
+        workspaceId: process.env.HUB_WORKSPACE_ID ?? null,
+        sessionId,
+        source: "mcp",
+        method: "MCP",
+        correlationId: `stdio-session-${sessionId}`,
+      },
+      metadata: {
+        hubSessionId: sessionId,
+        hubTransport: "stdio",
+      },
+    });
+  } catch {
+    /* optional telemetry */
+  }
+
+  async function shutdownTelemetry() {
+    try {
+      const { emitHubAuditEvent } = await import("../src/core/audit/emit-hub-event.js");
+      const { HubEventTypes, HubOutcomes } = await import("../src/core/audit/event-types.js");
+      const { resolveActorString } = await import("../src/core/audit/base-envelope.js");
+      const { getStdioSessionContext } = await import("../src/core/authorization/stdio-session-context.js");
+      const sc = getStdioSessionContext();
+      await emitHubAuditEvent({
+        eventType: HubEventTypes.STDIO_SESSION_ENDED,
+        outcome: HubOutcomes.SUCCESS,
+        plugin: "core",
+        actor: sc?.authInfo ? resolveActorString(sc.authInfo.actor ?? sc.authInfo.user) : "anonymous",
+        workspaceId: process.env.HUB_WORKSPACE_ID ?? "global",
+        projectId: process.env.HUB_PROJECT_ID ?? null,
+        correlationId: `stdio-session-${sessionId}`,
+        durationMs: Math.max(0, Date.now() - sessionStartedAt),
+        allowed: true,
+        success: true,
+        toolContext: {
+          workspaceId: process.env.HUB_WORKSPACE_ID ?? null,
+          sessionId,
+          source: "mcp",
+          method: "MCP",
+          correlationId: `stdio-session-${sessionId}`,
+        },
+        metadata: {
+          hubSessionId: sessionId,
+          hubTransport: "stdio",
+        },
+      });
+    } catch {
+      /* optional */
+    }
+  }
+
   // Handle shutdown gracefully
   process.on("SIGINT", async () => {
     console.error("\n[mcp-hub-stdio] Shutting down...");
+    await shutdownTelemetry();
     await transport.close();
     process.exit(0);
   });
 
   process.on("SIGTERM", async () => {
     console.error("\n[mcp-hub-stdio] Shutting down...");
+    await shutdownTelemetry();
     await transport.close();
     process.exit(0);
   });

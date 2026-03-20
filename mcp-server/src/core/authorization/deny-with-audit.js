@@ -1,8 +1,11 @@
 /**
- * Standard audit line for authorization / policy denials on tool execution (structured, searchable).
+ * Standard audit for authorization / policy denials on tool execution.
  */
 
-import { auditLog, generateCorrelationId } from "../audit/index.js";
+import { emitHubAuditEvent } from "../audit/emit-hub-event.js";
+import { hubEventTypeFromAuthzPhase } from "../audit/normalize-deny-event.js";
+import { HubOutcomes } from "../audit/event-types.js";
+import { generateCorrelationId } from "../audit/audit.standard.js";
 
 /**
  * @param {object} params
@@ -18,20 +21,36 @@ import { auditLog, generateCorrelationId } from "../audit/index.js";
  */
 export async function auditToolAuthzDenial(params) {
   const correlationId = params.correlationId || generateCorrelationId();
+  const eventType = hubEventTypeFromAuthzPhase(params.phase, params.code);
   try {
-    await auditLog({
+    const rule =
+      params.metadata && typeof params.metadata.rule === "string"
+        ? params.metadata.rule
+        : null;
+    const targetWs =
+      params.metadata && typeof params.metadata.targetWorkspaceId === "string"
+        ? params.metadata.targetWorkspaceId
+        : null;
+
+    await emitHubAuditEvent({
+      eventType,
+      outcome: HubOutcomes.DENIED,
       plugin: params.plugin || "core",
-      operation: `tool_authz_denied:${params.phase}`,
       actor: params.actor || "anonymous",
       workspaceId: params.workspaceId || "global",
+      correlationId,
+      durationMs: 0,
       allowed: false,
       success: false,
       reason: params.reason,
-      correlationId,
+      error: params.code,
       metadata: {
-        code: params.code,
-        toolName: params.toolName,
-        ...(params.metadata || {}),
+        hubErrorCode: params.code,
+        hubToolName: params.toolName ?? null,
+        hubPlugin: params.plugin ?? null,
+        hubPhase: params.phase,
+        ...(rule ? { hubPolicyRule: rule } : {}),
+        ...(targetWs ? { hubTargetWorkspaceId: targetWs } : {}),
       },
     });
   } catch {

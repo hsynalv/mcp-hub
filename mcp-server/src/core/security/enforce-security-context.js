@@ -4,38 +4,10 @@
 
 import { resolveHubPrincipalFromRequest } from "./resolve-principal.js";
 import { getSecurityRuntime } from "./resolve-runtime-security.js";
+import { emitHttpDenyHubEvent } from "../audit/emit-http-events.js";
+import { isPublicSecurityPath } from "./public-http-paths.js";
 
-/**
- * Paths that skip principal resolution (health, static UI, CORS preflight).
- * @param {import("express").Request} req
- * @returns {boolean}
- */
-export function isPublicSecurityPath(req) {
-  if (req.method === "OPTIONS") return true;
-  const p = req.path || "";
-
-  if (p === "/health") return true;
-
-  if (req.method === "GET" && (p === "/" || p.startsWith("/landing/"))) return true;
-
-  if (
-    req.method === "GET" &&
-    (p === "/ui" || p === "/ui/" || p.startsWith("/ui/"))
-  ) {
-    return true;
-  }
-
-  if (
-    req.method === "GET" &&
-    (p === "/admin" || p === "/admin/" || p.startsWith("/admin/"))
-  ) {
-    return true;
-  }
-
-  if (req.method === "POST" && p === "/ui/token") return true;
-
-  return false;
-}
+export { isPublicSecurityPath } from "./public-http-paths.js";
 
 function envelope401(req, code, message) {
   return {
@@ -59,8 +31,18 @@ export async function enforceSecurityContext(req, res, next) {
 
     if (!principal.authenticated) {
       if (principal.reason === "invalid_token") {
+        void emitHttpDenyHubEvent(req, {
+          source: "enforce_security_context",
+          statusCode: 401,
+          errorCode: "invalid_token",
+        }).catch(() => {});
         return res.status(401).json(envelope401(req, "invalid_token", "Invalid or expired token."));
       }
+      void emitHttpDenyHubEvent(req, {
+        source: "enforce_security_context",
+        statusCode: 401,
+        errorCode: "unauthorized",
+      }).catch(() => {});
       return res
         .status(401)
         .json(

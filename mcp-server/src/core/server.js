@@ -5,13 +5,13 @@ import morgan from "morgan";
 import { AppError, NotFoundError } from "./errors.js";
 import { config } from "./config.js";
 import { loadPlugins, getPlugins } from "./plugins.js";
-import { initializeToolHooks } from "./tool-registry.js";
+import { initializeToolHooks, listTools } from "./tool-registry.js";
 import { auditMiddleware, getLogs, getStats } from "./audit.js";
 import { getAuditManager } from "./audit/index.js";
 import { requireScope, isAuthEnabled } from "./auth.js";
 import { validateSecurityConfigOrExit } from "./security/validate-security-config.js";
 import { enforceSecurityContext } from "./security/enforce-security-context.js";
-import { submitJob, getJob, listJobs, getJobStats } from "./jobs.js";
+import { submitJob, getJob, listJobs, getJobStats, cancelJob } from "./jobs.js";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, existsSync } from "fs";
@@ -27,11 +27,35 @@ import {
   discoveryVisibilityContextFromRequest,
   filterPluginsForDiscovery,
 } from "./authorization/filter-visible-surfaces.js";
+import { httpTelemetryContextMiddleware } from "./observability/telemetry-context.js";
+import { httpHubAuditLifecycleMiddleware } from "./audit/emit-http-events.js";
+import {
+  emitRestDiscoveryRequested,
+  emitRestDiscoveryFiltered,
+  emitRestDiscoveryDenied,
+} from "./audit/emit-discovery-http-event.js";
+import { DiscoverySurfaces } from "./audit/discovery-surfaces.js";
 
 function tenantHeaderMiddleware(req, res, next) {
   const raw = req.headers["x-tenant-id"]?.toString().trim();
   req.tenantId = raw || null;
   next();
+}
+
+function countPluginEndpoints(plugins) {
+  let n = 0;
+  for (const p of plugins) {
+    if (Array.isArray(p.endpoints)) n += p.endpoints.length;
+  }
+  return n;
+}
+
+function countManifestTools(plugins) {
+  let n = 0;
+  for (const p of plugins) {
+    if (Array.isArray(p.tools)) n += p.tools.length;
+  }
+  return n;
 }
 
 function isPlainObject(value) {
@@ -205,8 +229,10 @@ export async function createServer() {
   app.use(projectContextMiddleware);
   app.use(workspaceContextMiddleware);
   app.use(tenantHeaderMiddleware);
-  app.use(enforceSecurityContext);
   app.use(auditMiddleware);
+  app.use(httpHubAuditLifecycleMiddleware);
+  app.use(enforceSecurityContext);
+  app.use(httpTelemetryContextMiddleware);
   app.use(responseEnvelopeMiddleware);
   app.use(policyGuardrailMiddleware);
 
@@ -230,17 +256,37 @@ export async function createServer() {
     });
   });
 
-  app.get("/plugins", requireScope("read"), (req, res) => {
+  app.get("/plugins", requireScope("read"), async (req, res) => {
+    void emitRestDiscoveryRequested(req, DiscoverySurfaces.REST_PLUGINS_LIST).catch(() => {});
     const vis = discoveryVisibilityContextFromRequest(req);
-    const plugins = filterPluginsForDiscovery(getPlugins(), vis);
+    const allPlugins = getPlugins();
+    const plugins = filterPluginsForDiscovery(allPlugins, vis);
+    const totalCandidates = listTools().length;
+    const visibleCount = countManifestTools(plugins);
+    void emitRestDiscoveryFiltered(req, DiscoverySurfaces.REST_PLUGINS_LIST, {
+      totalCandidates,
+      visibleCount,
+    }).catch(() => {});
     res.json(plugins);
   });
 
-  app.get("/plugins/:name/manifest", requireScope("read"), (req, res) => {
+  app.get("/plugins/:name/manifest", requireScope("read"), async (req, res) => {
+    void emitRestDiscoveryRequested(req, DiscoverySurfaces.REST_PLUGIN_MANIFEST).catch(() => {});
     const vis = discoveryVisibilityContextFromRequest(req);
     const plugins = filterPluginsForDiscovery(getPlugins(), vis);
     const plugin  = plugins.find((p) => p.name === req.params.name);
-    if (!plugin) return res.status(404).json({ ok: false, error: { code: "plugin_not_found", message: "Plugin not found" } });
+    if (!plugin) {
+      void emitRestDiscoveryDenied(req, DiscoverySurfaces.REST_PLUGIN_MANIFEST, {
+        httpStatus: 404,
+        errorCode: "plugin_not_found",
+        denyKind: "plugin_not_found",
+      }).catch(() => {});
+      return res.status(404).json({ ok: false, error: { code: "plugin_not_found", message: "Plugin not found" } });
+    }
+    void emitRestDiscoveryFiltered(req, DiscoverySurfaces.REST_PLUGIN_MANIFEST, {
+      totalCandidates: 1,
+      visibleCount: 1,
+    }).catch(() => {});
     res.json(plugin);
   });
 
@@ -248,9 +294,17 @@ export async function createServer() {
    * GET /openapi.json
    * Auto-generated OpenAPI spec from all plugin manifests.
    */
-  app.get("/openapi.json", requireScope("read"), (req, res) => {
+  app.get("/openapi.json", requireScope("read"), async (req, res) => {
+    void emitRestDiscoveryRequested(req, DiscoverySurfaces.REST_OPENAPI_AGGREGATE).catch(() => {});
     const vis = discoveryVisibilityContextFromRequest(req);
-    const plugins = filterPluginsForDiscovery(getPlugins(), vis);
+    const allPlugins = getPlugins();
+    const plugins = filterPluginsForDiscovery(allPlugins, vis);
+    const totalCandidates = countPluginEndpoints(allPlugins);
+    const visibleCount = countPluginEndpoints(plugins);
+    void emitRestDiscoveryFiltered(req, DiscoverySurfaces.REST_OPENAPI_AGGREGATE, {
+      totalCandidates,
+      visibleCount,
+    }).catch(() => {});
     const paths = {};
 
     for (const plugin of plugins) {
@@ -359,7 +413,11 @@ export async function createServer() {
         workspaceId: req.workspaceId ?? "global",
         projectId: req.projectId ?? null,
         userId: req.user?.id ?? req.actor?.id ?? req.user ?? null,
+        actorId: req.actor?.id ?? req.user?.id ?? null,
         env: req.projectEnv,
+        correlationId: req.correlationId ?? req.requestId,
+        tenantId: req.tenantId ?? null,
+        invokeSource: "rest",
       });
 
       res.status(202).json({
@@ -418,6 +476,25 @@ export async function createServer() {
     const job = await getJob(req.params.id);
     if (!job) return res.status(404).json({ ok: false, error: { code: "job_not_found", message: "Job not found" } });
     res.json({ job });
+  });
+
+  app.delete("/jobs/:id", requireScope("write"), async (req, res) => {
+    const ok = await cancelJob(req.params.id, { cancelSource: "user" });
+    if (!ok) {
+      return res.status(409).json({
+        ok: false,
+        error: {
+          code: "job_not_cancellable",
+          message: "Job not found or not in a cancellable state (queued/running only)",
+        },
+        meta: { requestId: req.requestId },
+      });
+    }
+    res.status(202).json({
+      ok: true,
+      data: { cancelled: true },
+      meta: { requestId: req.requestId },
+    });
   });
 
   // ── Approval routes ──────────────────────────────────────────────────────

@@ -43,3 +43,33 @@ export {
   auditEmit,
   auditLog,
 } from "./audit.manager.js";
+
+// Hub telemetry (contract v1)
+export {
+  emitHubAuditEvent,
+  emitDiscoveryFilteredEvent,
+  emitDiscoveryRequestedEvent,
+} from "./emit-hub-event.js";
+export { DiscoverySurfaces } from "./discovery-surfaces.js";
+export {
+  emitRestDiscoveryRequested,
+  emitRestDiscoveryFiltered,
+  emitRestDiscoveryDenied,
+} from "./emit-discovery-http-event.js";
+export { normalizeDiscoveryDeny } from "./normalize-discovery-deny.js";
+export { HubEventTypes, HubOutcomes, HUB_EVENT_SCHEMA_VERSION } from "./event-types.js";
+export {
+  emitJobLifecycleHubEvent,
+  pluginFromJobType,
+  resolveJobInvokeSource,
+} from "./emit-job-event.js";
+export { hubEventTypeFromAuthzPhase, hubEventTypeFromPermissionOperation } from "./normalize-deny-event.js";
+export { normalizeHttpDenyEvent, sanitizePolicyRuleRef } from "./normalize-http-deny.js";
+export {
+  buildHttpHubMetadata,
+  emitHttpRequestReceived,
+  emitHttpRequestCompleted,
+  emitHttpDenyHubEvent,
+  httpHubAuditLifecycleMiddleware,
+} from "./emit-http-events.js";
+export { resolveActorString, hubMetadataFromToolContext, mergeHubMetadata } from "./base-envelope.js";

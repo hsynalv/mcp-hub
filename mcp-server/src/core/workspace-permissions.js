@@ -6,7 +6,10 @@
  */
 
 import { getWorkspace, isPluginAllowed } from "./workspace.js";
-import { auditLog, generateCorrelationId } from "./audit/index.js";
+import { generateCorrelationId } from "./audit/audit.standard.js";
+import { emitHubAuditEvent } from "./audit/emit-hub-event.js";
+import { hubEventTypeFromPermissionOperation } from "./audit/normalize-deny-event.js";
+import { HubOutcomes } from "./audit/event-types.js";
 import { sanitizeWorkspaceId, canAccessWorkspace } from "./workspace-paths.js";
 import { getRuntimeSecurityMode } from "./auth/get-runtime-security-mode.js";
 
@@ -19,6 +22,7 @@ const STRICT_WORKSPACE = process.env.WORKSPACE_STRICT_BOUNDARIES === "true";
  * @property {string} [plugin]
  * @property {string} [operation]
  * @property {string} [correlationId]
+ * @property {string} [toolName]
  */
 
 /**
@@ -26,16 +30,22 @@ const STRICT_WORKSPACE = process.env.WORKSPACE_STRICT_BOUNDARIES === "true";
  */
 async function auditDenied(plugin, operation, reason, context) {
   try {
-    await auditLog({
+    await emitHubAuditEvent({
+      eventType: hubEventTypeFromPermissionOperation(),
+      outcome: HubOutcomes.DENIED,
       plugin,
-      operation: `permission_denied:${operation}`,
       actor: context.actor || "anonymous",
       workspaceId: context.workspaceId || "global",
+      correlationId: context.correlationId || generateCorrelationId(),
+      durationMs: 0,
       allowed: false,
       success: false,
       reason,
-      correlationId: context.correlationId || generateCorrelationId(),
-      metadata: { deniedOperation: operation },
+      error: reason,
+      metadata: {
+        hubDeniedOperation: operation,
+        hubToolName: context.toolName ?? null,
+      },
     });
   } catch {
     /* never crash on audit failure */

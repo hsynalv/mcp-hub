@@ -223,20 +223,14 @@ export class ObservabilityManager {
   // ==================== Job Metrics API ====================
 
   /**
-   * Record job event
-   * @param {string} jobType
-   * @param {string} status
-   * @param {string} [plugin]
+   * @deprecated Lifecycle counters come from hub events (emitJobLifecycleHubEvent). No-op.
    */
   recordJobEvent(jobType, status, plugin) {
     recordJobEvent(jobType, status, plugin);
   }
 
   /**
-   * Record job duration
-   * @param {string} jobType
-   * @param {number} durationMs
-   * @param {string} [plugin]
+   * @deprecated Durations recorded via job.completed / job.failed / job.cancelled hub events. No-op.
    */
   recordJobDuration(jobType, durationMs, plugin) {
     recordJobDuration(jobType, durationMs, plugin);

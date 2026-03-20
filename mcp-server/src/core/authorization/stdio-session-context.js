@@ -3,7 +3,7 @@
  * Mirrored by gateway ListTools / CallTool alongside getMcpRequestContext().
  */
 
-/** @type {{ authInfo: object, correlationId: string|null } | null} */
+/** @type {{ authInfo: object, correlationId: string|null, sessionId?: string|null } | null} */
 let stdioSession = null;
 
 export function setStdioSessionContext(store) {

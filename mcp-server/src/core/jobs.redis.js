@@ -15,6 +15,12 @@
 
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
+import { emitJobLifecycleHubEvent } from "./audit/emit-job-event.js";
+
+function terminalJobDurationMs(job) {
+  if (!job?.startedAt || !job?.finishedAt) return 0;
+  return Math.max(0, new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime());
+}
 
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 const JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -46,6 +52,10 @@ export class RedisJobStore {
     return `${this.keyPrefix}progress:${id}`;
   }
 
+  _cancelledSetKey() {
+    return `${this.keyPrefix}jobs:cancelled`;
+  }
+
   // Core operations
   async get(id) {
     const data = await this.redis.hgetall(this._jobKey(id));
@@ -68,6 +78,7 @@ export class RedisJobStore {
       this.redis.srem(`${this.keyPrefix}jobs:running`, id),
       this.redis.zrem(`${this.keyPrefix}jobs:completed`, id),
       this.redis.zrem(`${this.keyPrefix}jobs:failed`, id),
+      this.redis.srem(this._cancelledSetKey(), id),
     ]);
   }
 
@@ -94,6 +105,7 @@ export class RedisJobStore {
     const now = Date.now();
     await Promise.all([
       this.redis.srem(`${this.keyPrefix}jobs:running`, id),
+      this.redis.srem(this._cancelledSetKey(), id),
       this.redis.zadd(`${this.keyPrefix}jobs:completed`, now, id),
       this.redis.hset(this._jobKey(id), "state", "completed", "result", JSON.stringify(result), "finishedAt", new Date().toISOString(), "progress", "100"),
     ]);
@@ -106,6 +118,7 @@ export class RedisJobStore {
     await Promise.all([
       this.redis.srem(`${this.keyPrefix}jobs:running`, id),
       this.redis.zadd(`${this.keyPrefix}jobs:failed`, now, id),
+      this.redis.srem(this._cancelledSetKey(), id),
       this.redis.hset(this._jobKey(id), "state", "failed", "error", typeof error === "string" ? error : JSON.stringify(error), "finishedAt", new Date().toISOString()),
     ]);
     // Set shorter TTL for failed jobs (6 hours)
@@ -190,19 +203,23 @@ export class RedisJobStore {
   }
 
   async getStats() {
-    const [queued, running, completed, failed] = await Promise.all([
+    const [queued, running, completed, terminalNonSuccess, cancelled] = await Promise.all([
       this.redis.llen(`${this.keyPrefix}jobs:queue`),
       this.redis.scard(`${this.keyPrefix}jobs:running`),
       this.redis.zcard(`${this.keyPrefix}jobs:completed`),
       this.redis.zcard(`${this.keyPrefix}jobs:failed`),
+      this.redis.scard(this._cancelledSetKey()),
     ]);
 
+    const failed = Math.max(0, terminalNonSuccess - cancelled);
+
     return {
-      total: queued + running + completed + failed,
+      total: queued + running + completed + terminalNonSuccess,
       queued,
       running,
       completed,
       failed,
+      cancelled,
     };
   }
 
@@ -222,10 +239,22 @@ export class RedisJobStore {
       }
     }
 
-    // Mark orphaned jobs as failed
     for (const id of orphaned) {
       await this.markFailed(id, "Job timed out (orphaned after restart)");
       console.log(`[redis-jobs] Recovered orphaned job ${id}`);
+      const failedJob = await this.get(id);
+      if (failedJob) {
+        try {
+          await emitJobLifecycleHubEvent(failedJob, "failed", {
+            queueBackend: "redis",
+            durationMs: terminalJobDurationMs(failedJob),
+            failureReason: "orphan_timeout",
+            error: "Job timed out (orphaned after restart)",
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
     }
 
     return orphaned.length;

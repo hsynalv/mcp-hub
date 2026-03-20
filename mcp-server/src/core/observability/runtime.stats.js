@@ -6,7 +6,7 @@
 
 import { getPlugins, getFailedPlugins } from "../plugins.js";
 import { getToolStats as getToolRegistryStats } from "../tool-registry.js";
-import { getJobManager } from "../jobs/job.manager.js";
+import { getJobStats as getCoreQueueJobStats } from "../jobs.js";
 
 /**
  * Process stats
@@ -175,17 +175,7 @@ export function getPluginStats() {
  * @returns {Promise<Object>}
  */
 export async function getJobStats() {
-  const manager = getJobManager();
-  const counts = await manager.getJobCounts();
-
-  return {
-    total: counts.total,
-    queued: counts.queued,
-    running: counts.running,
-    completed: counts.completed,
-    failed: counts.failed,
-    cancelled: counts.cancelled,
-  };
+  return getCoreQueueJobStats();
 }
 
 /**

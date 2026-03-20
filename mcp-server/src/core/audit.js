@@ -85,7 +85,11 @@ function makeRequestId() {
  * Adds x-request-id to response headers.
  */
 export function auditMiddleware(req, res, next) {
-  req.requestId = req.headers["x-request-id"] || makeRequestId();
+  const fromHeader = req.headers["x-request-id"]?.toString().trim();
+  req.requestId =
+    (fromHeader && fromHeader.length > 0 ? fromHeader : null) ||
+    (req.correlationId != null ? String(req.correlationId) : null) ||
+    makeRequestId();
   res.setHeader("x-request-id", req.requestId);
 
   const start = Date.now();

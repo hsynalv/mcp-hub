@@ -383,12 +383,21 @@ export function register(app) {
       const job = submitJob(
         "rag.ingestion",
         { request, context: ctx },
-        { workspaceId: ctx.workspaceId, projectId: ctx.projectId, userId: ctx.actor }
+        {
+          workspaceId: ctx.workspaceId,
+          projectId: ctx.projectId,
+          userId: ctx.actor,
+          actorId: typeof ctx.actor === "string" ? ctx.actor : null,
+          env: ctx.env,
+          correlationId: ctx.correlationId ?? ctx.requestId,
+          tenantId: ctx.tenantId ?? null,
+          invokeSource: "rest",
+        }
       );
       await auditEntry({
         operation: "ingest_async",
         ...ctx,
-        correlationId: generateCorrelationId(),
+        correlationId: ctx.correlationId ?? ctx.requestId ?? generateCorrelationId(),
         jobId: job.id,
         success: true,
       });
@@ -431,7 +440,16 @@ export function register(app) {
     }
     const { async: runAsync, ...request } = parsed.data;
     if (runAsync) {
-      const job = submitJob("rag.ingestion", { request, context: ctx }, { workspaceId: ctx.workspaceId, projectId: ctx.projectId, userId: ctx.actor });
+      const job = submitJob("rag.ingestion", { request, context: ctx }, {
+        workspaceId: ctx.workspaceId,
+        projectId: ctx.projectId,
+        userId: ctx.actor,
+        actorId: typeof ctx.actor === "string" ? ctx.actor : null,
+        env: ctx.env,
+        correlationId: ctx.correlationId ?? ctx.requestId,
+        tenantId: ctx.tenantId ?? null,
+        invokeSource: "rest",
+      });
       return res.status(202).json({ ok: true, data: { jobId: job.id, state: "queued" } });
     }
     const result = await runPipeline(request, ctx);

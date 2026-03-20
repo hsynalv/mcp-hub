@@ -15,6 +15,7 @@
  */
 
 import { getSecurityRuntime, hubKeysConfigured } from "./security/resolve-runtime-security.js";
+import { emitHttpDenyHubEvent } from "./audit/emit-http-events.js";
 
 const SCOPE_HIERARCHY = ["read", "write", "admin"];
 
@@ -80,6 +81,12 @@ export function requireScope(scope = "read") {
     );
 
     if (!hasScope) {
+      void emitHttpDenyHubEvent(req, {
+        source: "require_scope",
+        statusCode: 403,
+        errorCode: "forbidden",
+        requiredScope: scope,
+      }).catch(() => {});
       return res.status(403).json({
         ok: false,
         error: {
