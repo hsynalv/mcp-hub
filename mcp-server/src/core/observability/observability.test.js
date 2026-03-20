@@ -373,9 +373,9 @@ describe("Observability", () => {
 
       const prom = manager.exportMetricsPrometheus();
 
-      expect(prom).toContain("# TYPE requests_total counter");
-      expect(prom).toContain("requests_total");
-      expect(prom).toContain("# TYPE active_users gauge");
+      expect(prom).toContain("# TYPE mcp_hub_requests_total counter");
+      expect(prom).toContain("mcp_hub_requests_total");
+      expect(prom).toContain("# TYPE mcp_hub_active_users gauge");
     });
 
     it("should use global manager", () => {

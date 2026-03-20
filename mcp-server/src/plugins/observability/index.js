@@ -5,6 +5,10 @@ import { Router } from "express";
 import { requireScope } from "../../core/auth.js";
 import { getLogs, getStats } from "../../core/audit.js";
 import { getPlugins } from "../../core/plugins.js";
+import { exportMetricsRegistryPrometheus } from "../../core/observability/metrics.js";
+import { syncJobMetrics } from "../../core/observability/jobs.metrics.js";
+import { syncPluginMetrics } from "../../core/observability/plugin.metrics.js";
+import { syncToolMetrics } from "../../core/observability/tools.metrics.js";
 import { getHealthService, HealthStatus } from "../../core/health/index.js";
 import { ToolTags } from "../../core/tool-registry.js";
 import { createMetadata, PluginStatus, RiskLevel } from "../../core/plugins/index.js";
@@ -50,6 +54,16 @@ async function initSentry() {
 export function register(app) {
   // Try to init Sentry at startup
   initSentry();
+
+  void (async () => {
+    try {
+      syncPluginMetrics();
+      syncToolMetrics();
+      await syncJobMetrics();
+    } catch {
+      /* best-effort gauge sync */
+    }
+  })();
 
   const router = Router();
 
@@ -163,12 +177,23 @@ export function register(app) {
    * Prometheus-compatible text format metrics.
    */
   router.get("/metrics", requireScope("read"), async (_req, res) => {
-    const stats   = getStats();
+    const stats = getStats();
     const plugins = getPlugins();
-    const uptime  = Math.floor(process.uptime());
-    const mem     = process.memoryUsage();
+    const uptime = Math.floor(process.uptime());
+    const mem = process.memoryUsage();
 
-    const lines = [
+    const segments = [];
+
+    // ── Primary: hub pipeline (emitHubAuditEvent → recordMetricFromHubEvent → MetricsRegistry) ──
+    const hubExport = exportMetricsRegistryPrometheus();
+    if (hubExport.trim()) {
+      segments.push("# --- mcp_hub hub pipeline (MetricsRegistry) ---");
+      segments.push(hubExport);
+    }
+
+    // ── Process (not hub-derived) ──
+    segments.push("# --- process ---");
+    segments.push(
       "# HELP mcp_hub_uptime_seconds Server uptime in seconds",
       "# TYPE mcp_hub_uptime_seconds gauge",
       `mcp_hub_uptime_seconds ${uptime}`,
@@ -181,52 +206,55 @@ export function register(app) {
       "# TYPE mcp_hub_memory_rss_bytes gauge",
       `mcp_hub_memory_rss_bytes ${mem.rss}`,
 
-      "# HELP mcp_hub_requests_total Total HTTP requests",
-      "# TYPE mcp_hub_requests_total counter",
-      `mcp_hub_requests_total ${stats.total ?? 0}`,
-
-      "# HELP mcp_hub_errors_total Total errors",
-      "# TYPE mcp_hub_errors_total counter",
-      `mcp_hub_errors_total ${stats.errors ?? 0}`,
-
       "# HELP mcp_hub_plugins_loaded Number of loaded plugins",
       "# TYPE mcp_hub_plugins_loaded gauge",
       `mcp_hub_plugins_loaded ${plugins.length}`,
-    ];
+    );
 
-    // Per-plugin counters
-    lines.push(
-      "# HELP mcp_hub_plugin_requests_total Requests per plugin",
-      "# TYPE mcp_hub_plugin_requests_total counter"
+    // ── Legacy: HTTP audit ring (auditMiddleware only; not hub/C AuditManager) ──
+    segments.push("# --- legacy HTTP audit ring (compatibility; prefer mcp_hub_http_requests_total) ---");
+    segments.push(
+      "# HELP mcp_hub_legacy_audit_http_requests_total Inbound HTTP requests recorded by audit middleware ring buffer",
+      "# TYPE mcp_hub_legacy_audit_http_requests_total counter",
+      `mcp_hub_legacy_audit_http_requests_total ${stats.total ?? 0}`,
+
+      "# HELP mcp_hub_legacy_audit_http_errors_total Non-2xx/3xx outcomes in audit middleware ring",
+      "# TYPE mcp_hub_legacy_audit_http_errors_total counter",
+      `mcp_hub_legacy_audit_http_errors_total ${stats.errors ?? 0}`,
+    );
+
+    segments.push(
+      "# HELP mcp_hub_legacy_audit_plugin_requests_total Requests per plugin (audit ring)",
+      "# TYPE mcp_hub_legacy_audit_plugin_requests_total counter",
     );
     for (const p of plugins) {
       const ps = stats.byPlugin?.[p.name] ?? {};
-      lines.push(`mcp_hub_plugin_requests_total{plugin="${p.name}"} ${ps.total ?? 0}`);
+      segments.push(`mcp_hub_legacy_audit_plugin_requests_total{plugin="${p.name}"} ${ps.total ?? 0}`);
     }
 
-    lines.push(
-      "# HELP mcp_hub_plugin_errors_total Errors per plugin",
-      "# TYPE mcp_hub_plugin_errors_total counter"
+    segments.push(
+      "# HELP mcp_hub_legacy_audit_plugin_errors_total Errors per plugin (audit ring)",
+      "# TYPE mcp_hub_legacy_audit_plugin_errors_total counter",
     );
     for (const p of plugins) {
       const ps = stats.byPlugin?.[p.name] ?? {};
-      lines.push(`mcp_hub_plugin_errors_total{plugin="${p.name}"} ${ps.errors ?? 0}`);
+      segments.push(`mcp_hub_legacy_audit_plugin_errors_total{plugin="${p.name}"} ${ps.errors ?? 0}`);
     }
 
     try {
       const { getEvalMetricsSummary } = await import("../retrieval-evals/metrics-store.js");
       const evalSummary = getEvalMetricsSummary();
       if (evalSummary.runs > 0) {
-        lines.push("# HELP mcp_hub_retrieval_eval_runs_total Total retrieval evaluation runs");
-        lines.push("# TYPE mcp_hub_retrieval_eval_runs_total gauge");
-        lines.push(`mcp_hub_retrieval_eval_runs_total ${evalSummary.runs}`);
+        segments.push("# HELP mcp_hub_retrieval_eval_runs_total Total retrieval evaluation runs");
+        segments.push("# TYPE mcp_hub_retrieval_eval_runs_total gauge");
+        segments.push(`mcp_hub_retrieval_eval_runs_total ${evalSummary.runs}`);
       }
     } catch {
       /* retrieval-evals plugin not loaded */
     }
 
     res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
-    res.send(lines.join("\n") + "\n");
+    res.send(segments.join("\n") + "\n");
   });
 
   /**

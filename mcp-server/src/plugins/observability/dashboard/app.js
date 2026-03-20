@@ -235,10 +235,27 @@ function parsePrometheusMetrics(text) {
   return metrics;
 }
 
+/** Prefer hub pipeline names; fall back to legacy audit ring if missing. */
+function primaryOrLegacyMetric(metrics, primaryNames, legacyName) {
+  for (const n of primaryNames) {
+    const v = getMetricValue(metrics, n);
+    if (v !== null) return v;
+  }
+  return legacyName ? getMetricValue(metrics, legacyName) : null;
+}
+
 // Update metrics cards
 function updateMetricsCards(metrics) {
-  const totalRequests = getMetricValue(metrics, 'mcp_hub_requests_total');
-  const totalErrors = getMetricValue(metrics, 'mcp_hub_errors_total');
+  const totalRequests = primaryOrLegacyMetric(
+    metrics,
+    ['mcp_hub_http_requests_total'],
+    'mcp_hub_legacy_audit_http_requests_total',
+  );
+  const totalErrors = primaryOrLegacyMetric(
+    metrics,
+    ['mcp_hub_errors_total'],
+    'mcp_hub_legacy_audit_http_errors_total',
+  );
 
   // Update requests card
   const requestsEl = document.getElementById('total-requests');
@@ -282,8 +299,10 @@ function updateMetricsCards(metrics) {
   const activeJobsEl = document.getElementById('active-jobs');
   const jobsBreakdownEl = document.getElementById('jobs-breakdown');
 
-  const queued = getMetricValue(metrics, 'mcp_hub_jobs_queued') || 0;
-  const running = getMetricValue(metrics, 'mcp_hub_jobs_running') || 0;
+  const qMetric = getMetricValue(metrics, 'mcp_hub_jobs_queued');
+  const rMetric = getMetricValue(metrics, 'mcp_hub_jobs_running');
+  const queued = qMetric !== null ? qMetric : 0;
+  const running = rMetric !== null ? rMetric : 0;
 
   activeJobsEl.textContent = (queued + running).toString();
   jobsBreakdownEl.textContent = `${queued} queued, ${running} running`;

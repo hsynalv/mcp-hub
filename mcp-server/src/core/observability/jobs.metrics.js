@@ -1,20 +1,22 @@
 /**
- * Job queue gauges — sourced from core/jobs.js (Redis or in-memory store).
+ * Job queue gauges — sourced from core/jobs.js `getJobStats` (Redis HASH/set/zset or in-memory Map).
  *
- * Counters/histograms for lifecycle are derived only from hub audit events
- * (emitJobLifecycleHubEvent → recordMetricFromHubEvent). Do not duplicate here.
+ * Counters/histograms for lifecycle phases are derived only from hub audit events
+ * (emitJobLifecycleHubEvent → recordMetricFromHubEvent). Gauges here intentionally mirror
+ * store state only — do not re-emit or duplicate lifecycle counters in this module.
  */
 
 import { getJobStats as getCoreQueueJobStats } from "../jobs.js";
 import { Metrics, getMetricsRegistry } from "./metrics.js";
 
 /**
- * @deprecated Use hub pipeline (job lifecycle events) for counters. No-op.
+ * @deprecated Dead no-op — lifecycle counters/histograms use hub events only
+ * (`recordMetricFromHubEvent` → `job_lifecycle_events_total` / `job_duration_ms`). Do not call.
  */
 export function recordJobEvent(_jobType, _status, _plugin) {}
 
 /**
- * @deprecated Job duration is recorded via job.completed / job.failed / job.cancelled hub events. No-op.
+ * @deprecated Dead no-op — durations recorded via hub `job_duration_ms`. Do not call.
  */
 export function recordJobDuration(_jobType, _durationMs, _plugin) {}
 

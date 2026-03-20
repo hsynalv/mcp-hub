@@ -62,13 +62,13 @@ describe("Observability Plugin - Prometheus Metrics", () => {
       `# TYPE mcp_hub_memory_rss_bytes gauge`,
       `mcp_hub_memory_rss_bytes ${mem.rss}`,
       ``,
-      `# HELP mcp_hub_requests_total Total HTTP requests`,
-      `# TYPE mcp_hub_requests_total counter`,
-      `mcp_hub_requests_total ${stats.total ?? 0}`,
+      `# HELP mcp_hub_legacy_audit_http_requests_total Audit ring HTTP requests`,
+      `# TYPE mcp_hub_legacy_audit_http_requests_total counter`,
+      `mcp_hub_legacy_audit_http_requests_total ${stats.total ?? 0}`,
       ``,
-      `# HELP mcp_hub_errors_total Total errors`,
-      `# TYPE mcp_hub_errors_total counter`,
-      `mcp_hub_errors_total ${stats.errors ?? 0}`,
+      `# HELP mcp_hub_legacy_audit_http_errors_total Audit ring HTTP errors`,
+      `# TYPE mcp_hub_legacy_audit_http_errors_total counter`,
+      `mcp_hub_legacy_audit_http_errors_total ${stats.errors ?? 0}`,
       ``,
       `# HELP mcp_hub_plugins_loaded Number of loaded plugins`,
       `# TYPE mcp_hub_plugins_loaded gauge`,
@@ -78,22 +78,22 @@ describe("Observability Plugin - Prometheus Metrics", () => {
     // Per-plugin metrics
     lines.push(
       ``,
-      `# HELP mcp_hub_plugin_requests_total Requests per plugin`,
-      `# TYPE mcp_hub_plugin_requests_total counter`
+      `# HELP mcp_hub_legacy_audit_plugin_requests_total Requests per plugin (audit ring)`,
+      `# TYPE mcp_hub_legacy_audit_plugin_requests_total counter`
     );
     for (const p of plugins) {
       const ps = stats.byPlugin?.[p.name] ?? {};
-      lines.push(`mcp_hub_plugin_requests_total{plugin="${p.name}"} ${ps.total ?? 0}`);
+      lines.push(`mcp_hub_legacy_audit_plugin_requests_total{plugin="${p.name}"} ${ps.total ?? 0}`);
     }
 
     lines.push(
       ``,
-      `# HELP mcp_hub_plugin_errors_total Errors per plugin`,
-      `# TYPE mcp_hub_plugin_errors_total counter`
+      `# HELP mcp_hub_legacy_audit_plugin_errors_total Errors per plugin (audit ring)`,
+      `# TYPE mcp_hub_legacy_audit_plugin_errors_total counter`
     );
     for (const p of plugins) {
       const ps = stats.byPlugin?.[p.name] ?? {};
-      lines.push(`mcp_hub_plugin_errors_total{plugin="${p.name}"} ${ps.errors ?? 0}`);
+      lines.push(`mcp_hub_legacy_audit_plugin_errors_total{plugin="${p.name}"} ${ps.errors ?? 0}`);
     }
 
     return lines.join("\n");
@@ -109,8 +109,8 @@ describe("Observability Plugin - Prometheus Metrics", () => {
       const result = generateMetrics(stats, plugins, uptime, mem);
 
       expect(result).toContain("mcp_hub_uptime_seconds 3600");
-      expect(result).toContain("mcp_hub_requests_total 100");
-      expect(result).toContain("mcp_hub_errors_total 5");
+      expect(result).toContain("mcp_hub_legacy_audit_http_requests_total 100");
+      expect(result).toContain("mcp_hub_legacy_audit_http_errors_total 5");
       expect(result).toContain("mcp_hub_plugins_loaded 1");
     });
 
@@ -127,9 +127,9 @@ describe("Observability Plugin - Prometheus Metrics", () => {
 
       const result = generateMetrics(stats, plugins, 7200, { heapUsed: 0, rss: 0 });
 
-      expect(result).toContain('mcp_hub_plugin_requests_total{plugin="http"} 150');
-      expect(result).toContain('mcp_hub_plugin_errors_total{plugin="http"} 5');
-      expect(result).toContain('mcp_hub_plugin_requests_total{plugin="database"} 50');
+      expect(result).toContain('mcp_hub_legacy_audit_plugin_requests_total{plugin="http"} 150');
+      expect(result).toContain('mcp_hub_legacy_audit_plugin_errors_total{plugin="http"} 5');
+      expect(result).toContain('mcp_hub_legacy_audit_plugin_requests_total{plugin="database"} 50');
     });
 
     it("should handle empty stats", () => {
@@ -138,8 +138,8 @@ describe("Observability Plugin - Prometheus Metrics", () => {
 
       const result = generateMetrics(stats, plugins, 0, { heapUsed: 0, rss: 0 });
 
-      expect(result).toContain("mcp_hub_requests_total 0");
-      expect(result).toContain("mcp_hub_errors_total 0");
+      expect(result).toContain("mcp_hub_legacy_audit_http_requests_total 0");
+      expect(result).toContain("mcp_hub_legacy_audit_http_errors_total 0");
       expect(result).toContain("mcp_hub_plugins_loaded 0");
     });
   });

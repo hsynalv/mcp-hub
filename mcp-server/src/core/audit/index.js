@@ -62,6 +62,9 @@ export {
   emitJobLifecycleHubEvent,
   pluginFromJobType,
   resolveJobInvokeSource,
+  normalizeSubmitJobInvokeSource,
+  getHubJobLifecycleEmitFailureCount,
+  resetHubJobLifecycleEmitFailuresForTesting,
 } from "./emit-job-event.js";
 export { hubEventTypeFromAuthzPhase, hubEventTypeFromPermissionOperation } from "./normalize-deny-event.js";
 export { normalizeHttpDenyEvent, sanitizePolicyRuleRef } from "./normalize-http-deny.js";

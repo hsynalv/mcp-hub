@@ -6,15 +6,15 @@
  *
  * Redis Schema:
  *   mcp-hub:job:<id>       -> Job data (HASH)
- *   mcp-hub:jobs:queue     -> Pending job IDs (LIST)
- *   mcp-hub:jobs:running   -> Running job IDs (SET with timestamp score)
+ *   mcp-hub:jobs:queue     -> Pending job IDs (LIST) — IDs removed when a worker claims the job (running) or terminal
+ *   mcp-hub:jobs:running   -> Running job IDs (SET)
  *   mcp-hub:jobs:completed -> Completed job IDs (Sorted Set by completion time)
- *   mcp-hub:jobs:failed    -> Failed job IDs (Sorted Set by failure time)
+ *   mcp-hub:jobs:failed    -> Terminal non-success index (Sorted Set): both `failed` and `cancelled` jobs
+ *   mcp-hub:jobs:cancelled -> Cancelled job IDs (SET); getStats: cancelled=|SET|, failed=|Z failed|-|SET|
  *   mcp-hub:progress:<id>  -> Job progress channel for pub/sub
  */
 
 import Redis from "ioredis";
-import { randomUUID } from "crypto";
 import { emitJobLifecycleHubEvent } from "./audit/emit-job-event.js";
 
 function terminalJobDurationMs(job) {
@@ -88,6 +88,11 @@ export class RedisJobStore {
     await this.redis.rpush(`${this.keyPrefix}jobs:queue`, job.id);
   }
 
+  /** Remove all list entries for id (claim/stop/terminal). */
+  async removeFromQueue(id) {
+    await this.redis.lrem(`${this.keyPrefix}jobs:queue`, 0, id);
+  }
+
   async dequeue() {
     // Atomically pop from queue
     const result = await this.redis.lpop(`${this.keyPrefix}jobs:queue`);
@@ -104,6 +109,7 @@ export class RedisJobStore {
   async markCompleted(id, result) {
     const now = Date.now();
     await Promise.all([
+      this.redis.lrem(`${this.keyPrefix}jobs:queue`, 0, id),
       this.redis.srem(`${this.keyPrefix}jobs:running`, id),
       this.redis.srem(this._cancelledSetKey(), id),
       this.redis.zadd(`${this.keyPrefix}jobs:completed`, now, id),
@@ -116,6 +122,7 @@ export class RedisJobStore {
   async markFailed(id, error) {
     const now = Date.now();
     await Promise.all([
+      this.redis.lrem(`${this.keyPrefix}jobs:queue`, 0, id),
       this.redis.srem(`${this.keyPrefix}jobs:running`, id),
       this.redis.zadd(`${this.keyPrefix}jobs:failed`, now, id),
       this.redis.srem(this._cancelledSetKey(), id),
@@ -128,8 +135,10 @@ export class RedisJobStore {
   async markCancelled(id) {
     const now = Date.now();
     await Promise.all([
+      this.redis.lrem(`${this.keyPrefix}jobs:queue`, 0, id),
       this.redis.srem(`${this.keyPrefix}jobs:running`, id),
       this.redis.zadd(`${this.keyPrefix}jobs:failed`, now, id),
+      this.redis.sadd(this._cancelledSetKey(), id),
       this.redis.hset(this._jobKey(id), "state", "cancelled", "finishedAt", new Date().toISOString()),
     ]);
   }
@@ -194,12 +203,18 @@ export class RedisJobStore {
     const jobs = await Promise.all(jobIds.map((id) => this.get(id)));
     const validJobs = jobs.filter(Boolean);
 
-    // Filter by type if specified
-    if (type) {
-      return validJobs.filter((j) => j.type === type);
+    let out = validJobs;
+    if (state === "failed") {
+      out = out.filter((j) => j.state === "failed");
+    } else if (state === "cancelled") {
+      out = out.filter((j) => j.state === "cancelled");
     }
 
-    return validJobs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    if (type) {
+      out = out.filter((j) => j.type === type);
+    }
+
+    return out.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
   async getStats() {
@@ -244,16 +259,12 @@ export class RedisJobStore {
       console.log(`[redis-jobs] Recovered orphaned job ${id}`);
       const failedJob = await this.get(id);
       if (failedJob) {
-        try {
-          await emitJobLifecycleHubEvent(failedJob, "failed", {
-            queueBackend: "redis",
-            durationMs: terminalJobDurationMs(failedJob),
-            failureReason: "orphan_timeout",
-            error: "Job timed out (orphaned after restart)",
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(failedJob, "failed", {
+          queueBackend: "redis",
+          durationMs: terminalJobDurationMs(failedJob),
+          failureReason: "orphan_timeout",
+          error: "Job timed out (orphaned after restart)",
+        });
       }
     }
 
@@ -263,6 +274,15 @@ export class RedisJobStore {
   // Cleanup: Remove old completed/failed job references
   async cleanupOldJobs(maxAgeHours = 24) {
     const cutoff = Date.now() - maxAgeHours * 60 * 60 * 1000;
+
+    const staleFailedIds = await this.redis.zrangebyscore(
+      `${this.keyPrefix}jobs:failed`,
+      0,
+      cutoff
+    );
+    if (staleFailedIds.length > 0) {
+      await this.redis.srem(this._cancelledSetKey(), ...staleFailedIds);
+    }
 
     const [completedRemoved, failedRemoved] = await Promise.all([
       this.redis.zremrangebyscore(`${this.keyPrefix}jobs:completed`, 0, cutoff),

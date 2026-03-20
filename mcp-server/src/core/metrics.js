@@ -1,8 +1,9 @@
 /**
- * Prometheus Metrics Module
+ * Legacy Prometheus-style metric types (Counter/Gauge/Histogram maps).
  *
- * Collect and expose application metrics for monitoring.
- * Compatible with Prometheus scraping.
+ * @deprecated Not wired to production — no `src/` importers except tests. Prefer
+ *   `src/core/observability/metrics.js` (MetricsRegistry) and hub pipeline →
+ *   `exportMetricsRegistryPrometheus()` exposed at GET `/observability/metrics`.
  */
 
 import { performance } from "perf_hooks";

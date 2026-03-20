@@ -10,7 +10,10 @@
 import { randomUUID } from "crypto";
 import { config } from "./config.js";
 import { RedisJobStore } from "./jobs.redis.js";
-import { emitJobLifecycleHubEvent } from "./audit/emit-job-event.js";
+import {
+  emitJobLifecycleHubEvent,
+  normalizeSubmitJobInvokeSource,
+} from "./audit/emit-job-event.js";
 
 function jobDurationMs(j) {
   if (!j?.startedAt || !j?.finishedAt) return 0;
@@ -119,14 +122,7 @@ export function submitJob(type, payload = {}, context = {}) {
   const now = new Date().toISOString();
 
   const correlationIdRaw = context.correlationId ?? context.requestId ?? null;
-  const invokeSource =
-    context.invokeSource === "mcp" || context.invokeSource === "rest" || context.invokeSource === "internal"
-      ? context.invokeSource
-      : context.source === "mcp"
-        ? "mcp"
-        : context.source === "rest" || context.source === "http"
-          ? "rest"
-          : "internal";
+  const invokeSource = normalizeSubmitJobInvokeSource(context);
 
   const jobContext = {
     workspaceId: context.workspaceId ?? context.workspace ?? "global",
@@ -173,7 +169,7 @@ export function submitJob(type, payload = {}, context = {}) {
   }
 
   const queueBackend = useRedis && store ? "redis" : "memory";
-  emitJobLifecycleHubEvent(job, "submitted", { queueBackend }).catch(() => {});
+  void emitJobLifecycleHubEvent(job, "submitted", { queueBackend });
 
   // Start job execution asynchronously
   setImmediate(() => runJob(id));
@@ -208,30 +204,22 @@ async function runJob(id) {
       await store.markFailed(id, error);
       const failedJob = await store.get(id);
       if (failedJob) {
-        try {
-          await emitJobLifecycleHubEvent(failedJob, "failed", {
-            queueBackend,
-            durationMs: 0,
-            failureReason: "runner_not_found",
-            error,
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(failedJob, "failed", {
+          queueBackend,
+          durationMs: 0,
+          failureReason: "runner_not_found",
+          error,
+        });
       }
     } else {
       job.state = JobState.FAILED;
       job.error = error;
       job.finishedAt = new Date().toISOString();
-      try {
-        await emitJobLifecycleHubEvent(job, "failed", {
-          queueBackend,
-          durationMs: 0,
-          error,
-        });
-      } catch {
-        /* best-effort */
-      }
+      await emitJobLifecycleHubEvent(job, "failed", {
+        queueBackend,
+        durationMs: 0,
+        error,
+      });
     }
     return;
   }
@@ -241,6 +229,7 @@ async function runJob(id) {
   if (useRedis && store) {
     await store.set(id, { ...job, state: JobState.RUNNING, startedAt });
     await store.redis.sadd(`${store.keyPrefix}jobs:running`, id);
+    await store.removeFromQueue(id);
   } else {
     job.state = JobState.RUNNING;
     job.startedAt = startedAt;
@@ -248,11 +237,7 @@ async function runJob(id) {
 
   const runningJob = useRedis && store ? await store.get(id) : job;
   if (runningJob) {
-    try {
-      await emitJobLifecycleHubEvent(runningJob, "started", { queueBackend });
-    } catch {
-      /* best-effort */
-    }
+    await emitJobLifecycleHubEvent(runningJob, "started", { queueBackend });
   }
 
   // Helper functions for runner with Redis persistence
@@ -290,14 +275,10 @@ async function runJob(id) {
       }
       const doneJob = await store.get(id);
       if (doneJob && (doneJob.state === JobState.COMPLETED || doneJob.state === JobState.DONE)) {
-        try {
-          await emitJobLifecycleHubEvent(doneJob, "completed", {
-            queueBackend,
-            durationMs: jobDurationMs(doneJob),
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(doneJob, "completed", {
+          queueBackend,
+          durationMs: jobDurationMs(doneJob),
+        });
       }
     } else {
       if (job.state === JobState.RUNNING) {
@@ -307,14 +288,10 @@ async function runJob(id) {
         job.progress = 100;
       }
       if (job.state === JobState.COMPLETED || job.state === JobState.DONE) {
-        try {
-          await emitJobLifecycleHubEvent(job, "completed", {
-            queueBackend,
-            durationMs: jobDurationMs(job),
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(job, "completed", {
+          queueBackend,
+          durationMs: jobDurationMs(job),
+        });
       }
     }
 
@@ -328,16 +305,12 @@ async function runJob(id) {
       }
       const failedJob = await store.get(id);
       if (failedJob && failedJob.state === JobState.FAILED) {
-        try {
-          await emitJobLifecycleHubEvent(failedJob, "failed", {
-            queueBackend,
-            durationMs: jobDurationMs(failedJob),
-            failureReason: "runner_error",
-            error: errorMsg,
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(failedJob, "failed", {
+          queueBackend,
+          durationMs: jobDurationMs(failedJob),
+          failureReason: "runner_error",
+          error: errorMsg,
+        });
       }
     } else {
       if (job.state === JobState.RUNNING) {
@@ -346,16 +319,12 @@ async function runJob(id) {
         job.finishedAt = new Date().toISOString();
       }
       if (job.state === JobState.FAILED) {
-        try {
-          await emitJobLifecycleHubEvent(job, "failed", {
-            queueBackend,
-            durationMs: jobDurationMs(job),
-            failureReason: "runner_error",
-            error: errorMsg,
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(job, "failed", {
+          queueBackend,
+          durationMs: jobDurationMs(job),
+          failureReason: "runner_error",
+          error: errorMsg,
+        });
       }
     }
     await log(`Job failed: ${errorMsg}`);
@@ -406,19 +375,17 @@ export async function cancelJob(id, options = {}) {
     const job = await store.get(id);
     if (!job) return false;
     if (job.state === JobState.QUEUED || job.state === JobState.RUNNING) {
+      const preCancelState = job.state === JobState.QUEUED ? "queued" : "running";
       await store.markCancelled(id);
       await store.addLog(id, "Job cancelled");
       const cancelled = await store.get(id);
       if (cancelled) {
-        try {
-          await emitJobLifecycleHubEvent(cancelled, "cancelled", {
-            queueBackend,
-            cancelSource,
-            durationMs: jobDurationMs(cancelled),
-          });
-        } catch {
-          /* best-effort */
-        }
+        await emitJobLifecycleHubEvent(cancelled, "cancelled", {
+          queueBackend,
+          cancelSource,
+          durationMs: jobDurationMs(cancelled),
+          preCancelState,
+        });
       }
       return true;
     }
@@ -429,18 +396,16 @@ export async function cancelJob(id, options = {}) {
   if (!job) return false;
 
   if (job.state === JobState.QUEUED || job.state === JobState.RUNNING) {
+    const preCancelState = job.state === JobState.QUEUED ? "queued" : "running";
     job.state = JobState.CANCELLED;
     job.finishedAt = new Date().toISOString();
     job.logs.push(`[${new Date().toISOString()}] Job cancelled`);
-    try {
-      await emitJobLifecycleHubEvent(job, "cancelled", {
-        queueBackend,
-        cancelSource,
-        durationMs: jobDurationMs(job),
-      });
-    } catch {
-      /* best-effort */
-    }
+    await emitJobLifecycleHubEvent(job, "cancelled", {
+      queueBackend,
+      cancelSource,
+      durationMs: jobDurationMs(job),
+      preCancelState,
+    });
     return true;
   }
 

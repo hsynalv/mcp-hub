@@ -1,5 +1,10 @@
 /**
  * Job lifecycle hub telemetry: one path via emitHubAuditEvent (AuditManager + metrics).
+ *
+ * Production jobs are submitted only via core/jobs.js `submitJob`. There is currently no
+ * code path that calls `submitJob` from the MCP transport; until one exists, lifecycle
+ * events for jobs default `invokeSource` to `internal` unless REST/plugins pass `invokeSource`
+ * or `source` (`rest`|`http`|`mcp`) in the submit context.
  */
 
 import { emitHubAuditEvent } from "./emit-hub-event.js";
@@ -8,6 +13,18 @@ import { resolveActorString } from "./base-envelope.js";
 
 /** @typedef {"submitted"|"started"|"completed"|"failed"|"cancelled"} JobLifecyclePhase */
 /** @typedef {"user"|"system"|"timeout"} JobCancelSource */
+
+let hubJobLifecycleEmitFailures = 0;
+
+/** @returns {number} Failures swallowed inside {@link emitJobLifecycleHubEvent} (telemetry loss visibility). */
+export function getHubJobLifecycleEmitFailureCount() {
+  return hubJobLifecycleEmitFailures;
+}
+
+/** @internal */
+export function resetHubJobLifecycleEmitFailuresForTesting() {
+  hubJobLifecycleEmitFailures = 0;
+}
 
 const PHASE_TO_EVENT = {
   submitted: HubEventTypes.JOB_SUBMITTED,
@@ -43,6 +60,21 @@ export function resolveJobInvokeSource(ctx) {
 }
 
 /**
+ * Normalize transport/source for job.context.invokeSource at submit time (must match {@link resolveJobInvokeSource}).
+ * @param {Record<string, unknown>} context
+ * @returns {"rest"|"mcp"|"internal"}
+ */
+export function normalizeSubmitJobInvokeSource(context) {
+  const ctx = context && typeof context === "object" ? context : {};
+  if (ctx.invokeSource === "mcp" || ctx.invokeSource === "rest" || ctx.invokeSource === "internal") {
+    return ctx.invokeSource;
+  }
+  if (ctx.source === "mcp") return "mcp";
+  if (ctx.source === "rest" || ctx.source === "http") return "rest";
+  return "internal";
+}
+
+/**
  * Map invoke source to toolContext.source for hub metadata (rest | mcp | internal).
  * @param {"rest"|"mcp"|"internal"} invoke
  */
@@ -62,13 +94,14 @@ function toolSourceForHub(invoke) {
  * @param {string} [extra.error]
  * @param {JobCancelSource} [extra.cancelSource]
  * @param {string} [extra.failureReason] — e.g. orphan_timeout
+ * @param {"queued"|"running"} [extra.preCancelState] — job state immediately before cancel
  * @returns {Promise<void>}
  */
 export async function emitJobLifecycleHubEvent(job, phase, extra = {}) {
   const eventType = PHASE_TO_EVENT[phase];
   if (!eventType || !job || typeof job !== "object") return;
 
-  const { queueBackend, durationMs = 0, error, cancelSource, failureReason } = extra;
+  const { queueBackend, durationMs = 0, error, cancelSource, failureReason, preCancelState } = extra;
   const ctx = job.context && typeof job.context === "object" ? job.context : {};
   const correlationRaw = ctx.correlationId ?? ctx.requestId;
   const correlationId =
@@ -89,42 +122,63 @@ export async function emitJobLifecycleHubEvent(job, phase, extra = {}) {
         ? "user"
         : undefined;
 
-  await emitHubAuditEvent({
-    eventType,
-    outcome:
-      isTerminalFail
-        ? HubOutcomes.FAILURE
-        : isTerminalOk || isCancelled
-          ? HubOutcomes.SUCCESS
-          : HubOutcomes.UNKNOWN,
-    plugin: pluginFromJobType(job.type),
-    actor: resolveActorString(ctx.userId ?? ctx.actorId),
-    workspaceId: ctx.workspaceId != null ? String(ctx.workspaceId) : "global",
-    projectId: ctx.projectId ?? null,
-    correlationId,
-    durationMs: typeof durationMs === "number" ? durationMs : 0,
-    allowed: true,
-    success: !isTerminalFail,
-    ...(error != null && String(error).length > 0 && { error: String(error) }),
-    toolContext: {
+  const validPreCancel =
+    isCancelled &&
+    (preCancelState === "queued" || preCancelState === "running");
+
+  try {
+    await emitHubAuditEvent({
+      eventType,
+      outcome:
+        isTerminalFail
+          ? HubOutcomes.FAILURE
+          : isTerminalOk || isCancelled
+            ? HubOutcomes.SUCCESS
+            : HubOutcomes.UNKNOWN,
+      plugin: pluginFromJobType(job.type),
+      actor: resolveActorString(ctx.userId ?? ctx.actorId),
       workspaceId: ctx.workspaceId != null ? String(ctx.workspaceId) : "global",
-      tenantId: ctx.tenantId ?? null,
+      projectId: ctx.projectId ?? null,
       correlationId,
-      projectId: ctx.projectId != null ? String(ctx.projectId) : null,
-      source: srcForCtx,
-    },
-    metadata: {
-      hubJobId: job.id,
-      hubJobType: job.type,
-      hubInvokeSource: invokeSource,
-      ...(queueBackend != null && { hubJobQueue: String(queueBackend) }),
-      ...(isCancelled && {
-        hubJobStatus: "cancelled",
-        ...(cancelSrc != null && { hubCancelSource: cancelSrc }),
-      }),
-      ...(correlationId != null && { hubCorrelationId: correlationId }),
-      ...(failureReason != null &&
-        String(failureReason).length > 0 && { hubFailureReason: String(failureReason) }),
-    },
-  });
+      durationMs: typeof durationMs === "number" ? durationMs : 0,
+      allowed: true,
+      success: !isTerminalFail,
+      ...(error != null && String(error).length > 0 && { error: String(error) }),
+      toolContext: {
+        workspaceId: ctx.workspaceId != null ? String(ctx.workspaceId) : "global",
+        tenantId: ctx.tenantId ?? null,
+        correlationId,
+        projectId: ctx.projectId != null ? String(ctx.projectId) : null,
+        source: srcForCtx,
+      },
+      metadata: {
+        hubJobId: job.id,
+        hubJobType: job.type,
+        hubInvokeSource: invokeSource,
+        ...(queueBackend != null && { hubJobQueue: String(queueBackend) }),
+        ...(isCancelled && {
+          hubJobStatus: "cancelled",
+          ...(cancelSrc != null && { hubCancelSource: cancelSrc }),
+          ...(validPreCancel && { hubPreCancelState: preCancelState }),
+        }),
+        ...(correlationId != null && { hubCorrelationId: correlationId }),
+        ...(failureReason != null &&
+          String(failureReason).length > 0 && { hubFailureReason: String(failureReason) }),
+      },
+    });
+  } catch (err) {
+    hubJobLifecycleEmitFailures += 1;
+    const msg = err && typeof err === "object" && "message" in err ? String(err.message) : String(err);
+    console.warn(
+      JSON.stringify({
+        severity: "warn",
+        msg: "hub_job_lifecycle_emit_failed",
+        phase,
+        jobId: job.id,
+        jobType: job.type,
+        error: msg,
+        hubJobLifecycleEmitFailures,
+      })
+    );
+  }
 }

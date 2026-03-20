@@ -292,6 +292,88 @@ export function setMetricsRegistry(registry) {
   globalRegistry = registry;
 }
 
+const PROM_PREFIX = "mcp_hub_";
+
+function escapePromLabelValue(v) {
+  return String(v).replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/"/g, '\\"');
+}
+
+/** Prometheus-safe family name from internal metric id. */
+export function prometheusFamilyName(internalName) {
+  const raw = String(internalName).replace(/[^a-zA-Z0-9_]/g, "_");
+  if (raw.startsWith("mcp_hub_")) return raw;
+  return `${PROM_PREFIX}${raw}`;
+}
+
+/**
+ * Format user labels for Prometheus exposition (sorted, quoted values).
+ * @param {Record<string, unknown>} [labels]
+ */
+export function formatLabelsForPrometheus(labels) {
+  const entries = Object.entries(labels || {}).filter(
+    ([, v]) => v !== undefined && v !== null && String(v).length > 0
+  );
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  return entries.map(([k, v]) => `${k}="${escapePromLabelValue(v)}"`).join(",");
+}
+
+/**
+ * Export MetricsRegistry snapshot as Prometheus text (hub pipeline primary).
+ * All families are prefixed {@link PROM_PREFIX} unless already prefixed.
+ * @param {MetricsRegistry} [registry]
+ * @returns {string}
+ */
+export function exportMetricsRegistryPrometheus(registry) {
+  const reg = registry || getMetricsRegistry();
+  const snap = reg.snapshot();
+  const lines = [];
+  const helpEmitted = new Set();
+
+  function emitHelpType(name, type, help) {
+    if (helpEmitted.has(name)) return;
+    helpEmitted.add(name);
+    lines.push(`# HELP ${name} ${help || name}`);
+    lines.push(`# TYPE ${name} ${type}`);
+  }
+
+  for (const m of Object.values(snap.counters)) {
+    const pn = prometheusFamilyName(m.name);
+    emitHelpType(pn, "counter", m.help || `${m.name} (hub)`);
+    const lbl = formatLabelsForPrometheus(m.labels);
+    lines.push(lbl ? `${pn}{${lbl}} ${m.value}` : `${pn} ${m.value}`);
+  }
+
+  for (const m of Object.values(snap.gauges)) {
+    const pn = prometheusFamilyName(m.name);
+    emitHelpType(pn, "gauge", m.help || `${m.name} (hub)`);
+    const lbl = formatLabelsForPrometheus(m.labels);
+    lines.push(lbl ? `${pn}{${lbl}} ${m.value}` : `${pn} ${m.value}`);
+  }
+
+  for (const m of Object.values(snap.histograms)) {
+    const base = prometheusFamilyName(m.name);
+    emitHelpType(base, "histogram", m.help || `${m.name} (hub)`);
+    const lblStr = formatLabelsForPrometheus(m.labels);
+    const labelPrefix = lblStr ? `${lblStr},` : "";
+
+    const rawBuckets = m.buckets && typeof m.buckets === "object" ? m.buckets : {};
+    const bucketKeys = Object.keys(rawBuckets)
+      .map((k) => Number(k))
+      .filter((x) => Number.isFinite(x))
+      .sort((a, b) => a - b);
+    for (const b of bucketKeys) {
+      const c = rawBuckets[b] ?? 0;
+      lines.push(`${base}_bucket{${labelPrefix}le="${b}"} ${c}`);
+    }
+    lines.push(`${base}_bucket{${labelPrefix}le="+Inf"} ${m.count}`);
+    const sumLbl = lblStr ? `{${lblStr}}` : "";
+    lines.push(`${base}_sum${sumLbl} ${m.sum}`);
+    lines.push(`${base}_count${sumLbl} ${m.count}`);
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Common metric names
  */

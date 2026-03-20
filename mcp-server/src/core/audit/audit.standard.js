@@ -121,6 +121,7 @@ export const METADATA_ALLOWLIST = [
   "hubJobQueue",
   "hubJobStatus",
   "hubCancelSource",
+  "hubPreCancelState",
   "hubFailureReason",
   "hubInvokeSource",
   "code",

@@ -11,6 +11,7 @@ import {
   setMetricsRegistry,
   Metrics,
   MetricType,
+  exportMetricsRegistryPrometheus,
 } from "./metrics.js";
 
 import {
@@ -297,49 +298,11 @@ export class ObservabilityManager {
   }
 
   /**
-   * Export metrics as Prometheus format (basic)
+   * Export metrics as Prometheus text (same helper as GET `/observability/metrics` hub section).
    * @returns {string}
    */
   exportMetricsPrometheus() {
-    const snapshot = this.metrics.snapshot();
-    const lines = [];
-
-    // Counters
-    for (const [key, metric] of Object.entries(snapshot.counters)) {
-      if (metric.help) {
-        lines.push(`# HELP ${metric.name} ${metric.help}`);
-      }
-      lines.push(`# TYPE ${metric.name} counter`);
-      const labelStr = Object.entries(metric.labels || {})
-        .map(([k, v]) => `${k}="${v}"`)
-        .join(",");
-      lines.push(`${metric.name}{${labelStr}} ${metric.value}`);
-    }
-
-    // Gauges
-    for (const [key, metric] of Object.entries(snapshot.gauges)) {
-      if (metric.help) {
-        lines.push(`# HELP ${metric.name} ${metric.help}`);
-      }
-      lines.push(`# TYPE ${metric.name} gauge`);
-      const labelStr = Object.entries(metric.labels || {})
-        .map(([k, v]) => `${k}="${v}"`)
-        .join(",");
-      lines.push(`${metric.name}{${labelStr}} ${metric.value}`);
-    }
-
-    // Histograms
-    for (const [key, metric] of Object.entries(snapshot.histograms)) {
-      if (metric.help) {
-        lines.push(`# HELP ${metric.name} ${metric.help}`);
-      }
-      lines.push(`# TYPE ${metric.name} histogram`);
-      // Simplified - full histogram export would include buckets
-      lines.push(`${metric.name}_count ${metric.count}`);
-      lines.push(`${metric.name}_sum ${metric.sum}`);
-    }
-
-    return lines.join("\n");
+    return exportMetricsRegistryPrometheus(this.metrics);
   }
 
   /**

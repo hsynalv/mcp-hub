@@ -1,7 +1,9 @@
 /**
  * Runtime Stats
  *
- * Process and runtime statistics for observability.
+ * Process/plugin/tool/job snapshots for JSON health APIs. Prometheus scrape uses
+ * `/observability/metrics` → `exportMetricsRegistryPrometheus()` (hub registry) plus process/legacy lines;
+ * this module is not the Prometheus source of truth.
  */
 
 import { getPlugins, getFailedPlugins } from "../plugins.js";
@@ -171,7 +173,7 @@ export function getPluginStats() {
 }
 
 /**
- * Get job stats
+ * Job counts by state — always core/jobs.js (production queue); not the legacy JobManager store.
  * @returns {Promise<Object>}
  */
 export async function getJobStats() {

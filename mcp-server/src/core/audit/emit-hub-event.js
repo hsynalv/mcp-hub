@@ -12,6 +12,14 @@ import {
 } from "../observability/telemetry-context.js";
 import { HubEventTypes, HubOutcomes } from "./event-types.js";
 
+const JOB_SYNC_HUB_EVENTS = new Set([
+  HubEventTypes.JOB_SUBMITTED,
+  HubEventTypes.JOB_STARTED,
+  HubEventTypes.JOB_COMPLETED,
+  HubEventTypes.JOB_FAILED,
+  HubEventTypes.JOB_CANCELLED,
+]);
+
 /**
  * @typedef {Object} EmitHubAuditParams
  * @property {string} eventType
@@ -138,6 +146,11 @@ export async function emitHubAuditEvent(params) {
       jobCancelSource:
         typeof metadata.hubCancelSource === "string" ? metadata.hubCancelSource : undefined,
     });
+    if (JOB_SYNC_HUB_EVENTS.has(eventType)) {
+      import("../observability/jobs.metrics.js")
+        .then((m) => m.syncJobMetrics())
+        .catch(() => {});
+    }
   } catch (err) {
     console.error("[emit-hub-event] metrics failed:", err.message);
   }

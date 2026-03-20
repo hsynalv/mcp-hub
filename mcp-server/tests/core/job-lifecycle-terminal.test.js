@@ -10,7 +10,13 @@ import {
   clearHooks,
   cancelJob,
 } from "../../src/core/jobs.js";
-import { getAuditManager, HubEventTypes } from "../../src/core/audit/index.js";
+import {
+  getAuditManager,
+  HubEventTypes,
+  resetHubJobLifecycleEmitFailuresForTesting,
+  getHubJobLifecycleEmitFailureCount,
+} from "../../src/core/audit/index.js";
+import * as hubEmit from "../../src/core/audit/emit-hub-event.js";
 import { getMetricsRegistry } from "../../src/core/observability/metrics.js";
 
 describe("job lifecycle terminal states", () => {
@@ -19,6 +25,7 @@ describe("job lifecycle terminal states", () => {
     resetForTesting();
     clearHooks();
     getMetricsRegistry().clear();
+    resetHubJobLifecycleEmitFailuresForTesting();
   });
 
   it("cancel queued job emits job.cancelled with stable correlationId", async () => {
@@ -49,6 +56,7 @@ describe("job lifecycle terminal states", () => {
       expect(c?.correlationId).toBe("corr-terminal-q");
       expect(c?.metadata?.hubCancelSource).toBe("user");
       expect(c?.metadata?.hubJobStatus).toBe("cancelled");
+      expect(c?.metadata?.hubPreCancelState).toBe("queued");
     });
 
     releaseRun();
@@ -86,6 +94,7 @@ describe("job lifecycle terminal states", () => {
       const entries = await manager.getRecentEntries({ limit: 100 });
       const c = entries.find((e) => e.operation === HubEventTypes.JOB_CANCELLED);
       expect(c?.metadata?.hubCancelSource).toBe("system");
+      expect(c?.metadata?.hubPreCancelState).toBe("running");
     });
 
     proceed();
@@ -135,5 +144,32 @@ describe("job lifecycle terminal states", () => {
       expect(hit?.labels?.cancel_source).toBe("user");
     });
     release();
+  });
+
+  it("failed hub job emit increments counter and logs when emitHubAuditEvent throws", async () => {
+    const manager = getAuditManager();
+    if (!manager.initialized) await manager.init();
+    const spy = vi.spyOn(hubEmit, "emitHubAuditEvent").mockRejectedValue(new Error("audit_sink_down"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    registerJobRunner("emit.fail.job", async () => ({ ok: 1 }));
+    submitJob("emit.fail.job", {}, { invokeSource: "internal" });
+
+    await vi.waitFor(() => {
+      expect(getHubJobLifecycleEmitFailureCount()).toBeGreaterThanOrEqual(1);
+    }, { timeout: 4000 });
+    expect(warnSpy).toHaveBeenCalled();
+    const payload = warnSpy.mock.calls.find((c) => {
+      try {
+        const j = JSON.parse(c[0]);
+        return j.msg === "hub_job_lifecycle_emit_failed";
+      } catch {
+        return false;
+      }
+    });
+    expect(payload).toBeDefined();
+
+    spy.mockRestore();
+    warnSpy.mockRestore();
   });
 });

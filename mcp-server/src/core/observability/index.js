@@ -12,6 +12,9 @@ export {
   setMetricsRegistry,
   Metrics,
   MetricType,
+  exportMetricsRegistryPrometheus,
+  prometheusFamilyName,
+  formatLabelsForPrometheus,
 } from "./metrics.js";
 
 // Tracing
