@@ -55,6 +55,7 @@ import type { SlashPluginOption } from "@/components/chat/ChatSlashMenu";
 import { conversationIdsMatch, normalizeConversationId } from "@/lib/conversation-ids";
 import { PREPARE_NAVIGATION_EVENT, releaseRadixBodyLock } from "@/lib/radix-body-lock";
 import { MainNavMenuButton } from "@/components/layout/MainNavMenuButton";
+import { MainNavDesktopToggle } from "@/components/layout/MainNavDesktopToggle";
 
 let messageIdSeq = 0;
 function nextMessageId() {
@@ -741,6 +742,7 @@ export function ChatPage() {
           >
             <div className="flex min-w-0 items-center gap-1 sm:gap-2">
               <MainNavMenuButton className="md:hidden shrink-0 rounded-xl" />
+              <MainNavDesktopToggle className="hidden shrink-0 rounded-xl md:inline-flex" />
               <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
                 <SheetTrigger asChild>
                   <Button

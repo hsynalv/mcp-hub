@@ -7,8 +7,9 @@ import {
   RefreshCw,
   Sun,
   X,
+  PanelLeftClose,
 } from "lucide-react";
-import { useCallback, useMemo, useState, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,8 +34,13 @@ import { APP_ROUTE_TITLES, IMMERSIVE_APP_PATHS } from "@/components/layout/app-n
 import { AppNavBrand, AppNavItems } from "@/components/layout/AppNavItems";
 import { AppShellNavContext } from "@/components/layout/AppShellNavContext";
 import { MainNavMenuButton } from "@/components/layout/MainNavMenuButton";
+import { MainNavDesktopToggle } from "@/components/layout/MainNavDesktopToggle";
 import { AppFooter } from "@/components/layout/AppFooter";
 import { BRAND } from "@/lib/branding";
+import {
+  defaultMainNavExpandedForPath,
+  persistMainNavExpanded,
+} from "@/lib/main-nav-preference";
 
 function PageLoader() {
   return (
@@ -56,6 +62,9 @@ function RoutedPage({ fullBleed }: { fullBleed: boolean }) {
 
 export function AppShell() {
   const [mainNavOpen, setMainNavOpen] = useState(false);
+  const [mainNavDesktopExpanded, setMainNavDesktopExpanded] = useState(() =>
+    defaultMainNavExpandedForPath(window.location.pathname)
+  );
   const { theme, toggle } = useTheme();
   const qc = useQueryClient();
   const location = useLocation();
@@ -98,11 +107,29 @@ export function AppShell() {
   const pageTitle = APP_ROUTE_TITLES[location.pathname] || BRAND.hubName;
   const isImmersive = IMMERSIVE_APP_PATHS.has(location.pathname);
 
+  useEffect(() => {
+    setMainNavDesktopExpanded(defaultMainNavExpandedForPath(location.pathname));
+  }, [location.pathname]);
+
   const closeMainNav = useCallback(() => setMainNavOpen(false), []);
+
+  const toggleMainNavDesktop = useCallback(() => {
+    setMainNavDesktopExpanded((prev) => {
+      const next = !prev;
+      persistMainNavExpanded(next);
+      return next;
+    });
+  }, []);
 
   const openMainNav = useCallback(() => {
     dispatchPrepareNavigation();
-    setMainNavOpen(true);
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    if (isMobile) {
+      setMainNavOpen(true);
+      return;
+    }
+    setMainNavDesktopExpanded(true);
+    persistMainNavExpanded(true);
   }, []);
 
   const onGlobalNav = useCallback(() => {
@@ -111,17 +138,34 @@ export function AppShell() {
   }, [closeMainNav]);
 
   const navContextValue = useMemo(
-    () => ({ openMainNav, closeMainNav }),
-    [openMainNav, closeMainNav]
+    () => ({ openMainNav, closeMainNav, mainNavDesktopExpanded, toggleMainNavDesktop }),
+    [openMainNav, closeMainNav, mainNavDesktopExpanded, toggleMainNavDesktop]
   );
 
   return (
     <AppShellNavContext.Provider value={navContextValue}>
       <TooltipProvider>
         <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
-          <aside className="hidden w-60 shrink-0 border-r border-border/80 bg-gradient-to-b from-card/80 to-card/40 md:flex md:flex-col">
-            <div className="flex h-14 items-center gap-2 border-b border-border/60 px-4">
+          <aside
+            className={cn(
+              "hidden shrink-0 flex-col border-r border-border/80 bg-gradient-to-b from-card/80 to-card/40 transition-[width,opacity] duration-200 md:flex",
+              mainNavDesktopExpanded ? "w-60 opacity-100" : "pointer-events-none w-0 overflow-hidden border-0 opacity-0"
+            )}
+            aria-hidden={!mainNavDesktopExpanded}
+          >
+            <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border/60 px-4">
               <AppNavBrand />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto shrink-0"
+                onClick={toggleMainNavDesktop}
+                title="Ana menüyü kapat"
+                aria-label="Ana menüyü kapat"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto px-2 py-4">
               <AppNavItems disagreementCount={disagreementCount} isAdmin={isAdmin} onNavigate={onGlobalNav} />
@@ -173,6 +217,7 @@ export function AppShell() {
             {!isImmersive && (
               <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border/80 bg-background/85 px-3 backdrop-blur-md sm:px-5">
                 <MainNavMenuButton className="md:hidden" />
+                <MainNavDesktopToggle className="hidden md:inline-flex" />
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <h1 className="truncate text-sm font-semibold sm:text-base">{pageTitle}</h1>
                   {sessionUser ? (
