@@ -38,14 +38,14 @@ RUN groupadd --gid 1001 nodejs && \
 
 WORKDIR /app
 
-COPY --from=api-deps /build/node_modules ./node_modules
-COPY --from=api-deps /build/package.json ./
-COPY src ./src
-COPY migrations ./migrations
-COPY eval ./eval
-COPY --from=ui-builder /build/src/public/app ./src/public/app
+COPY --from=api-deps --chown=nodejs:nodejs /build/node_modules ./node_modules
+COPY --from=api-deps --chown=nodejs:nodejs /build/package.json ./
+COPY --chown=nodejs:nodejs src ./src
+COPY --chown=nodejs:nodejs migrations ./migrations
+COPY --chown=nodejs:nodejs eval ./eval
+COPY --from=ui-builder --chown=nodejs:nodejs /build/src/public/app ./src/public/app
 
-RUN mkdir -p cache logs && chown -R nodejs:nodejs /app
+RUN mkdir -p cache logs && chown nodejs:nodejs cache logs
 
 USER nodejs
 
