@@ -45,7 +45,9 @@ COPY --chown=nodejs:nodejs migrations ./migrations
 COPY --chown=nodejs:nodejs eval ./eval
 COPY --from=ui-builder --chown=nodejs:nodejs /build/src/public/app ./src/public/app
 
-RUN mkdir -p cache logs && chown nodejs:nodejs cache logs
+# /app itself stays root-owned after COPY unless fixed — nodejs cannot mkdir at runtime.
+RUN mkdir -p cache logs marketplace/installed && \
+    chown nodejs:nodejs /app cache logs marketplace marketplace/installed
 
 USER nodejs
 
