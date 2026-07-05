@@ -69,7 +69,8 @@
     "sidecar:pm2:restart": "pm2 restart felix-sidecar",
     "sidecar:pm2:delete": "pm2 delete felix-sidecar",
     "sidecar:pm2:logs": "pm2 logs felix-sidecar --lines 150",
-    "sidecar:pm2:status": "pm2 status felix-sidecar"
+    "sidecar:pm2:status": "pm2 status felix-sidecar",
+    "auth:reset-password": "node scripts/reset-user-password.js"
   },
   "keywords": [
     "ai",

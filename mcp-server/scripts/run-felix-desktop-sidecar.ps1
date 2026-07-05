@@ -34,7 +34,7 @@ if (Test-Path $EnvFile) {
 $env:FELIX_DESKTOP_CONFIG = $ConfigDir
 
 if (-not $env:SIDECAR_AUTH_TOKEN) {
-  Add-Content -Path $StderrLog -Value "[$(Get-Date -Format o)] SIDECAR_AUTH_TOKEN bos — $EnvFile"
+  Add-Content -Path $StderrLog -Value "[$(Get-Date -Format o)] SIDECAR_AUTH_TOKEN bos - $EnvFile"
   exit 1
 }
 

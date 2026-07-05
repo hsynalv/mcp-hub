@@ -41,6 +41,7 @@ WORKDIR /app
 COPY --from=api-deps /build/node_modules ./node_modules
 COPY --from=api-deps /build/package.json ./
 COPY src ./src
+COPY migrations ./migrations
 COPY eval ./eval
 COPY --from=ui-builder /build/src/public/app ./src/public/app
 

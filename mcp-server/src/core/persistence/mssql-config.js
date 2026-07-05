@@ -40,7 +40,10 @@ export function parseMssqlConnectionString(connectionString) {
     port = parseInt(portStr, 10);
   }
 
-  const encrypt = parts["encrypt"] != null ? /^true$/i.test(parts["encrypt"]) : true;
+  const encrypt =
+    parts["encrypt"] != null
+      ? /^true$/i.test(parts["encrypt"])
+      : !/^\d{1,3}(\.\d{1,3}){3}$/.test(server) && !server.startsWith("[");
   const trustServerCertificate =
     parts["trustservercertificate"] != null
       ? /^true$/i.test(parts["trustservercertificate"])

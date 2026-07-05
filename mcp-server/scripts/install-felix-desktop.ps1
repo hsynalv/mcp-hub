@@ -44,10 +44,10 @@ Get-Content $EnvFile | ForEach-Object {
 
 if (-not $env:SIDECAR_AUTH_TOKEN) {
   Write-Host ""
-  Write-Host "SIDECAR_AUTH_TOKEN bos. Once hub'da eslestirin:"
-  Write-Host "  1. Web panel -> Felix Desktop -> Eslestirme kodu (admin)"
-  Write-Host "  2. Pair sonrasi authToken'i $EnvFile icine yapistirin"
-  Write-Host "  3. Bu scripti tekrar calistirin"
+  Write-Host 'SIDECAR_AUTH_TOKEN bos. Once hub da eslestirin:'
+  Write-Host '  1. Web panel -> Felix Desktop -> Eslestirme kodu (admin)'
+  Write-Host ('  2. Pair sonrasi authToken degerini ' + $EnvFile + ' icine yapistirin')
+  Write-Host '  3. Bu scripti tekrar calistirin'
   exit 1
 }
 
@@ -83,7 +83,7 @@ if ($Existing) {
 
 Register-ScheduledTask `
   -TaskName $TaskName `
-  -Description "Felix Desktop sidecar — oturum acilisi ve PC acilisinda otomatik baslar" `
+  -Description 'Felix Desktop sidecar - oturum acilisi ve PC acilisinda otomatik baslar' `
   -Action $Action `
   -Trigger @($TriggerLogon, $TriggerStartup) `
   -Settings $Settings `
@@ -93,12 +93,12 @@ Register-ScheduledTask `
 Start-ScheduledTask -TaskName $TaskName
 
 Write-Host ""
-Write-Host "Felix Desktop gorevi kaydedildi ve baslatildi: $TaskName"
-Write-Host "  Tetikleyiciler: oturum acilisi + PC acilisi (2 dk gecikme)"
-Write-Host "  Cokme sonrasi: otomatik yeniden baslatma (1 dk aralik)"
-Write-Host "  Config: $EnvFile"
-Write-Host "  Log:    $ConfigDir\stdout.log / stderr.log"
-Write-Host "  Health: http://127.0.0.1:${HealthPort}/health"
-Write-Host "  Manuel: Start-ScheduledTask -TaskName $TaskName"
-Write-Host "  Durdur: Stop-ScheduledTask -TaskName $TaskName"
-Write-Host "  Kaldir: Unregister-ScheduledTask -TaskName $TaskName -Confirm:`$false"
+Write-Host ('Felix Desktop gorevi kaydedildi ve baslatildi: ' + $TaskName)
+Write-Host '  Tetikleyiciler: oturum acilisi + PC acilisi, 2 dk gecikme'
+Write-Host '  Cokme sonrasi: otomatik yeniden baslatma, 1 dk aralik'
+Write-Host ('  Config: ' + $EnvFile)
+Write-Host ('  Log:    ' + $ConfigDir + '\stdout.log / stderr.log')
+Write-Host ('  Health: http://127.0.0.1:' + $HealthPort + '/health')
+Write-Host ('  Manuel: Start-ScheduledTask -TaskName ' + $TaskName)
+Write-Host ('  Durdur: Stop-ScheduledTask -TaskName ' + $TaskName)
+Write-Host ('  Kaldir: Unregister-ScheduledTask -TaskName ' + $TaskName + ' -Confirm:$false')

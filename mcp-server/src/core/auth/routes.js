@@ -134,6 +134,7 @@ export function registerAuthRoutes(app) {
         operation: "register",
         plugin: "hub",
         actor: `user:${user.email}`,
+        allowed: true,
         success: true,
       });
       res.status(201).json({
@@ -173,6 +174,7 @@ export function registerAuthRoutes(app) {
           operation: "login_failed",
           plugin: "hub",
           actor: parsed.data.email,
+          allowed: true,
           success: false,
         });
         return res.status(401).json({
@@ -186,6 +188,7 @@ export function registerAuthRoutes(app) {
         operation: "login",
         plugin: "hub",
         actor: `user:${user.email}`,
+        allowed: true,
         success: true,
       });
       res.json({
@@ -268,6 +271,7 @@ export function registerAuthRoutes(app) {
         operation: "password_change",
         plugin: "hub",
         actor: `user:${sessionUser.email}`,
+        allowed: true,
         success: true,
       });
       res.json({ ok: true, data: { changed: true } });
