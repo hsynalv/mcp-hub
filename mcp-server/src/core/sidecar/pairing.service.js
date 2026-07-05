@@ -29,7 +29,8 @@ async function hydrateDevicesFromDb() {
   }
   try {
     const result = await persistenceQuery(
-      `SELECT id, name, base_url, capabilities_json, auth_token, paired_at, last_seen_at
+      `SELECT id, name, base_url, capabilities_json, auth_token, paired_at, last_seen_at,
+              platform, hostname
        FROM sidecar_devices ORDER BY paired_at ASC`
     );
     for (const row of result?.recordset ?? []) {
@@ -41,6 +42,8 @@ async function hydrateDevicesFromDb() {
         authToken: row.auth_token,
         pairedAt: row.paired_at,
         lastSeenAt: row.last_seen_at,
+        platform: row.platform || null,
+        hostname: row.hostname || null,
       });
     }
   } catch (err) {
@@ -57,10 +60,10 @@ async function persistDevice(device) {
        USING (SELECT @id AS id) AS source ON target.id = source.id
        WHEN MATCHED THEN
          UPDATE SET name = @name, base_url = @baseUrl, capabilities_json = @capabilitiesJson,
-           auth_token = @authToken, last_seen_at = @lastSeenAt
+           auth_token = @authToken, last_seen_at = @lastSeenAt, platform = @platform, hostname = @hostname
        WHEN NOT MATCHED THEN
-         INSERT (id, name, base_url, capabilities_json, auth_token, paired_at, last_seen_at)
-         VALUES (@id, @name, @baseUrl, @capabilitiesJson, @authToken, @pairedAt, @lastSeenAt);`,
+         INSERT (id, name, base_url, capabilities_json, auth_token, paired_at, last_seen_at, platform, hostname)
+         VALUES (@id, @name, @baseUrl, @capabilitiesJson, @authToken, @pairedAt, @lastSeenAt, @platform, @hostname);`,
       {
         id: device.id,
         name: device.name,
@@ -69,6 +72,8 @@ async function persistDevice(device) {
         authToken: device.authToken,
         pairedAt: device.pairedAt,
         lastSeenAt: device.lastSeenAt,
+        platform: device.platform || null,
+        hostname: device.hostname || null,
       }
     );
   } catch (err) {
@@ -117,7 +122,16 @@ export function normalizeSidecarBaseUrl(baseUrl) {
   }
 }
 
-export async function consumePairingCode(code, { deviceName, baseUrl, capabilities = ["fs", "terminal", "desktop", "notify", "browser"] }) {
+export async function consumePairingCode(
+  code,
+  {
+    deviceName,
+    baseUrl,
+    capabilities = ["fs", "terminal", "desktop", "notify", "browser"],
+    platform = null,
+    hostname = null,
+  } = {}
+) {
   await hydrateDevicesFromDb();
   const pending = pendingCodes.get(code);
   if (!pending) return { ok: false, error: "invalid_code" };
@@ -135,6 +149,8 @@ export async function consumePairingCode(code, { deviceName, baseUrl, capabiliti
     authToken: generateSidecarAuthToken(),
     pairedAt: new Date().toISOString(),
     lastSeenAt: new Date().toISOString(),
+    platform: platform ? String(platform).slice(0, 16) : null,
+    hostname: hostname ? String(hostname).slice(0, 256) : null,
   };
   devices.set(device.id, device);
   await persistDevice(device);
@@ -205,7 +221,7 @@ export async function updateSidecarDeviceCapabilities(deviceId, capabilities) {
   return { ok: true, deviceId, capabilities: device.capabilities };
 }
 
-export async function updateSidecarDevice(deviceId, { baseUrl, capabilities } = {}) {
+export async function updateSidecarDevice(deviceId, { baseUrl, capabilities, platform, hostname } = {}) {
   await hydrateDevicesFromDb();
   const device = devices.get(deviceId);
   if (!device) return { ok: false, error: "not_found" };
@@ -213,6 +229,8 @@ export async function updateSidecarDevice(deviceId, { baseUrl, capabilities } = 
   if (Array.isArray(capabilities) && capabilities.length > 0) {
     device.capabilities = capabilities;
   }
+  if (platform !== undefined) device.platform = platform ? String(platform).slice(0, 16) : null;
+  if (hostname !== undefined) device.hostname = hostname ? String(hostname).slice(0, 256) : null;
   device.lastSeenAt = new Date().toISOString();
   await persistDevice(device);
   return {
@@ -220,6 +238,8 @@ export async function updateSidecarDevice(deviceId, { baseUrl, capabilities } = 
     deviceId: device.id,
     baseUrl: device.baseUrl,
     capabilities: device.capabilities,
+    platform: device.platform,
+    hostname: device.hostname,
   };
 }
 

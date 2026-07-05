@@ -100,6 +100,18 @@ export function FelixDesktopPairingModal({
       toast.show(e instanceof ApiError ? e.message : "Eşleştirme başarısız", "error"),
   });
 
+  async function probeSidecarHealth(url: string) {
+    try {
+      const base = url.replace(/\/$/, "");
+      const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { platform?: string; hostname?: string };
+      return { platform: data.platform, hostname: data.hostname };
+    } catch {
+      return null;
+    }
+  }
+
   const copyText = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -119,7 +131,7 @@ export function FelixDesktopPairingModal({
             <div>
               <DialogTitle>Yeni eşleştirme</DialogTitle>
               <DialogDescription className="mt-1 text-xs">
-                Mac&apos;inizdeki sidecar&apos;ı hub ile bağlayın. İlk kurulum için rehbere bakın.
+                Mac veya Windows sidecar&apos;ı hub ile bağlayın. İlk kurulum için rehbere bakın.
               </DialogDescription>
             </div>
             <div className="flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
@@ -212,18 +224,26 @@ export function FelixDesktopPairingModal({
                       {isAdmin ? "2. Cihazı kaydet" : "Cihazı kaydet"}
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      Kod + Mac adresiniz (sabit IP:{" "}
+                      Kod + sidecar adresi (sabit IP:{" "}
                       <code className="rounded bg-muted px-1">http://IP:9477</code> veya tunnel URL).
+                      Health&apos;ten platform/hostname otomatik alınır.
                     </p>
                   </div>
                   <form
                     className="space-y-4"
-                    onSubmit={(e) => {
+                    onSubmit={async (e) => {
                       e.preventDefault();
+                      const trimmedUrl = baseUrl.trim();
+                      const health = await probeSidecarHealth(trimmedUrl);
                       pairMutation.mutate({
                         code: pairCode.trim(),
-                        deviceName: deviceName.trim() || "macbook",
-                        baseUrl: baseUrl.trim(),
+                        deviceName:
+                          deviceName.trim() ||
+                          health?.hostname ||
+                          (health?.platform === "win32" ? "windows-pc" : "macbook"),
+                        baseUrl: trimmedUrl,
+                        platform: health?.platform,
+                        hostname: health?.hostname,
                       });
                     }}
                   >
@@ -282,7 +302,7 @@ export function FelixDesktopPairingModal({
                     <div className="flex items-start gap-2">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium">3. Token&apos;ı Mac&apos;e kaydedin</p>
+                        <p className="font-medium">3. Token&apos;ı sidecar makinesine kaydedin</p>
                         <p className="mt-2 break-all font-mono text-xs">{lastAuthToken}</p>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <Button
@@ -295,7 +315,7 @@ export function FelixDesktopPairingModal({
                           </Button>
                         </div>
                         <pre className="mt-3 overflow-x-auto rounded-lg bg-muted/40 p-2 font-mono text-[11px]">
-                          {`# ~/.config/felix-desktop/env\nSIDECAR_AUTH_TOKEN=${lastAuthToken}\nnpm run sidecar:pm2:restart`}
+                          {`# ~/.config/felix-desktop/env (Mac/Linux)\n# %USERPROFILE%\\.config\\felix-desktop\\env (Windows)\nSIDECAR_AUTH_TOKEN=${lastAuthToken}\n# Mac: npm run sidecar:pm2:restart\n# Win: Start-ScheduledTask -TaskName FelixDesktopSidecar`}
                         </pre>
                       </div>
                     </div>

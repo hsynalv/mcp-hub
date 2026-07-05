@@ -10,6 +10,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { assertDesktopActionAllowed, detectSensitiveContext } from "./desktop-guard.js";
+import * as win32Desktop from "./desktop.win32.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -100,6 +101,7 @@ async function currentWindowContext() {
 
 export async function captureScreenshot({ format = "png" } = {}) {
   const platform = process.platform;
+  if (platform === "win32") return win32Desktop.captureScreenshot({ format });
   if (platform !== "darwin") {
     return {
       ok: true,
@@ -119,6 +121,7 @@ export async function captureScreenshot({ format = "png" } = {}) {
 /** Capture a rectangular screen region (macOS screencapture -R). */
 export async function captureRegionScreenshot({ x, y, width, height, format = "png" } = {}) {
   const platform = process.platform;
+  if (platform === "win32") return win32Desktop.captureRegionScreenshot({ x, y, width, height, format });
   if (platform !== "darwin") {
     return {
       ok: true,
@@ -149,6 +152,7 @@ export async function captureRegionScreenshot({ x, y, width, height, format = "p
 /** Capture the frontmost application window bounds. */
 export async function captureWindowScreenshot({ format = "png" } = {}) {
   const platform = process.platform;
+  if (platform === "win32") return win32Desktop.captureWindowScreenshot({ format });
   if (platform !== "darwin") {
     return {
       ok: true,
@@ -207,6 +211,8 @@ export async function screenshotWithContextGuard(shotResult) {
 export async function getActiveWindow() {
   const platform = process.platform;
 
+  if (platform === "win32") return win32Desktop.getActiveWindow();
+
   if (platform === "darwin") {
     try {
       const app = await runOsascript(
@@ -228,17 +234,6 @@ export async function getActiveWindow() {
           hint: "Grant Accessibility permission to the sidecar process",
         },
       };
-    }
-  }
-
-  if (platform === "win32") {
-    try {
-      const ps = `(Get-Process | Where-Object {$_.MainWindowTitle -ne ''} | Sort-Object -Property @{Expression={$_.MainWindowHandle -ne 0}} -Descending | Select-Object -First 1 | ForEach-Object { $_.ProcessName + '|' + $_.MainWindowTitle })`;
-      const { stdout } = await execFileAsync("powershell", ["-Command", ps], { timeout: 8000 });
-      const [app, title] = String(stdout).trim().split("|");
-      return { ok: true, data: { platform, app: app || "unknown", title: title || "" } };
-    } catch (err) {
-      return { ok: false, error: { code: "active_window_failed", message: err.message } };
     }
   }
 
@@ -275,6 +270,11 @@ export async function ocrScreenRegion({ imageBase64 } = {}) {
   }
 
   const byteLength = Buffer.from(imageBase64, "base64").length;
+  const platform = process.platform;
+
+  if (platform === "win32") {
+    return win32Desktop.ocrScreenRegion({ imageBase64 });
+  }
 
   try {
     const { stdout } = await execFileAsync("which", ["tesseract"], { timeout: 3000 });
@@ -386,6 +386,10 @@ function parseHotkeyKeys(keys) {
 export async function desktopScroll({ direction = "down", amount = 3, x, y } = {}) {
   return guardedDesktopAction("scroll", { x, y }, async (guard) => {
     const platform = process.platform;
+    if (platform === "win32") {
+      const r = await win32Desktop.desktopScroll({ direction, amount, x, y });
+      return r.ok ? { ...r, data: { ...r.data, preview: guard.data.preview } } : r;
+    }
     if (platform !== "darwin") {
       return {
         ok: false,
@@ -429,6 +433,10 @@ export async function desktopHotkey({ keys } = {}) {
 
   return guardedDesktopAction("hotkey", {}, async (guard) => {
     const platform = process.platform;
+    if (platform === "win32") {
+      const r = await win32Desktop.desktopHotkey({ keys });
+      return r.ok ? { ...r, data: { ...r.data, preview: guard.data.preview } } : r;
+    }
     if (platform !== "darwin") {
       return {
         ok: false,
@@ -473,6 +481,10 @@ export async function desktopDrag({ fromX, fromY, toX, toY } = {}) {
 
   return guardedDesktopAction("drag", { fromX, fromY, toX, toY }, async (guard) => {
     const platform = process.platform;
+    if (platform === "win32") {
+      const r = await win32Desktop.desktopDrag({ fromX, fromY, toX, toY });
+      return r.ok ? { ...r, data: { ...r.data, preview: guard.data.preview } } : r;
+    }
     if (platform !== "darwin") {
       return {
         ok: false,
@@ -509,6 +521,7 @@ export async function desktopFocusApp({ appName } = {}) {
   }
 
   const platform = process.platform;
+  if (platform === "win32") return win32Desktop.desktopFocusApp({ appName });
   if (platform !== "darwin") {
     return {
       ok: false,
@@ -548,6 +561,10 @@ export async function desktopClick({ x, y, button = "left" } = {}) {
   if (!guard.ok) return guard;
 
   const platform = process.platform;
+  if (platform === "win32") {
+    const r = await win32Desktop.desktopClick({ x, y, button });
+    return r.ok ? { ...r, data: { ...r.data, preview: guard.data.preview } } : r;
+  }
   if (platform === "darwin") {
     try {
       await execFileAsync("cliclick", [`${button}:${x},${y}`], { timeout: 5000 });
@@ -592,6 +609,10 @@ export async function desktopType({ text, delayMs = 0 } = {}) {
   if (!guard.ok) return guard;
 
   const platform = process.platform;
+  if (platform === "win32") {
+    const r = await win32Desktop.desktopType({ text, delayMs });
+    return r.ok ? { ...r, data: { ...r.data, preview: guard.data.preview } } : r;
+  }
   if (platform === "darwin") {
     try {
       const escaped = String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"');

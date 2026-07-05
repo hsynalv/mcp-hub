@@ -24,6 +24,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ProjectSwitcher } from "@/components/ProjectSwitcher";
+import { SidecarDevicePicker } from "@/components/desktop/SidecarDevicePicker";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatMessageList } from "@/components/chat/ChatMessageList";
 import { ChatComposer, type ChatComposerHandle } from "@/components/chat/ChatComposer";
@@ -585,6 +586,7 @@ export function ChatPage() {
         includeBrainContext: chatSettings.includeBrainContext !== false,
         responseStyle: chatSettings.responseStyle,
         pluginFilter: turnPlugin,
+        sidecarDeviceId: chatSettings.sidecarDeviceId || undefined,
         signal: abortController.signal,
       });
 
@@ -854,6 +856,20 @@ export function ChatPage() {
             )}
 
             <div className="flex min-w-0 items-center gap-2 overflow-x-auto sm:justify-end">
+              <SidecarDevicePicker
+                compact
+                channel="chat"
+                value={chatSettings.sidecarDeviceId ?? null}
+                onChange={(deviceId) => {
+                  setChatSettings((s) => {
+                    const next = { ...s, sidecarDeviceId: deviceId ?? undefined };
+                    if (activeConversationId) {
+                      void updateConversation(activeConversationId, { metadata: next }).catch(() => {});
+                    }
+                    return next;
+                  });
+                }}
+              />
               <ProjectSwitcher className="hidden md:flex" />
               <Button
                 variant="ghost"

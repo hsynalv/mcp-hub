@@ -23,6 +23,8 @@ const MIGRATION_FILES = [
   { version: 11, file: "011_intent_training.sql" },
   { version: 12, file: "012_intent_sample_decision.sql" },
   { version: 13, file: "013_users_auth.sql" },
+  { version: 14, file: "014_brain_memories.sql" },
+  { version: 15, file: "015_sidecar_preferences.sql" },
 ];
 
 /**

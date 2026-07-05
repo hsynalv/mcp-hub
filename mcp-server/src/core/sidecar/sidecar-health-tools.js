@@ -15,6 +15,10 @@ import {
   listSidecarCapabilityCatalog,
 } from "../../plugins/local-sidecar/sidecar-health.core.js";
 
+function sidecarCtx(context = {}) {
+  return context && typeof context === "object" ? context : {};
+}
+
 export function registerSidecarHealthTools() {
   registerTool({
     name: "sidecar_dependency_check",
@@ -22,9 +26,9 @@ export function registerSidecarHealthTools() {
     plugin: "local-sidecar",
     tags: [ToolTags.READ_ONLY, ToolTags.LOCAL_FS],
     inputSchema: { type: "object", properties: {} },
-    handler: async () => {
+    handler: async (_args, context) => {
       if (!isLocalFsOnServer()) {
-        return (await delegateSidecarDependencies()) || sidecarRequiredError();
+        return (await delegateSidecarDependencies(sidecarCtx(context))) || sidecarRequiredError();
       }
       return checkSidecarDependencies();
     },
@@ -36,9 +40,9 @@ export function registerSidecarHealthTools() {
     plugin: "local-sidecar",
     tags: [ToolTags.READ_ONLY, ToolTags.LOCAL_FS],
     inputSchema: { type: "object", properties: {} },
-    handler: async () => {
+    handler: async (_args, context) => {
       if (!isLocalFsOnServer()) {
-        return (await delegateDesktopPermissions()) || sidecarRequiredError();
+        return (await delegateDesktopPermissions(sidecarCtx(context))) || sidecarRequiredError();
       }
       return checkDesktopPermissions();
     },

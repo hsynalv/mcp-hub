@@ -234,6 +234,34 @@ export async function fsDeleteToTrash(targetPath, accessOpts = {}) {
   const check = checkPathAllowed(targetPath, "write", accessOpts);
   if (!check.allowed) return fsDenyEnvelope(check);
 
+  if (process.platform === "win32") {
+    try {
+      const { execFile } = await import("child_process");
+      const { promisify } = await import("util");
+      const execFileAsync = promisify(execFile);
+      const escaped = check.resolvedPath.replace(/'/g, "''");
+      await execFileAsync(
+        "powershell",
+        [
+          "-Command",
+          `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('${escaped}', 'OnlyErrorDialogs', 'SendToRecycleBin')`,
+        ],
+        { timeout: 15_000 }
+      );
+      return {
+        ok: true,
+        data: {
+          path: targetPath,
+          resolvedPath: check.resolvedPath,
+          trashPath: "Recycle Bin",
+          platform: "win32",
+        },
+      };
+    } catch (err) {
+      return { ok: false, error: { code: "trash_failed", message: err.message } };
+    }
+  }
+
   const trashDir = join(homedir(), ".Trash");
   const name = basename(check.resolvedPath);
   let trashDest = join(trashDir, name);

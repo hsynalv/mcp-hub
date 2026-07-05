@@ -15,6 +15,7 @@ NODE_BIN="$(command -v node)"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Bu script şu an yalnızca macOS (launchd) içindir."
+  echo "Windows için: npm run sidecar:install:win"
   echo "Linux için: SIDECAR_AUTH_TOKEN=... node $MCP_SERVER_DIR/bin/sidecar-daemon.js"
   exit 1
 fi

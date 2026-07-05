@@ -255,22 +255,33 @@ curl -X POST http://localhost:8787/integrations/observability/generic \
 | `SLA_RUNNER_ENABLED` | Arka plan SLA tick; test’te `false`, prod’da varsayılan açık |
 | `INCIDENT_DEFAULT_OWNER` | Triage postmortem owner: `on-call` veya e-posta |
 
-### Desktop / sidecar (macOS)
+### Desktop / sidecar (macOS & Windows)
 
 | Değişken | Örnek | Açıklama |
 |----------|--------|----------|
 | `DESKTOP_OCR_REQUIRED` | `true` | Click/type öncesi screenshot + OCR sensitive kontrol |
-| `DESKTOP_ALLOWED_APPS` | `Cursor,Google Chrome,Terminal` | Virgülle ayrılmış izinli uygulamalar |
+| `DESKTOP_ALLOWED_APPS` | `Cursor,Google Chrome,Terminal,explorer` | Virgülle ayrılmış izinli uygulamalar |
 | `DESKTOP_BLOCKED_APPS` | `Keychain Access,1Password` | Varsayılan blok listesi |
 | `DESKTOP_ALLOWLIST_DISABLED` | `true` | Sadece dev/test; prod’da kullanma |
 | `SIDECAR_PORT` | `9477` | Yerel sidecar daemon portu |
 | `SIDECAR_AUTH_TOKEN` | `openssl rand -hex 32` | Sidecar ↔ hub auth |
 
-Sidecar:
+Sidecar kurulum:
 
 ```bash
+# macOS (launchd)
+npm run sidecar:install
+
+# Windows (Scheduled Task)
+npm run sidecar:install:win
+
+# Manuel
 npm run sidecar:daemon
 ```
+
+Windows görevi `FelixDesktopSidecar`: PC açılışı + oturum açılışında otomatik başlar; log `%USERPROFILE%\.config\felix-desktop\`. Firewall: TCP 9477.
+
+Çoklu cihaz: Web panel → Felix Desktop veya chat/Telegram'da cihaz seçimi; varsayılanlar `sidecar_preferences` tablosunda saklanır. Telegram'da `/desktop devices` + inline butonlar.
 
 ### Obsidian (brain sync, opsiyonel)
 

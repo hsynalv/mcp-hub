@@ -17,6 +17,7 @@ import { ApiError, apiGet, type WhoamiData } from "@/lib/api-client";
 import {
   fetchSidecarStatus,
   removeSidecarDevice,
+  setSidecarDeviceDefault,
   sidecarModeDescription,
   sidecarStatusLabel,
   sidecarStatusTone,
@@ -26,23 +27,38 @@ import { BRAND } from "@/lib/branding";
 import { useToast } from "@/providers/ToastProvider";
 import { cn, formatTime } from "@/lib/utils";
 
+function platformLabel(platform?: string | null) {
+  if (platform === "darwin") return "macOS";
+  if (platform === "win32") return "Windows";
+  if (platform === "linux") return "Linux";
+  return platform || "desktop";
+}
+
 function DeviceRow({
   device,
   onRemove,
+  onSetDefault,
   removing,
+  settingDefault,
   canRemove,
 }: {
   device: SidecarDevice;
   onRemove: () => void;
+  onSetDefault: (channel: "chat" | "telegram" | "default") => void;
   removing: boolean;
+  settingDefault: boolean;
   canRemove: boolean;
 }) {
+  const platform = device.platform || device.health?.platform;
   return (
     <div className="rounded-xl border border-border/80 bg-muted/10 px-4 py-3.5 transition-colors hover:bg-muted/20">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{device.name}</p>
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {platformLabel(platform)}
+            </Badge>
             <StatusBadge
               status={device.online ? "healthy" : "error"}
               label={device.online ? "Çevrimiçi" : "Çevrimdışı"}
@@ -67,18 +83,36 @@ function DeviceRow({
             <p className="text-[11px] text-destructive">{device.error}</p>
           )}
         </div>
-        {canRemove && (
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
-            disabled={removing}
-            onClick={onRemove}
-            className="shrink-0 text-destructive hover:text-destructive"
+            disabled={settingDefault}
+            onClick={() => onSetDefault("chat")}
           >
-            <Trash2 className="mr-1 h-3.5 w-3.5" />
-            Kaldır
+            Chat varsayılan
           </Button>
-        )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={settingDefault}
+            onClick={() => onSetDefault("telegram")}
+          >
+            Telegram varsayılan
+          </Button>
+          {canRemove && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={removing}
+              onClick={onRemove}
+              className="text-destructive hover:text-destructive"
+            >
+              <Trash2 className="mr-1 h-3.5 w-3.5" />
+              Kaldır
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -115,6 +149,17 @@ export function FelixDesktopPanel({ onOpenPairing }: FelixDesktopPanelProps) {
     },
     onError: (e) =>
       toast.show(e instanceof ApiError ? e.message : "Cihaz kaldırılamadı", "error"),
+  });
+
+  const defaultMutation = useMutation({
+    mutationFn: ({ deviceId, channel }: { deviceId: string; channel: "chat" | "telegram" | "default" }) =>
+      setSidecarDeviceDefault(deviceId, channel),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["sidecar-preferences"] });
+      toast.show(`${vars.channel} varsayılanı ayarlandı`);
+    },
+    onError: (e) =>
+      toast.show(e instanceof ApiError ? e.message : "Varsayılan ayarlanamadı", "error"),
   });
 
   const status = statusQuery.data;
@@ -238,7 +283,7 @@ export function FelixDesktopPanel({ onOpenPairing }: FelixDesktopPanelProps) {
         </SettingsInfoBox>
       )}
 
-      <SettingsSectionCard title="Eşleşmiş cihazlar" description="Hub'ın bağlandığı Mac/PC">
+      <SettingsSectionCard title="Eşleşmiş cihazlar" description="Hub'ın bağlandığı Mac/PC (Windows desteklenir)">
         {loading ? (
           <div className="flex h-20 items-center justify-center text-muted-foreground">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -269,6 +314,8 @@ export function FelixDesktopPanel({ onOpenPairing }: FelixDesktopPanelProps) {
                 device={d}
                 canRemove={isAdmin}
                 removing={removeMutation.isPending}
+                settingDefault={defaultMutation.isPending}
+                onSetDefault={(channel) => defaultMutation.mutate({ deviceId: d.id, channel })}
                 onRemove={() => removeMutation.mutate(d.id)}
               />
             ))}

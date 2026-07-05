@@ -26,6 +26,7 @@ import {
 } from "./chat/tool-result-summarizer.js";
 import { resolveChatProfile, applyProfileToToolIntent } from "./chat/chat-profiles.js";
 import { resolveEffectiveTenantId } from "./authorization/assert-tenant-boundary.js";
+import { buildSidecarDevicesPromptSection } from "./sidecar/sidecar-device-resolver.service.js";
 import { shouldDisableChatTools } from "./chat/intent-decision.js";
 import { getRequestContext } from "./auth/request-context.js";
 import { loadTenantOverlay } from "./auth/tenant-overlay.js";
@@ -802,6 +803,8 @@ export async function runChatTurn({
     tenantId: resolveEffectiveTenantId(context),
     brainToolCounts: context.brainToolCounts || createBrainToolCounts(),
     readToolsUsed: false,
+    actor: context.actor || null,
+    sidecarDeviceId: context.sidecarDeviceId || null,
     personalScope: context.personalScope,
     scope: context.scope,
   };
@@ -842,18 +845,21 @@ export async function runChatTurn({
     const quickIntent = classifyToolIntentRegex(message);
     if (quickIntent.intent === "desktop_local") {
       telegramDesktopDirective = `## Bu mesaj — Felix Desktop (zorunlu)
-Kullanıcı Mac masaüstü / pano / uygulama odak istiyor. **Hemen** uygun aracı çağır:
+Kullanıcı yerel masaüstü / pano / uygulama odak istiyor. **Hemen** uygun aracı çağır:
+- Birden fazla cihaz varsa önce **sidecar_list_devices** veya kullanıcıya hangi makine sor; **sidecar_set_active** ile kaydet
 - Uygulama öne getir → **desktop_focus_app**
 - Pano oku → **clipboard_read** (onay gerekirse Telegram'da Onayla/Reddet gelir)
 - Dosya/klasör → **fs_list** / **fs_read**
-"Asistanın yetkisi yok" deme; önce aracı dene.`;
+"Asistanın yetkisi yok" deme; önce aracı dene. sidecar_ambiguous alırsan cihaz seçtir.`;
     }
   }
+  const sidecarSection = await buildSidecarDevicesPromptSection(chatContext);
   const systemContent = buildSystemPrompt(
     [
       instructionsBlock,
       chatCtx.contextHints,
       telegramDesktopDirective,
+      sidecarSection,
     ]
       .filter(Boolean)
       .join("\n\n"),

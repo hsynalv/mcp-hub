@@ -15,6 +15,11 @@ import {
 } from "./pairing.service.js";
 import { auditLog } from "../audit/index.js";
 import { listSidecarCapabilityCatalog } from "../../plugins/local-sidecar/sidecar-health.core.js";
+import {
+  getSidecarPreference,
+  setSidecarPreference,
+} from "./sidecar-preferences.service.js";
+import { resolveActorId } from "../workspace-preferences.service.js";
 
 async function probeDeviceHealth(device) {
   try {
@@ -50,6 +55,8 @@ export async function getSidecarStatusPayload() {
         id: d.id,
         name: d.name,
         baseUrl: d.baseUrl,
+        platform: d.platform || probe.health?.platform || null,
+        hostname: d.hostname || probe.health?.hostname || null,
         capabilities: d.capabilities || ["fs"],
         pairedAt: d.pairedAt,
         lastSeenAt: d.lastSeenAt,
@@ -91,7 +98,7 @@ export function registerSidecarRoutes(app) {
   });
 
   app.post("/sidecar/pair", requireScope("write"), async (req, res) => {
-    const { code, deviceName, baseUrl, capabilities } = req.body ?? {};
+    const { code, deviceName, baseUrl, capabilities, platform, hostname } = req.body ?? {};
     if (!code || !baseUrl) {
       return res.status(400).json({
         ok: false,
@@ -102,6 +109,8 @@ export function registerSidecarRoutes(app) {
       deviceName,
       baseUrl: String(baseUrl),
       capabilities,
+      platform,
+      hostname,
     });
     if (!result.ok) {
       return res.status(400).json({ ok: false, error: { code: result.error, message: result.error } });
@@ -195,5 +204,52 @@ export function registerSidecarRoutes(app) {
       metadata: result,
     }).catch(() => {});
     res.json({ ok: true, data: result });
+  });
+
+  app.get("/sidecar/preferences", requireScope("read"), async (req, res) => {
+    try {
+      const actorId = resolveActorId(req);
+      const channel = req.query?.channel || "default";
+      const data = await getSidecarPreference(actorId, String(channel));
+      res.json({ ok: true, data });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: { code: "sidecar_prefs_read_failed", message: err.message } });
+    }
+  });
+
+  app.put("/sidecar/preferences", requireScope("write"), async (req, res) => {
+    try {
+      const actorId = resolveActorId(req);
+      const { channel = "default", deviceId } = req.body ?? {};
+      const result = await setSidecarPreference(actorId, { channel, deviceId });
+      if (!result.ok) {
+        return res.status(400).json({ ok: false, error: { code: result.error, message: result.error } });
+      }
+      void auditLog({
+        plugin: "local-sidecar",
+        operation: "sidecar_preference_set",
+        actor: actorId,
+        allowed: true,
+        success: true,
+        metadata: { channel, deviceId: result.deviceId },
+      }).catch(() => {});
+      res.json({ ok: true, data: result });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: { code: "sidecar_prefs_write_failed", message: err.message } });
+    }
+  });
+
+  app.post("/sidecar/devices/:id/set-default", requireScope("write"), async (req, res) => {
+    try {
+      const actorId = resolveActorId(req);
+      const channel = req.body?.channel || "default";
+      const result = await setSidecarPreference(actorId, { channel, deviceId: req.params.id });
+      if (!result.ok) {
+        return res.status(400).json({ ok: false, error: { code: result.error, message: result.error } });
+      }
+      res.json({ ok: true, data: result });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: { code: "sidecar_set_default_failed", message: err.message } });
+    }
   });
 }

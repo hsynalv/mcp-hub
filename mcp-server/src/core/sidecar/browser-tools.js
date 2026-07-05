@@ -26,6 +26,10 @@ import {
   browserType,
 } from "../../plugins/local-sidecar/browser.core.js";
 
+function sidecarCtx(context = {}) {
+  return context && typeof context === "object" ? context : {};
+}
+
 export function registerBrowserTools() {
   registerTool({
     name: "browser_open_url",
@@ -41,9 +45,9 @@ export function registerBrowserTools() {
       },
       required: ["url", "explanation"],
     },
-    handler: async ({ url, browser, explanation }) => {
+    handler: async ({ url, browser, explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserOpen({ url, browser });
+        const r = await delegateBrowserOpen({ url, browser }, sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserOpenUrl({ url, browser });
@@ -61,9 +65,9 @@ export function registerBrowserTools() {
       properties: { explanation: { type: "string" } },
       required: ["explanation"],
     },
-    handler: async ({ explanation }) => {
+    handler: async ({ explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserSnapshot();
+        const r = await delegateBrowserSnapshot(sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserSnapshot();
@@ -81,9 +85,9 @@ export function registerBrowserTools() {
       properties: { explanation: { type: "string" } },
       required: ["explanation"],
     },
-    handler: async ({ explanation }) => {
+    handler: async ({ explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserScreenshot();
+        const r = await delegateBrowserScreenshot(sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserScreenshot();
@@ -104,9 +108,9 @@ export function registerBrowserTools() {
       },
       required: ["explanation"],
     },
-    handler: async ({ maxLinks, explanation }) => {
+    handler: async ({ maxLinks, explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserExtractLinks({ maxLinks });
+        const r = await delegateBrowserExtractLinks({ maxLinks }, sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserExtractLinks({ maxLinks });
@@ -127,9 +131,9 @@ export function registerBrowserTools() {
       },
       required: ["explanation"],
     },
-    handler: async ({ maxTables, explanation }) => {
+    handler: async ({ maxTables, explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserExtractTable({ maxTables });
+        const r = await delegateBrowserExtractTable({ maxTables }, sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserExtractTable({ maxTables });
@@ -151,9 +155,9 @@ export function registerBrowserTools() {
       },
       required: ["query", "explanation"],
     },
-    handler: async ({ query, maxMatches, explanation }) => {
+    handler: async ({ query, maxMatches, explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserFindText({ query, maxMatches });
+        const r = await delegateBrowserFindText({ query, maxMatches }, sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserFindText({ query, maxMatches });
@@ -174,9 +178,9 @@ export function registerBrowserTools() {
       },
       required: ["selector", "explanation"],
     },
-    handler: async ({ selector, explanation }) => {
+    handler: async ({ selector, explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserClick({ selector });
+        const r = await delegateBrowserClick({ selector }, sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserClick({ selector });
@@ -198,9 +202,9 @@ export function registerBrowserTools() {
       },
       required: ["selector", "text", "explanation"],
     },
-    handler: async ({ text, selector, explanation }) => {
+    handler: async ({ text, selector, explanation }, context) => {
       if (!isLocalFsOnServer()) {
-        const r = await delegateBrowserType({ selector, text });
+        const r = await delegateBrowserType({ selector, text }, sidecarCtx(context));
         return r ? { ...r, data: r.data ? { ...r.data, explanation } : undefined } : sidecarRequiredError();
       }
       const result = await browserType({ selector, text });

@@ -34,6 +34,8 @@ export interface ConversationSettings {
   marketplacePackId?: string;
   /** V8: linked spec workflow session */
   specSessionId?: string;
+  /** Active Felix Desktop device for this conversation */
+  sidecarDeviceId?: string;
 }
 
 export const CHAT_MODE_OPTIONS: Array<{ id: ChatModeId; label: string; description: string }> = [
@@ -132,6 +134,8 @@ export function parseConversationSettings(
     marketplacePackId:
       typeof metadata.marketplacePackId === "string" ? metadata.marketplacePackId : undefined,
     specSessionId: typeof metadata.specSessionId === "string" ? metadata.specSessionId : undefined,
+    sidecarDeviceId:
+      typeof metadata.sidecarDeviceId === "string" ? metadata.sidecarDeviceId : undefined,
   };
 }
 

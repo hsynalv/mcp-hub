@@ -1,7 +1,7 @@
 # V10 Felix Desktop — Deploy & Env Rehberi
 
-> **Son güncelleme:** 2026-06-27  
-> Hub (VPS/Coolify) + Mac sidecar (PM2) için V9/V10 birleşik kurulum.
+> **Son güncelleme:** 2026-07-05  
+> Hub (VPS/Coolify) + Mac/Windows sidecar için V9/V10 birleşik kurulum.
 
 ---
 
@@ -12,7 +12,7 @@ Telegram / Chat / /ask
         ↓
 Hub (asistan.huseyinalav.com) — LOCAL_FS_ON_SERVER=false
         ↓ HTTP + Bearer (opsiyonel HMAC)
-Mac sidecar (static IP:9477) — felix-sidecar PM2
+Sidecar (Mac PM2 veya Windows Task Scheduler) — static IP:9477
 ```
 
 ---
@@ -97,6 +97,54 @@ SIDECAR_TERMINAL_MODE=safe
 
 ---
 
+## 2b. Windows sidecar — `%USERPROFILE%\.config\felix-desktop\env`
+
+```env
+SIDECAR_AUTH_TOKEN=<pairing veya rotate sonrası token>
+SIDECAR_BIND=0.0.0.0
+SIDECAR_PORT=9477
+SIDECAR_PUBLIC_URL=http://SABIT_IP:9477
+FELIX_HUB_URL=https://asistan.huseyinalav.com
+SIDECAR_TERMINAL_MODE=safe
+```
+
+### Windows — kurulum ve otomatik başlatma
+
+```powershell
+cd mcp-server
+pnpm install
+# env dosyasına SIDECAR_AUTH_TOKEN yazın
+npm run sidecar:install:win
+```
+
+- Scheduled Task: `FelixDesktopSidecar`
+- Tetikleyiciler: oturum açılışı + PC açılışı (2 dk gecikme)
+- Çökme sonrası otomatik yeniden başlatma
+- Log: `%USERPROFILE%\.config\felix-desktop\stdout.log` / `stderr.log`
+
+```powershell
+Start-ScheduledTask -TaskName FelixDesktopSidecar
+Stop-ScheduledTask -TaskName FelixDesktopSidecar
+Unregister-ScheduledTask -TaskName FelixDesktopSidecar -Confirm:$false
+```
+
+### Windows — firewall
+
+Gelen kural: TCP **9477** (Private ağ). Modem port forward: dış 9477 → PC yerel IP → iç 9477.
+
+### Windows — bağımlılıklar
+
+```powershell
+cd mcp-server
+pnpm install   # @nut-tree-fork/nut-js dahil
+npm install playwright
+npx playwright install chromium
+```
+
+Masaüstü otomasyonu kullanıcı oturumu açıkken çalışır. Health: `sidecar_dependency_check`, `desktop_permission_check`.
+
+---
+
 ## 3. Çalıştırma komutları
 
 ### Hub deploy (VPS)
@@ -155,11 +203,11 @@ Kontrol (chat veya API):
 
 ## 4. Eşleştirme (pairing)
 
-1. Hub → **Ayarlar → Felix Desktop** → kod oluştur
-2. Mac'te sidecar çalışıyor olmalı (`npm run sidecar:pm2:status`)
+1. Hub → **Felix Desktop** → kod oluştur
+2. Sidecar çalışıyor olmalı (Mac: PM2; Windows: Scheduled Task)
 3. `baseUrl` = `SIDECAR_PUBLIC_URL` (ör. `http://88.248.21.106:9477`)
-4. Dönen `authToken` → `~/.config/felix-desktop/env` → `SIDECAR_AUTH_TOKEN`
-5. `npm run sidecar:pm2:restart`
+4. Pair sırasında `/health` → `platform` (darwin/win32) + `hostname` hub'a kaydedilir
+5. Dönen `authToken` → env → sidecar yeniden başlat
 
 **Varsayılan capabilities:** `fs`, `terminal`, `desktop`, `notify`, `browser`
 
@@ -211,7 +259,7 @@ curl -H "Authorization: Bearer $HUB_READ_KEY" \
 
 ```bash
 cd mcp-server
-npm test -- --run tests/core/v10-*.test.js tests/plugins/local-sidecar.test.js
+npm test -- --run tests/core/sidecar-*.test.js tests/core/telegram-sidecar-commands.test.js tests/core/v10-sidecar-context.test.js tests/plugins/desktop-win32.test.js tests/plugins/local-sidecar.test.js
 ```
 
 ---
@@ -225,6 +273,7 @@ npm test -- --run tests/core/v10-*.test.js tests/plugins/local-sidecar.test.js
 | C | hotkey/scroll/drag, clipboard, undo kayıtları |
 | D | browser open/snapshot/click, hassas URL hard-stop |
 | E | dependency/permission check, token rotate, signed request |
+| F | Multi-sidecar (chat/Telegram tercih, ambiguous), Windows kurulum + desktop parity |
 
 ---
 

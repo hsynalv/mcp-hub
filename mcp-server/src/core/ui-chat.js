@@ -49,6 +49,7 @@ import { createAgentLoopState } from "./chat/agent-loop.js";
 import { TOOL_INTENTS } from "./chat/tool-intent.js";
 import { resolveChatNamespace } from "./auth/tenant-middleware.js";
 import { toolContextFromRequest } from "./authorization/http-tool-context.js";
+import { buildSidecarDevicesPromptSection } from "./sidecar/sidecar-device-resolver.service.js";
 
 const DEFAULT_TASK = "general";
 
@@ -258,6 +259,7 @@ export function registerUiChatRoutes(app) {
       conversationId,
       autoCreate = true,
       pluginFilter,
+      sidecarDeviceId: sidecarDeviceIdBody,
     } = req.body ?? {};
 
     const allowWriteTools =
@@ -278,7 +280,7 @@ export function registerUiChatRoutes(app) {
         user: req.actor?.type || "ui",
         scopes: req.authScopes || [],
         source: "chat_ui",
-        channel: "web",
+        channel: "chat",
         conversationId: conversationId || null,
         brainToolCounts: createBrainToolCounts(),
         readToolsUsed: false,
@@ -380,8 +382,16 @@ export function registerUiChatRoutes(app) {
     const scopedToolDefs = selectChatTools(listTools(), toolSelectOpts);
     const toolCatalog = scopedPlugin ? "" : buildToolCatalogSummary(scopedToolDefs);
 
+    const sidecarDeviceId =
+      (typeof sidecarDeviceIdBody === "string" && sidecarDeviceIdBody.trim()) ||
+      (typeof conversationMetadata.sidecarDeviceId === "string" && conversationMetadata.sidecarDeviceId) ||
+      null;
+    context.sidecarDeviceId = sidecarDeviceId;
+
+    const sidecarSection = await buildSidecarDevicesPromptSection(context);
+
     const systemContent = buildSystemPrompt(
-      [instructionsBlock, chatCtx.contextHints].filter(Boolean).join("\n\n"),
+      [instructionsBlock, chatCtx.contextHints, sidecarSection].filter(Boolean).join("\n\n"),
       {
         toolCatalog,
         pluginFilter: scopedPlugin,

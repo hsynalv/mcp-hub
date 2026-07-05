@@ -123,8 +123,17 @@ async function emitToolExecutionHub(p) {
  */
 export async function executeRegisteredTool({ name, tool, args, context }) {
   const started = Date.now();
-  const ctx = await enrichSidecarToolContext(context && typeof context === "object" ? context : {});
   const normalizedArgs = coerceArgs(args);
+  const sidecarContext = {
+    ...(context && typeof context === "object" ? context : {}),
+    ...(normalizedArgs.sidecarDeviceId
+      ? { sidecarDeviceId: String(normalizedArgs.sidecarDeviceId) }
+      : {}),
+    ...(normalizedArgs.sidecarDeviceName
+      ? { sidecarDeviceName: String(normalizedArgs.sidecarDeviceName) }
+      : {}),
+  };
+  const ctx = await enrichSidecarToolContext(sidecarContext);
 
   await emitToolExecutionHub({
     eventType: HubEventTypes.TOOL_EXECUTION_STARTED,

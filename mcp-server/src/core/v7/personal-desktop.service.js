@@ -2,8 +2,8 @@
  * V7 — Personal desktop assistant (sidecar status + allowlist + capture).
  */
 
-import { isLocalFsOnServer } from "../sidecar/pairing.service.js";
-import { getDefaultSidecarDevice } from "../sidecar/pairing.service.js";
+import { isLocalFsOnServer, listSidecarDevices } from "../sidecar/pairing.service.js";
+import { resolveSidecarDevice } from "../sidecar/sidecar-device-resolver.service.js";
 import {
   requiresSidecarDelegation,
   delegateDesktopScreenshot,
@@ -18,12 +18,20 @@ import { fsRead, fsList } from "../../plugins/local-sidecar/sidecar.core.js";
 import { getPersonalDesktopConfig, updatePersonalDesktopConfig, DESKTOP_MODES } from "./personal-desktop-store.js";
 import { evaluateScreenSafety } from "./personal-ops.service.js";
 import { getPersonalAutonomyState } from "./personal-autonomy.service.js";
+import { getSidecarPreference } from "../sidecar/sidecar-preferences.service.js";
 
-export async function getPersonalDesktopStatus() {
+function sidecarContext(extra = {}) {
+  return extra && typeof extra === "object" ? extra : {};
+}
+
+export async function getPersonalDesktopStatus(context = {}) {
   const config = getPersonalDesktopConfig();
   const autonomy = getPersonalAutonomyState();
   const needsSidecar = requiresSidecarDelegation();
-  const device = needsSidecar ? await getDefaultSidecarDevice() : null;
+  const ctx = sidecarContext(context);
+  const resolved = needsSidecar ? await resolveSidecarDevice(ctx) : null;
+  const device = resolved?.ok ? resolved.device : null;
+  const devices = needsSidecar ? await listSidecarDevices() : [];
 
   return {
     mode: config.mode,
@@ -35,9 +43,12 @@ export async function getPersonalDesktopStatus() {
     },
     sidecar: {
       required: needsSidecar,
-      paired: !!device,
+      paired: devices.length > 0,
+      deviceCount: devices.length,
       deviceName: device?.name || null,
+      deviceId: device?.id || null,
       capabilities: device?.capabilities || [],
+      resolution: resolved?.resolution || null,
     },
     tools: [
       "desktop_screenshot",
@@ -45,6 +56,8 @@ export async function getPersonalDesktopStatus() {
       "desktop_ocr",
       "desktop_click",
       "desktop_type",
+      "sidecar_list_devices",
+      "sidecar_set_active",
     ],
   };
 }
@@ -62,25 +75,51 @@ export function updateDesktopAllowlist(patch) {
   return updatePersonalDesktopConfig(patch);
 }
 
-async function activeWindowSnapshot() {
+async function activeWindowSnapshot(context = {}) {
   if (isLocalFsOnServer()) {
     const r = await getActiveWindow();
-    return r.ok ? r.data : null;
+    return r.ok ? { ok: true, data: r.data } : r;
   }
-  const r = await delegateDesktopActiveWindow();
-  return r?.ok ? r.data : null;
+  return delegateDesktopActiveWindow(sidecarContext(context));
 }
 
-async function screenshotSnapshot() {
+async function screenshotSnapshot(context = {}) {
   if (isLocalFsOnServer()) {
     return captureScreenshot({ format: "png" });
   }
-  return delegateDesktopScreenshot({ format: "png" });
+  return delegateDesktopScreenshot({ format: "png" }, sidecarContext(context));
 }
 
-export async function capturePersonalDesktopPreview() {
-  const windowData = await activeWindowSnapshot();
-  const screenshotRes = await screenshotSnapshot();
+export function isSidecarAmbiguousResult(result) {
+  return result?.ok === false && result?.error?.code === "sidecar_ambiguous";
+}
+
+export async function capturePersonalDesktopPreview(context = {}) {
+  const windowRes = await activeWindowSnapshot(context);
+  if (isSidecarAmbiguousResult(windowRes)) {
+    return {
+      ok: false,
+      blocked: false,
+      sidecarAmbiguous: true,
+      error: windowRes.error,
+      activeWindow: null,
+      screenshot: null,
+      preview: null,
+    };
+  }
+  const windowData = windowRes?.ok ? windowRes.data : null;
+  const screenshotRes = await screenshotSnapshot(context);
+  if (isSidecarAmbiguousResult(screenshotRes)) {
+    return {
+      ok: false,
+      blocked: false,
+      sidecarAmbiguous: true,
+      error: screenshotRes.error,
+      activeWindow: windowData,
+      screenshot: null,
+      preview: null,
+    };
+  }
   const app = windowData?.app || windowData?.application || "";
   const title = windowData?.title || "";
 
@@ -109,10 +148,11 @@ export async function capturePersonalDesktopPreview() {
   };
 }
 
-export async function readPersonalSidecarFile(path, { maxChars = 4000 } = {}) {
+export async function readPersonalSidecarFile(path, { maxChars = 4000, context = {} } = {}) {
+  const ctx = sidecarContext(context);
   const result = isLocalFsOnServer()
     ? await fsRead(path, { maxSize: maxChars * 2 })
-    : await delegateToSidecar("read", { path, maxSize: maxChars * 2 });
+    : await delegateToSidecar("read", { path, maxSize: maxChars * 2, context: ctx });
   if (!result?.ok) return result;
   const content = result.data?.content || result.data?.text || "";
   const text = typeof content === "string" ? content : JSON.stringify(content);
@@ -127,7 +167,12 @@ export async function readPersonalSidecarFile(path, { maxChars = 4000 } = {}) {
   };
 }
 
-export async function listPersonalSidecarDir(path = ".") {
+export async function listPersonalSidecarDir(path = ".", context = {}) {
   if (isLocalFsOnServer()) return fsList(path);
-  return delegateToSidecar("list", { path });
+  return delegateToSidecar("list", { path, context: sidecarContext(context) });
+}
+
+export async function getTelegramSidecarPreference(chatId) {
+  const actorId = `telegram:${chatId}`;
+  return getSidecarPreference(actorId, "telegram");
 }

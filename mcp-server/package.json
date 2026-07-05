@@ -62,6 +62,7 @@
     "create-plugin": "node bin/create-plugin.js",
     "sidecar:daemon": "node bin/sidecar-daemon.js",
     "sidecar:install": "bash scripts/install-sidecar-local.sh",
+    "sidecar:install:win": "powershell -ExecutionPolicy Bypass -File scripts/install-felix-desktop.ps1",
     "sidecar:tunnel": "bash scripts/sidecar-tunnel-cloudflared.sh",
     "sidecar:pm2:start": "bash scripts/pm2-sidecar-start.sh",
     "sidecar:pm2:stop": "pm2 stop felix-sidecar",
@@ -105,6 +106,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1001.0",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@nlpjs/lang-en": "4.26.1",
     "@nlpjs/lang-tr": "4.26.1",

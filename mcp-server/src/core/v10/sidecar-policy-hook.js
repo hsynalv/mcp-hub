@@ -160,8 +160,20 @@ export function registerSidecarPolicyHook() {
   registered = true;
 
   registerBeforeExecutionHook(async (toolName, args, context = {}) => {
+    if (toolName === "sidecar_list_devices" || toolName === "sidecar_set_active") return null;
     if (!SIDECAR_TOOLS.has(toolName)) return null;
     if (context.skipSidecarPolicyCheck) return null;
+
+    if (context.sidecarResolution === "ambiguous") {
+      return {
+        ok: false,
+        error: context.sidecarResolutionError || {
+          code: "sidecar_ambiguous",
+          message: "Birden fazla Felix Desktop eşleşmiş. Hangi cihazı kullanayım?",
+          devices: context.availableSidecars || [],
+        },
+      };
+    }
 
     const capability = TOOL_CAPABILITY[toolName];
     const deviceCaps = context.sidecarCapabilities;

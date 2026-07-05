@@ -5,6 +5,7 @@ import {
   Copy,
   Globe,
   HelpCircle,
+  Laptop,
   Router,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,9 @@ type GuideStep = {
   body: string;
   code?: string;
 };
+
+type PlatformTab = "mac" | "win";
+type ConnectionTab = "static" | "tunnel";
 
 function GuideStepCard({
   index,
@@ -60,11 +64,11 @@ function GuideStepCard({
   );
 }
 
-const STATIC_IP_STEPS: GuideStep[] = [
+const MAC_STATIC_STEPS: GuideStep[] = [
   {
     title: "Kur ve arka planda başlat",
-    body: "Mac'te repo içindeki mcp-server klasöründe:",
-    code: "cd mcp-server\nnpm run sidecar:install\nnpm run sidecar:pm2:start",
+    body: "macOS'ta repo içindeki mcp-server klasöründe:",
+    code: "cd mcp-server\npnpm install\nnpm run sidecar:install\nnpm run sidecar:pm2:start",
   },
   {
     title: "Env dosyası",
@@ -82,7 +86,29 @@ const STATIC_IP_STEPS: GuideStep[] = [
   },
 ];
 
-const TUNNEL_STEPS: GuideStep[] = [
+const WIN_STATIC_STEPS: GuideStep[] = [
+  {
+    title: "Kur ve otomatik başlat",
+    body: "Windows'ta PowerShell (mcp-server klasöründe):",
+    code: "cd mcp-server\npnpm install\nnpm run sidecar:install:win",
+  },
+  {
+    title: "Env dosyası",
+    body: "Token eşleştirmeden sonra. Görev: FelixDesktopSidecar (oturum + PC açılışı).",
+    code: `# %USERPROFILE%\\.config\\felix-desktop\\env\nSIDECAR_PORT=9477\nSIDECAR_BIND=0.0.0.0\nSIDECAR_PUBLIC_URL=http://SABIT_IP:9477\nSIDECAR_AUTH_TOKEN=\nFELIX_HUB_URL=https://asistan.huseyinalav.com`,
+  },
+  {
+    title: "Firewall",
+    body: "Windows Güvenlik Duvarı → Gelen kural: TCP 9477 (Private ağ). Modemde port forward aynı.",
+  },
+  {
+    title: "Test ve eşleştir",
+    body: "Health OK ise hub'da pair. Log: %USERPROFILE%\\.config\\felix-desktop\\stderr.log",
+    code: "curl http://127.0.0.1:9477/health\nStart-ScheduledTask -TaskName FelixDesktopSidecar",
+  },
+];
+
+const MAC_TUNNEL_STEPS: GuideStep[] = [
   {
     title: "Daemon",
     body: "Tunnel için SIDECAR_BIND=127.0.0.1 yeterli.",
@@ -100,34 +126,71 @@ const TUNNEL_STEPS: GuideStep[] = [
   },
 ];
 
-const FAQ = [
+const WIN_TUNNEL_STEPS: GuideStep[] = [
   {
-    q: "Çevrimiçi ama screenshot yok",
-    a: "macOS → Gizlilik → Ekran Kaydı → node (PM2) açın, sidecar restart.",
+    title: "Daemon (manuel)",
+    body: "Tunnel için SIDECAR_BIND=127.0.0.1. Scheduled Task yerine geçici terminal:",
+    code: "npm run sidecar:daemon",
   },
   {
-    q: "Çevrimdışı görünüyor",
-    a: "PM2 çalışıyor mu? Port 9477 dışarı açık mı? curl ile health test edin.",
+    title: "Tunnel URL",
+    body: "İkinci terminalde public HTTPS URL alın.",
+    code: "npm run sidecar:tunnel",
   },
   {
-    q: "401 unauthorized",
-    a: "SIDECAR_AUTH_TOKEN hub'daki pair token ile aynı olmalı.",
+    title: "Eşleştir",
+    body: "Tunnel URL'yi Base URL olarak girin. Token'ı env'e yazıp görevi yeniden başlatın.",
+    code: "Stop-ScheduledTask -TaskName FelixDesktopSidecar\nStart-ScheduledTask -TaskName FelixDesktopSidecar",
   },
 ];
 
+const FAQ: Record<PlatformTab, { q: string; a: string }[]> = {
+  mac: [
+    {
+      q: "Çevrimiçi ama screenshot yok",
+      a: "macOS → Gizlilik → Ekran Kaydı → node (PM2) açın, sidecar restart.",
+    },
+    {
+      q: "Çevrimdışı görünüyor",
+      a: "PM2 çalışıyor mu? Port 9477 dışarı açık mı? curl ile health test edin.",
+    },
+    {
+      q: "401 unauthorized",
+      a: "SIDECAR_AUTH_TOKEN hub'daki pair token ile aynı olmalı.",
+    },
+  ],
+  win: [
+    {
+      q: "Görev çalışmıyor",
+      a: "Görev Zamanlayıcı → FelixDesktopSidecar → Son çalıştırma. stderr.log kontrol edin.",
+    },
+    {
+      q: "Screenshot / tıklama yok",
+      a: "Kullanıcı oturumu açık olmalı. @nut-tree-fork/nut-js kurulu mu? sidecar_dependency_check çalıştırın.",
+    },
+    {
+      q: "401 unauthorized",
+      a: "SIDECAR_AUTH_TOKEN hub'daki pair token ile aynı olmalı; env sonrası görevi yeniden başlatın.",
+    },
+  ],
+};
+
 type FelixDesktopConnectionGuideProps = {
   className?: string;
-  defaultTab?: "static" | "tunnel";
+  defaultPlatform?: PlatformTab;
+  defaultTab?: ConnectionTab;
   variant?: "panel" | "embedded";
 };
 
 export function FelixDesktopConnectionGuide({
   className,
+  defaultPlatform = "mac",
   defaultTab = "static",
   variant = "panel",
 }: FelixDesktopConnectionGuideProps) {
   const toast = useToast();
-  const [tab, setTab] = useState(defaultTab);
+  const [platform, setPlatform] = useState<PlatformTab>(defaultPlatform);
+  const [tab, setTab] = useState<ConnectionTab>(defaultTab);
   const [faqOpen, setFaqOpen] = useState(false);
   const hubOrigin =
     typeof window !== "undefined" ? window.location.origin : "https://asistan.huseyinalav.com";
@@ -142,6 +205,9 @@ export function FelixDesktopConnectionGuide({
   };
 
   const embedded = variant === "embedded";
+  const staticSteps = platform === "mac" ? MAC_STATIC_STEPS : WIN_STATIC_STEPS;
+  const tunnelSteps = platform === "mac" ? MAC_TUNNEL_STEPS : WIN_TUNNEL_STEPS;
+  const faqItems = FAQ[platform];
 
   return (
     <div className={cn(!embedded && "rounded-2xl border border-border/80 bg-card/80 shadow-sm", className)}>
@@ -156,44 +222,73 @@ export function FelixDesktopConnectionGuide({
 
       <div className={cn(embedded ? "space-y-4" : "px-4 py-4")}>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Hub sunucuda çalışır; dosyalar Mac&apos;inizde. Hub&apos;ın Mac&apos;e ulaşması için{" "}
+          Hub sunucuda çalışır; dosyalar bilgisayarınızda. Hub&apos;ın sidecar&apos;a ulaşması için{" "}
           <strong className="font-medium text-foreground">sabit IP</strong> (önerilen) veya{" "}
           <strong className="font-medium text-foreground">tunnel</strong> kullanın.
         </p>
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "static" | "tunnel")}>
+        <Tabs value={platform} onValueChange={(v) => setPlatform(v as PlatformTab)}>
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="static" className="gap-1.5 text-xs">
-              <Router className="h-3.5 w-3.5" />
-              Sabit IP
+            <TabsTrigger value="mac" className="gap-1.5 text-xs">
+              <Laptop className="h-3.5 w-3.5" />
+              macOS
             </TabsTrigger>
-            <TabsTrigger value="tunnel" className="gap-1.5 text-xs">
-              <Globe className="h-3.5 w-3.5" />
-              Tunnel
+            <TabsTrigger value="win" className="gap-1.5 text-xs">
+              <Laptop className="h-3.5 w-3.5" />
+              Windows
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="static" className="mt-3 space-y-2.5">
-            {STATIC_IP_STEPS.map((step, i) => (
-              <GuideStepCard key={step.title} index={i + 1} step={step} onCopy={copyText} />
-            ))}
-          </TabsContent>
+          <TabsContent value={platform} className="mt-3 space-y-3">
+            <Tabs value={tab} onValueChange={(v) => setTab(v as ConnectionTab)}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="static" className="gap-1.5 text-xs">
+                  <Router className="h-3.5 w-3.5" />
+                  Sabit IP
+                </TabsTrigger>
+                <TabsTrigger value="tunnel" className="gap-1.5 text-xs">
+                  <Globe className="h-3.5 w-3.5" />
+                  Tunnel
+                </TabsTrigger>
+              </TabsList>
 
-          <TabsContent value="tunnel" className="mt-3 space-y-2.5">
-            {TUNNEL_STEPS.map((step, i) => (
-              <GuideStepCard key={step.title} index={i + 1} step={step} onCopy={copyText} />
-            ))}
+              <TabsContent value="static" className="mt-3 space-y-2.5">
+                {staticSteps.map((step, i) => (
+                  <GuideStepCard key={step.title} index={i + 1} step={step} onCopy={copyText} />
+                ))}
+              </TabsContent>
+
+              <TabsContent value="tunnel" className="mt-3 space-y-2.5">
+                {tunnelSteps.map((step, i) => (
+                  <GuideStepCard key={step.title} index={i + 1} step={step} onCopy={copyText} />
+                ))}
+              </TabsContent>
+            </Tabs>
+
+            <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 px-3 py-2.5 text-xs">
+              {platform === "mac" ? (
+                <>
+                  <p className="font-medium text-violet-200">macOS izinleri</p>
+                  <p className="mt-1 text-muted-foreground">
+                    Screenshot: Ekran Kaydı → <code className="text-foreground">node</code>. Tıklama/yazma:
+                    Erişilebilirlik → <code className="text-foreground">node</code>. Sonra{" "}
+                    <code className="text-foreground">npm run sidecar:pm2:restart</code>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium text-violet-200">Windows notları</p>
+                  <p className="mt-1 text-muted-foreground">
+                    Oturum açıkken çalışır (masaüstü otomasyonu). Tam özellik için{" "}
+                    <code className="text-foreground">pnpm install</code> ile{" "}
+                    <code className="text-foreground">@nut-tree-fork/nut-js</code> kurulu olmalı. Görev:{" "}
+                    <code className="text-foreground">FelixDesktopSidecar</code>
+                  </p>
+                </>
+              )}
+            </div>
           </TabsContent>
         </Tabs>
-
-        <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 px-3 py-2.5 text-xs">
-          <p className="font-medium text-violet-200">macOS izinleri</p>
-          <p className="mt-1 text-muted-foreground">
-            Screenshot: Ekran Kaydı → <code className="text-foreground">node</code>. Tıklama/yazma:
-            Erişilebilirlik → <code className="text-foreground">node</code>. Sonra{" "}
-            <code className="text-foreground">npm run sidecar:pm2:restart</code>
-          </p>
-        </div>
 
         <div>
           <Button
@@ -208,7 +303,7 @@ export function FelixDesktopConnectionGuide({
           </Button>
           {faqOpen && (
             <div className="mt-2 space-y-2">
-              {FAQ.map((item) => (
+              {faqItems.map((item) => (
                 <div
                   key={item.q}
                   className="rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-xs"
@@ -229,13 +324,21 @@ export function FelixDesktopConnectionGuide({
   );
 }
 
-export function FelixDesktopChecklist({ ready }: { ready: boolean }) {
-  const items = [
-    "Sidecar çalışıyor (PM2)",
-    "Port forward veya tunnel",
-    "Hub'da eşleştirildi",
-    "Token kayıtlı",
-  ];
+export function FelixDesktopChecklist({ ready, platform = "mac" }: { ready: boolean; platform?: PlatformTab }) {
+  const items =
+    platform === "win"
+      ? [
+          "Sidecar çalışıyor (Scheduled Task)",
+          "Firewall / port forward",
+          "Hub'da eşleştirildi",
+          "Token env'de kayıtlı",
+        ]
+      : [
+          "Sidecar çalışıyor (PM2)",
+          "Port forward veya tunnel",
+          "Hub'da eşleştirildi",
+          "Token kayıtlı",
+        ];
 
   return (
     <ul className="space-y-1.5">

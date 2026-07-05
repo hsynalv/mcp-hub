@@ -396,17 +396,18 @@ export function buildToolIntentHint(classification) {
   }
   if (intent === "desktop_local") {
     lines.push(
-      "- Use **fs_list** / **fs_read** for Mac folders (e.g. ~/Documents). Never claim missing permission without calling a tool."
+      "- Use **fs_list** / **fs_read** for local folders (~/Documents, Desktop, etc.). Never claim missing permission without calling a tool."
     );
-    lines.push("- Paths: `~/Documents`, `~/Downloads`, or whitelisted dirs. Writes need user approval.");
+    lines.push("- Multiple sidecars: **sidecar_list_devices** → ask user → **sidecar_set_active** if target unclear.");
+    lines.push("- If **sidecar_ambiguous** error: ask which Felix Desktop machine — do not retry without selection.");
+    lines.push("- Paths: user home dirs or whitelisted paths. Writes need user approval.");
     lines.push("- Screenshots: **desktop_screenshot**, **desktop_region_screenshot**, **desktop_window_screenshot**.");
-    lines.push("- App focus: **desktop_focus_app** (e.g. Finder, Safari) — always call it; never refuse without trying.");
+    lines.push("- App focus: **desktop_focus_app** (Finder, Explorer, Safari, …) — always call it; never refuse without trying.");
     lines.push("- Clipboard: **clipboard_read** / **clipboard_write** — call the tool; Telegram shows approval buttons when required.");
     lines.push("- File tools: **fs_search**, **fs_recent**, **fs_stat**; copy/move/delete need approval.");
     lines.push("- Desktop control: **desktop_hotkey**, **desktop_scroll**, **desktop_drag** (approval required).");
-    lines.push("- Clipboard: **clipboard_read** / **clipboard_write** (approval + sensitive guard).");
     lines.push("- Browser: **browser_open_url** → snapshot/extract; **browser_click/type** need approval; login/payment hard-stop.");
-    lines.push("- Health: **sidecar_dependency_check**, **desktop_permission_check** for Mac setup diagnostics.");
+    lines.push("- Health: **sidecar_dependency_check**, **desktop_permission_check** for sidecar setup diagnostics.");
   }
   lines.push("- Use the smallest sufficient tool set. Read before write.");
 

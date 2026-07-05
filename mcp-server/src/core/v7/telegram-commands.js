@@ -12,7 +12,12 @@ import {
   capturePersonalDesktopPreview,
   readPersonalSidecarFile,
   listPersonalSidecarDir,
+  getTelegramSidecarPreference,
+  isSidecarAmbiguousResult,
 } from "./personal-desktop.service.js";
+import { listSidecarDevices } from "../sidecar/pairing.service.js";
+import { setSidecarPreference } from "../sidecar/sidecar-preferences.service.js";
+import { getSidecarStatusPayload } from "../sidecar/sidecar-routes.js";
 import { listRuns } from "../agent-runs/agent-runs.service.js";
 import { getApprovalStore } from "../policy-hooks.js";
 import { approveTool } from "../tool-registry.js";
@@ -24,7 +29,7 @@ import {
   listPersonalMemory,
 } from "./personal-memory.service.js";
 import { isHubPaused, setHubPause, clearHubPause, getHubPauseState } from "./telegram-pause.js";
-import { sendTelegramWithMarkup, answerCallbackQuery, sendTelegramPhotoBase64, sendTelegramDocumentBase64 } from "../../plugins/notifications/channels/telegram.js";
+import { sendTelegramWithMarkup, answerCallbackQuery, sendTelegramPhotoBase64, sendTelegramDocumentBase64, sendTelegram } from "../../plugins/notifications/channels/telegram.js";
 import { resolveTelegramToolApproval } from "../v9/telegram-agent-session.js";
 import { isLocalFsOnServer } from "../sidecar/pairing.service.js";
 import { delegateDesktopScreenshot } from "../sidecar/sidecar-proxy.js";
@@ -61,6 +66,9 @@ export function buildTelegramHelpText() {
     "/forget <id> — tercih sil",
     "/memory — tercihleri listele",
     "/desktop screenshot — ekran önizleme (sidecar)",
+    "/desktop devices — eşleşmiş cihazları listele",
+    "/desktop use <isim> — Telegram varsayılan cihaz",
+    "/desktop current — aktif varsayılan cihaz",
     "/desktop window — aktif pencere",
     "/file <path> — sidecar dosya oku (kısa)",
     "/file list <dir> — dizin listele",
@@ -176,15 +184,113 @@ async function cmdForget(chatId, id, reply) {
   await reply(ok ? `Silindi: ${id}` : `Bulunamadı: ${id}`);
 }
 
-async function rawDesktopScreenshot() {
+async function rawDesktopScreenshot(context = {}) {
   if (isLocalFsOnServer()) return captureScreenshot({ format: "png" });
-  return delegateDesktopScreenshot({ format: "png" });
+  return delegateDesktopScreenshot({ format: "png" }, context);
+}
+
+function telegramSidecarContext(chatId) {
+  return { actor: `telegram:${chatId}`, channel: "telegram" };
+}
+
+/**
+ * @param {object[]} devices
+ */
+export function buildSidecarDeviceInlineKeyboard(devices = []) {
+  const rows = devices.slice(0, 8).map((d) => [
+    {
+      text: `${d.name} (${d.platform || "?"}) ${d.online ? "●" : "○"}`,
+      callback_data: `sidecar:${d.id}`,
+    },
+  ]);
+  return { inline_keyboard: rows };
+}
+
+export async function sendSidecarDevicePicker(chatId, devices, message = "Felix Desktop seçin:") {
+  if (!devices?.length) return false;
+  await sendTelegramWithMarkup(chatId, message, buildSidecarDeviceInlineKeyboard(devices));
+  return true;
+}
+
+export async function replyIfSidecarAmbiguous(chatId, result, reply) {
+  if (!isSidecarAmbiguousResult(result)) return false;
+  await reply(result.error?.message || "Birden fazla Felix Desktop eşleşmiş. Hangi cihaz?");
+  await sendSidecarDevicePicker(chatId, result.error?.devices || [], "Hızlı seçim:");
+  return true;
 }
 
 async function cmdDesktop(chatId, args, reply) {
   const sub = (args.split(/\s+/)[0] || "window").toLowerCase();
+  const ctx = telegramSidecarContext(chatId);
+
+  if (sub === "devices" || sub === "list") {
+    const status = await getSidecarStatusPayload();
+    if (!status.devices.length) {
+      await reply("Eşleşmiş Felix Desktop yok. Web panelinden eşleştirin.");
+      return;
+    }
+    const pref = await getTelegramSidecarPreference(chatId);
+    const lines = status.devices.map(
+      (d) =>
+        `• ${d.name} (${d.platform || "?"}) ${d.online ? "online" : "offline"}${pref.deviceId === d.id ? " ← varsayılan" : ""}`
+    );
+    await reply(["Felix Desktop cihazları:", "", ...lines, "", "Seçmek için: /desktop use <isim> veya aşağıdaki butonlar."].join("\n"));
+    if (status.devices.length > 1) {
+      await sendSidecarDevicePicker(chatId, status.devices);
+    }
+    return;
+  }
+
+  if (sub === "use" || sub === "select") {
+    const name = args.slice(sub.length).trim();
+    if (!name) {
+      await reply("Kullanım: /desktop use <cihaz adı>");
+      return;
+    }
+    const devices = await listSidecarDevices();
+    const match = devices.find(
+      (d) =>
+        d.name.toLowerCase() === name.toLowerCase() ||
+        d.name.toLowerCase().includes(name.toLowerCase())
+    );
+    if (!match) {
+      await reply(`Cihaz bulunamadı: ${name}\n/desktop devices ile listele.`);
+      return;
+    }
+    const result = await setSidecarPreference(`telegram:${chatId}`, {
+      channel: "telegram",
+      deviceId: match.id,
+    });
+    if (!result.ok) {
+      await reply(`Ayarlanamadı: ${result.error}`);
+      return;
+    }
+    await reply(`Varsayılan Felix Desktop: ${match.name} (${match.platform || "?"})`);
+    return;
+  }
+
+  if (sub === "current" || sub === "active") {
+    const pref = await getTelegramSidecarPreference(chatId);
+    if (pref.device) {
+      await reply(`Telegram varsayılanı: ${pref.device.name} (${pref.device.platform || "?"})`);
+      return;
+    }
+    const devices = await listSidecarDevices();
+    if (devices.length === 1) {
+      await reply(`Tek cihaz (otomatik): ${devices[0].name}`);
+      return;
+    }
+    await reply("Varsayılan cihaz yok. /desktop use <isim> ile seçin.");
+    return;
+  }
+
   if (sub === "screenshot" || sub === "screen") {
-    const preview = await capturePersonalDesktopPreview();
+    const preview = await capturePersonalDesktopPreview(ctx);
+    if (preview.sidecarAmbiguous) {
+      await reply(preview.error?.message || "Birden fazla cihaz eşleşmiş.");
+      await sendSidecarDevicePicker(chatId, preview.error?.devices || []);
+      return;
+    }
     if (preview.blocked) {
       await reply(`Ekran engellendi: hassas içerik veya injection şüphesi.\n${preview.preview || ""}`);
       return;
@@ -212,7 +318,7 @@ async function cmdDesktop(chatId, args, reply) {
     await reply(lines.filter(Boolean).join("\n"));
 
     if (shot?.captured && shot?.hasImage) {
-      const full = await rawDesktopScreenshot();
+      const full = await rawDesktopScreenshot(ctx);
       const b64 = full?.data?.imageBase64;
       if (full?.ok && b64) {
         try {
@@ -228,7 +334,12 @@ async function cmdDesktop(chatId, args, reply) {
     }
     return;
   }
-  const preview = await capturePersonalDesktopPreview();
+  const preview = await capturePersonalDesktopPreview(ctx);
+  if (preview.sidecarAmbiguous) {
+    await reply(preview.error?.message || "Birden fazla cihaz eşleşmiş.");
+    await sendSidecarDevicePicker(chatId, preview.error?.devices || []);
+    return;
+  }
   const win = preview.activeWindow;
   if (!win) {
     await reply("Aktif pencere alınamadı. Sidecar eşleşmiş mi kontrol edin.");
@@ -239,6 +350,7 @@ async function cmdDesktop(chatId, args, reply) {
 
 async function cmdFile(chatId, args, reply) {
   const trimmed = args.trim();
+  const ctx = telegramSidecarContext(chatId);
   if (!trimmed) {
     await reply("Kullanım: /file <path> | /file list <dir> | /file send <path>");
     return;
@@ -249,8 +361,9 @@ async function cmdFile(chatId, args, reply) {
       await reply("Kullanım: /file send <path>");
       return;
     }
-    const result = await readPersonalSidecarFile(path, { maxChars: 2_000_000 });
+    const result = await readPersonalSidecarFile(path, { maxChars: 2_000_000, context: ctx });
     if (!result?.ok) {
+      if (await replyIfSidecarAmbiguous(chatId, result, reply)) return;
       await reply(`Gönderilemedi: ${formatSidecarFsError(result)}`);
       return;
     }
@@ -275,8 +388,9 @@ async function cmdFile(chatId, args, reply) {
   }
   if (trimmed.toLowerCase().startsWith("list ")) {
     const dir = trimmed.slice(5).trim() || ".";
-    const result = await listPersonalSidecarDir(dir);
+    const result = await listPersonalSidecarDir(dir, ctx);
     if (!result?.ok) {
+      if (await replyIfSidecarAmbiguous(chatId, result, reply)) return;
       await reply(`Liste başarısız: ${formatSidecarFsError(result)}`);
       return;
     }
@@ -285,8 +399,9 @@ async function cmdFile(chatId, args, reply) {
     await reply(["Dizin:", dir, "", ...lines].join("\n"));
     return;
   }
-  const result = await readPersonalSidecarFile(trimmed, { maxChars: 3000 });
+  const result = await readPersonalSidecarFile(trimmed, { maxChars: 3000, context: ctx });
   if (!result?.ok) {
+    if (await replyIfSidecarAmbiguous(chatId, result, reply)) return;
     await reply(`Okuma başarısız: ${formatSidecarFsError(result)}`);
     return;
   }
@@ -453,6 +568,23 @@ export async function handleTelegramCallbackQuery(callbackQuery) {
     const result = await resolveTelegramToolApproval(id, false);
     await answerCallbackQuery(queryId, result?.status === "rejected" ? "Reddedildi" : "Bulunamadı");
     return { ok: result?.status === "rejected" };
+  }
+
+  if (action === "sidecar") {
+    const result = await setSidecarPreference(`telegram:${chatId}`, {
+      channel: "telegram",
+      deviceId: id,
+    });
+    const name = result.device?.name || id;
+    await answerCallbackQuery(queryId, result.ok ? `Seçildi: ${name}` : "Ayarlanamadı");
+    if (result.ok) {
+      await sendTelegram({
+        chatId,
+        message: `Varsayılan Felix Desktop: ${name} (${result.device?.platform || "?"})`,
+        source: "telegram_sidecar_pick",
+      });
+    }
+    return { ok: result.ok };
   }
 
   await answerCallbackQuery(queryId, "Bilinmeyen işlem");

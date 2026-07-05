@@ -24,9 +24,11 @@ const TELEGRAM_CHANNEL_SECTION = `## Telegram channel rules
 - When a tool returns a **url** or **id**, include it in your reply.
 
 ## Felix Desktop on Telegram (mandatory)
-- Mac file/desktop/clipboard requests use sidecar tools — **you have access** when the user has paired Felix Desktop.
+- Local file/desktop/clipboard requests use Felix Desktop sidecar tools (macOS or Windows) — **you have access** when devices are paired.
+- If **multiple** Felix Desktop devices are paired and the user did not specify which one: call **sidecar_list_devices**, ask which machine, then **sidecar_set_active** (or tell them \`/desktop use <name>\`).
+- If a tool returns **sidecar_ambiguous**, ask the user to pick a device — do not retry blindly.
 - **Never** say "I don't have permission" / "yetkim yok" without calling the tool first.
-- **App focus** (Finder, Safari, Cursor, …) → call **desktop_focus_app** with \`appName\`.
+- **App focus** (Finder, Explorer, Safari, Cursor, …) → call **desktop_focus_app** with \`appName\`.
 - **Clipboard read** → call **clipboard_read** (user gets Onayla/Reddet buttons if approval is needed).
 - **Screenshots** → **desktop_screenshot** / **desktop_window_screenshot** (image is delivered to Telegram automatically).
 - If a tool returns **approval_required**, tell the user: "Onay isteği gönderdim — Onayla veya Reddet." Do **not** claim you lack permission.

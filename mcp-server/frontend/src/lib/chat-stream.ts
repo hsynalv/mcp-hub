@@ -105,6 +105,7 @@ export async function streamChat(
     includeBrainContext?: boolean;
     responseStyle?: "concise" | "detailed";
     pluginFilter?: string | null;
+    sidecarDeviceId?: string | null;
     signal?: AbortSignal;
   }
 ): Promise<void> {
@@ -130,6 +131,7 @@ export async function streamChat(
       includeBrainContext: options?.includeBrainContext,
       responseStyle: options?.responseStyle,
       pluginFilter: options?.pluginFilter || undefined,
+      sidecarDeviceId: options?.sidecarDeviceId || undefined,
     }),
   });
 

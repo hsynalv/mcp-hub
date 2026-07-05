@@ -38,6 +38,10 @@ async function writeClipboardRaw(text) {
  */
 export async function clipboardRead({ maxLength = 32_000 } = {}) {
   const platform = process.platform;
+  if (platform === "win32") {
+    const { clipboardReadWin32 } = await import("./clipboard.win32.js");
+    return clipboardReadWin32({ maxLength });
+  }
   if (platform !== "darwin") {
     return {
       ok: true,
@@ -95,6 +99,10 @@ export async function clipboardWrite({ text } = {}) {
   }
 
   const platform = process.platform;
+  if (platform === "win32") {
+    const { clipboardWriteWin32 } = await import("./clipboard.win32.js");
+    return clipboardWriteWin32({ text });
+  }
   if (platform !== "darwin") {
     return {
       ok: true,

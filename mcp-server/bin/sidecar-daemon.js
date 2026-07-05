@@ -16,6 +16,7 @@ if (envLoad.loaded && envLoad.keys > 0) {
 }
 
 import express from "express";
+import os from "os";
 import { fsList, fsRead, fsWrite, fsHash } from "../src/plugins/local-sidecar/sidecar.core.js";
 import {
   fsStat,
@@ -98,6 +99,8 @@ app.get("/health", (_req, res) => {
     ok: true,
     status: "healthy",
     service: "mcp-hub-sidecar",
+    platform: process.platform,
+    hostname: os.hostname(),
     authRequired: Boolean(authToken),
     capabilities: ["fs", "terminal", "notify", "desktop", "browser"],
   });

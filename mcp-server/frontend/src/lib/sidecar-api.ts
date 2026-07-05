@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "./api-client";
+import { apiDelete, apiGet, apiPost, apiPut } from "./api-client";
 import { BRAND } from "./branding";
 
 export type SidecarAggregateStatus = "not_required" | "connected" | "offline" | "no_device";
@@ -8,11 +8,13 @@ export interface SidecarDevice {
   id: string;
   name: string;
   baseUrl: string;
+  platform?: string | null;
+  hostname?: string | null;
   capabilities?: string[];
   pairedAt?: string;
   lastSeenAt?: string;
   online: boolean;
-  health?: { ok?: boolean; capabilities?: string[] } | null;
+  health?: { ok?: boolean; capabilities?: string[]; platform?: string; hostname?: string } | null;
   error?: string | null;
 }
 
@@ -46,11 +48,36 @@ export async function pairSidecarDevice(body: {
   code: string;
   deviceName: string;
   baseUrl: string;
+  platform?: string;
+  hostname?: string;
 }) {
   return apiPost<{ id: string; name: string; baseUrl: string } & { authToken?: string }>(
     "/sidecar/pair",
     body
   );
+}
+
+export interface SidecarPreference {
+  actorId: string;
+  channel: string;
+  deviceId: string | null;
+  device?: SidecarDevice | null;
+  persisted?: boolean;
+}
+
+export async function fetchSidecarPreferences(channel = "default") {
+  return apiGet<SidecarPreference>(`/sidecar/preferences?channel=${encodeURIComponent(channel)}`);
+}
+
+export async function setSidecarPreference(body: {
+  channel?: string;
+  deviceId: string;
+}) {
+  return apiPut<SidecarPreference>("/sidecar/preferences", body);
+}
+
+export async function setSidecarDeviceDefault(deviceId: string, channel = "default") {
+  return apiPost<SidecarPreference>(`/sidecar/devices/${deviceId}/set-default`, { channel });
 }
 
 export async function removeSidecarDevice(deviceId: string) {

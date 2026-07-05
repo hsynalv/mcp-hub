@@ -31,6 +31,23 @@ async function checkPlaywright() {
 }
 
 async function probeScreenRecording() {
+  if (process.platform === "win32") {
+    try {
+      const { captureScreenshot } = await import("./desktop.win32.js");
+      const shot = await captureScreenshot();
+      if (shot.ok && shot.data?.imageBase64) {
+        return { granted: true, status: "ok", platform: "win32" };
+      }
+      return {
+        granted: false,
+        status: "error",
+        hint: shot.error?.hint || "Windows screen capture failed",
+        platform: "win32",
+      };
+    } catch (err) {
+      return { granted: false, status: "error", hint: err.message, platform: "win32" };
+    }
+  }
   if (process.platform !== "darwin") {
     return { granted: null, status: "unknown", hint: "Screen Recording check is macOS-only" };
   }
